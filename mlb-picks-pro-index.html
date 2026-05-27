@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MLB Picks Pro</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.6.0/dist/tabler-icons.min.css">
+<style>
+:root{--bg:#fff;--bg2:#f5f5f3;--bg3:#ebebea;--text:#1a1a18;--text2:#6b6b66;--text3:#9e9d98;--b:rgba(0,0,0,.1);--b2:rgba(0,0,0,.18);--green:#1D9E75;--gbg:#EAF3DE;--gtx:#27500A;--gborder:#97C459;--amber:#BA7517;--abg:#FAEEDA;--atx:#633806;--aborder:#EF9F27;--red:#c0392b;--rbg:#FCEBEB;--rtx:#791F1F;--rborder:#F09595;--blue:#185FA5;--bbg:#e6f1fb;--btx:#0C447C;--gold:#d97706;--r:12px;--rs:7px}
+@media(prefers-color-scheme:dark){:root{--bg:#1c1c1a;--bg2:#252523;--bg3:#2e2e2b;--text:#e8e7e2;--text2:#9e9d98;--text3:#6b6b66;--b:rgba(255,255,255,.1);--b2:rgba(255,255,255,.18);--gbg:#0d2b1a;--gtx:#5DCAA5;--gborder:#3B6D11;--abg:#2a1f08;--atx:#FAC775;--aborder:#854F0B;--rbg:#2a0f0f;--rtx:#F09595;--rborder:#A32D2D;--bbg:#0c2340;--btx:#85B7EB}}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:13px}
+/* Setup */
+#setup{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:999;padding:1rem}
+.sc{background:var(--bg2);border:1px solid var(--b);border-radius:16px;padding:2rem;max-width:440px;width:100%}
+.slogo{display:flex;align-items:center;gap:12px;margin-bottom:1.25rem}
+.sic{width:46px;height:46px;background:var(--gold);border-radius:12px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:22px;flex-shrink:0}
+.st{font-size:19px;font-weight:700}.ss{font-size:11px;color:var(--text2);margin-top:2px}
+.ssteps{background:var(--bg3);border-radius:var(--rs);padding:.85rem;margin-bottom:1rem;font-size:12px;line-height:2.1}
+.ssteps a{color:var(--blue);font-weight:600;text-decoration:none}.ssteps a:hover{text-decoration:underline}
+.slbl{font-size:12px;font-weight:600;margin-bottom:5px;color:var(--text2)}
+.sinp{width:100%;border:1px solid var(--b2);border-radius:var(--rs);padding:10px 12px;font-size:13px;background:var(--bg);color:var(--text);outline:none;font-family:monospace}
+.sinp:focus{border-color:var(--blue)}
+.shint{font-size:10px;color:var(--text3);margin-top:5px}
+.sbtn{width:100%;margin-top:1rem;background:var(--gold);color:#fff;border:none;padding:11px;border-radius:var(--rs);font-size:14px;font-weight:700;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px;font-family:inherit}
+.sbtn:hover{background:#b45309}
+.serr{margin-top:8px;font-size:11px;color:var(--rtx);background:var(--rbg);padding:8px 10px;border-radius:var(--rs);display:none}
+/* App */
+#app{display:none}
+.hdr{padding:.85rem 1.2rem;border-bottom:1px solid var(--b);display:flex;align-items:center;justify-content:space-between;background:var(--bg);position:sticky;top:0;z-index:10}
+.hl{display:flex;align-items:center;gap:10px}
+.hic{width:33px;height:33px;background:var(--gold);border-radius:8px;display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px;flex-shrink:0}
+.htit{font-size:14px;font-weight:700}.hsub{font-size:10px;color:var(--text3)}
+.hr2{display:flex;align-items:center;gap:7px}
+.hdate{font-size:11px;color:var(--text2);background:var(--bg2);padding:3px 9px;border-radius:5px;border:1px solid var(--b)}
+.hkbtn{font-size:11px;padding:3px 9px;border-radius:5px;border:1px solid var(--b);background:transparent;cursor:pointer;color:var(--text2);font-family:inherit}.hkbtn:hover{background:var(--bg2)}
+/* Nav */
+.nav{display:flex;border-bottom:1px solid var(--b);padding:0 1.2rem;gap:1px;background:var(--bg);overflow-x:auto}
+.nb{padding:9px 13px;font-size:12px;border:none;background:none;cursor:pointer;color:var(--text2);border-bottom:2.5px solid transparent;margin-bottom:-1px;display:flex;align-items:center;gap:4px;white-space:nowrap;font-family:inherit;font-weight:500}
+.nb.active{color:var(--gold);border-bottom-color:var(--gold);font-weight:700}
+.nb:hover:not(.active){color:var(--text)}
+/* Tabs */
+.tab{display:none;padding:1rem 1.2rem;max-width:900px}.tab.active{display:block}
+/* Toolbar */
+.tb{display:flex;gap:7px;align-items:center;flex-wrap:wrap;margin-bottom:.9rem}
+.bb{background:var(--gold);color:#fff;border:none;padding:7px 14px;border-radius:var(--rs);font-size:12px;cursor:pointer;display:flex;align-items:center;gap:5px;font-weight:700;font-family:inherit}.bb:hover{background:#b45309}.bb:disabled{opacity:.5;cursor:not-allowed}
+input[type=date]{border:1px solid var(--b2);padding:6px 9px;border-radius:var(--rs);font-size:11px;background:var(--bg);color:var(--text);font-family:inherit;outline:none}
+/* Stats bar */
+.srow{display:grid;grid-template-columns:repeat(5,1fr);gap:7px;margin-bottom:1rem}
+.scard{background:var(--bg2);border-radius:var(--rs);padding:.6rem .85rem}
+.scard-l{font-size:9px;color:var(--text3);margin-bottom:2px;font-weight:600;letter-spacing:.3px;text-transform:uppercase}
+.scard-v{font-size:19px;font-weight:700}
+/* Loading / empty */
+.spin{width:26px;height:26px;border:2px solid var(--b);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 9px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.lbox{padding:2.5rem;text-align:center;color:var(--text2)}.lbox p{font-size:11px;color:var(--text3);margin-top:4px}
+.ebox{padding:2rem;text-align:center;color:var(--text3);font-size:13px}
+.errbox{padding:10px 12px;background:var(--rbg);border:1px solid var(--rborder);border-radius:var(--rs);font-size:12px;color:var(--rtx);margin-bottom:.9rem}
+.disc{font-size:10px;color:var(--text3);padding:.45rem .8rem;background:var(--bg2);border-radius:5px;margin-bottom:.85rem;border-left:2px solid var(--b2)}
+/* ═══ GAME CARDS ══════════════════════════════════════════════════════ */
+.games-list{display:flex;flex-direction:column;gap:10px}
+.gcard{background:var(--bg);border:1px solid var(--b);border-radius:var(--r);overflow:hidden}
+.gcard:hover{border-color:var(--b2)}
+.gc-head{padding:.65rem .95rem;background:var(--bg2);border-bottom:1px solid var(--b);display:flex;justify-content:space-between;align-items:center}
+.gc-time{font-size:10px;color:var(--text3)}
+.gc-venue{font-size:10px;color:var(--text3)}
+.gc-matchup{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:6px;padding:.75rem .95rem .65rem}
+.gc-team{display:flex;flex-direction:column;gap:2px}.gc-team.home{text-align:right}
+.gc-abbr{font-size:21px;font-weight:700}.gc-pct{font-size:12px;font-weight:600}.gc-ml{font-size:10px;color:var(--text3)}
+.gc-divider{font-size:11px;color:var(--text3);font-weight:700;text-align:center}
+.gc-bar{height:5px;border-radius:3px;background:var(--bg3);display:flex;overflow:hidden;margin:0 .95rem .75rem}
+.gc-bar-a{height:100%;background:#378ADD;border-radius:3px 0 0 3px}
+.gc-bar-h{height:100%;background:var(--green);border-radius:0 3px 3px 0}
+/* ═══ PICKS INSIDE GAME CARD ══════════════════════════════════════════ */
+.picks-list{border-top:1px solid var(--b);display:flex;flex-direction:column}
+.pick-row{display:flex;align-items:center;gap:0;border-bottom:1px solid var(--b);min-height:48px}
+.pick-row:last-child{border-bottom:none}
+.pick-conf-bar{width:5px;flex-shrink:0;align-self:stretch}
+.conf-high{background:var(--green)}.conf-med{background:var(--amber)}.conf-low{background:var(--red)}
+.pick-badge{width:72px;flex-shrink:0;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:.5rem .3rem;gap:2px;border-right:1px solid var(--b)}
+.pick-badge-label{font-size:8px;font-weight:700;letter-spacing:.5px;text-transform:uppercase}
+.pick-badge-val{font-size:11px;font-weight:700}
+.badge-high .pick-badge-label{color:var(--gtx)}.badge-high .pick-badge-val{color:var(--gtx)}.badge-high{background:var(--gbg)}
+.badge-med .pick-badge-label{color:var(--atx)}.badge-med .pick-badge-val{color:var(--atx)}.badge-med{background:var(--abg)}
+.badge-low .pick-badge-label{color:var(--rtx)}.badge-low .pick-badge-val{color:var(--rtx)}.badge-low{background:var(--rbg)}
+.pick-content{flex:1;padding:.5rem .85rem}
+.pick-cat{font-size:9px;color:var(--text3);font-weight:600;letter-spacing:.3px;text-transform:uppercase;margin-bottom:2px}
+.pick-main{font-size:13px;font-weight:700}
+.pick-sub{font-size:10px;color:var(--text2);margin-top:2px}
+.pick-right{padding:.5rem .85rem;text-align:right;flex-shrink:0}
+.pick-prob{font-size:14px;font-weight:700}
+.pick-edge{font-size:10px;color:var(--text3);margin-top:1px}
+.gc-weather{padding:.45rem .95rem;font-size:10px;color:var(--text3);border-top:1px solid var(--b);background:var(--bg2);display:flex;align-items:center;gap:5px}
+/* ═══ PARLAYS ═════════════════════════════════════════════════════════ */
+.parlay-card{background:var(--bg);border:2px solid var(--gborder);border-radius:var(--r);overflow:hidden;margin-bottom:12px}
+.parlay-head{padding:.7rem 1rem;background:var(--gbg);border-bottom:1px solid var(--gborder);display:flex;justify-content:space-between;align-items:center}
+.parlay-title{font-size:13px;font-weight:700;color:var(--gtx)}
+.parlay-odds{font-size:16px;font-weight:700;color:var(--gtx)}
+.parlay-body{padding:.75rem 1rem}
+.parlay-leg{display:flex;align-items:center;gap:10px;padding:5px 0;border-bottom:1px solid var(--b)}
+.parlay-leg:last-child{border-bottom:none}
+.parlay-leg-num{width:20px;height:20px;border-radius:50%;background:var(--gbg);display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:var(--gtx);flex-shrink:0}
+.parlay-leg-info{flex:1}
+.parlay-leg-pick{font-size:12px;font-weight:700}
+.parlay-leg-game{font-size:10px;color:var(--text2)}
+.parlay-leg-prob{font-size:11px;font-weight:700;color:var(--green)}
+.parlay-foot{padding:.6rem 1rem;background:var(--bg2);border-top:1px solid var(--b);display:flex;justify-content:space-between;align-items:center}
+.parlay-pct{font-size:12px;color:var(--text2)}
+.parlay-payout{font-size:12px;font-weight:700;color:var(--gtx)}
+/* ═══ PITCHERS ════════════════════════════════════════════════════════ */
+.pitch-card{background:var(--bg);border:1px solid var(--b);border-radius:var(--r);padding:.85rem;margin-bottom:8px}
+.pitch-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.65rem}
+.pitch-name{font-size:14px;font-weight:700}.pitch-meta{font-size:10px;color:var(--text2);margin-top:1px}
+.pitch-stats{display:grid;grid-template-columns:repeat(5,1fr);gap:5px;margin-bottom:.6rem}
+.pstat{background:var(--bg2);border-radius:5px;padding:4px 6px;text-align:center}
+.pstat-l{font-size:9px;color:var(--text3)}.pstat-v{font-size:13px;font-weight:700}
+.pitch-prop{display:flex;align-items:center;gap:10px;background:var(--bg2);border-radius:var(--rs);padding:.55rem .8rem}
+.pp-label{font-size:10px;color:var(--text2);flex:1}.pp-val{font-size:14px;font-weight:700}.pp-rec{font-size:11px;font-weight:700;padding:2px 8px;border-radius:4px}
+.rec-over{background:var(--gbg);color:var(--gtx)}.rec-under{background:var(--rbg);color:var(--rtx)}.rec-neu{background:var(--bg3);color:var(--text2)}
+/* ═══ BATEADORES ══════════════════════════════════════════════════════ */
+.bat-table{width:100%;border-collapse:collapse;font-size:11px}
+.bat-table th{text-align:left;padding:6px 9px;font-weight:700;color:var(--text2);border-bottom:1px solid var(--b2);font-size:10px;background:var(--bg2)}
+.bat-table td{padding:6px 9px;border-bottom:1px solid var(--b)}
+.bat-table tbody tr:hover{background:var(--bg2)}
+.hp-pill{font-size:10px;font-weight:700;padding:2px 7px;border-radius:4px}
+.hp-h{background:var(--gbg);color:var(--gtx)}.hp-m{background:var(--abg);color:var(--atx)}.hp-l{background:var(--bg3);color:var(--text2)}
+.src{font-size:10px;color:var(--text3);text-align:center;margin-top:.75rem;padding:.4rem;background:var(--bg2);border-radius:5px}
+.htb{width:100%;border-collapse:collapse;font-size:11px}.htb th{text-align:left;padding:6px 9px;font-weight:700;color:var(--text2);border-bottom:1px solid var(--b2);font-size:10px;background:var(--bg2)}.htb td{padding:6px 9px;border-bottom:1px solid var(--b)}.htb tbody tr:hover{background:var(--bg2)}.rb{font-size:10px;padding:2px 7px;border-radius:4px;border:1px solid var(--b);cursor:pointer;background:transparent;font-family:inherit;margin-right:3px}.rb.win{background:var(--gbg);color:var(--gtx);border-color:var(--gborder)}.rb.loss{background:var(--rbg);color:var(--rtx);border-color:var(--rborder)}
+
+.legend{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:.85rem;padding:.6rem .85rem;background:var(--bg2);border-radius:var(--rs);border-left:3px solid var(--gold)}
+.legend-item{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--text2)}
+.legend-abbr{font-size:10px;font-weight:700;color:var(--text);background:var(--bg3);padding:1px 5px;border-radius:3px;white-space:nowrap}
+.legend-sep{width:1px;height:12px;background:var(--b2);margin:0 2px}
+
+.db-badge{display:inline-flex;align-items:center;gap:4px;font-size:10px;padding:2px 8px;border-radius:4px;font-weight:600}
+.db-on{background:var(--gbg);color:var(--gtx)}.db-off{background:var(--bg3);color:var(--text2)}
+.anal-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:1rem}
+.anal-card{background:var(--bg2);border-radius:var(--rs);padding:.75rem 1rem;border:1px solid var(--b)}
+.anal-label{font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px}
+.anal-val{font-size:22px;font-weight:700}
+.anal-sub{font-size:10px;color:var(--text2);margin-top:2px}
+.perf-table{width:100%;border-collapse:collapse;font-size:11px}
+.perf-table th{text-align:left;padding:6px 9px;font-weight:700;color:var(--text2);border-bottom:1px solid var(--b2);font-size:10px;background:var(--bg2)}
+.perf-table td{padding:6px 9px;border-bottom:1px solid var(--b)}
+.perf-table tbody tr:hover{background:var(--bg2)}
+.win-bar{height:4px;border-radius:2px;background:var(--bg3);overflow:hidden;margin-top:3px}
+.win-bar-fill{height:100%;background:var(--green);border-radius:2px}
+.setup-db{background:var(--bg2);border:1px solid var(--b);border-radius:var(--r);padding:1rem;margin-bottom:1rem}
+.setup-db-title{font-size:13px;font-weight:700;margin-bottom:.6rem;display:flex;align-items:center;gap:6px}
+.setup-db-row{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px}
+.db-input{width:100%;border:1px solid var(--b2);border-radius:var(--rs);padding:7px 10px;font-size:11px;background:var(--bg);color:var(--text);font-family:monospace;outline:none}
+.db-input:focus{border-color:var(--green)}
+.btn-sm{padding:5px 12px;border-radius:var(--rs);font-size:11px;cursor:pointer;font-weight:600;font-family:inherit;border:none}
+.btn-green{background:var(--green);color:#fff}.btn-green:hover{opacity:.9}
+.btn-gray{background:var(--bg3);color:var(--text2);border:1px solid var(--b2)}.btn-gray:hover{background:var(--b2)}
+.community-toggle{display:flex;gap:6px;margin-bottom:.85rem}
+.toggle-btn{padding:5px 14px;border-radius:20px;font-size:11px;cursor:pointer;border:1px solid var(--b2);background:transparent;color:var(--text2);font-family:inherit;font-weight:500}
+.toggle-btn.active{background:var(--gold);color:#fff;border-color:var(--gold)}
+</style>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+</head>
+<body>
+
+<!-- Setup -->
+<div id="setup">
+  <div class="sc">
+    <div class="slogo">
+      <div class="sic"><i class="ti ti-trophy"></i></div>
+      <div><div class="st">MLB Picks Pro</div><div class="ss">ML · Spreads · Totales · Ks · Parlays · F5</div></div>
+    </div>
+    <div class="ssteps">
+      <strong>Key opcional para análisis extra:</strong><br>
+      1. <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a><br>
+      2. Inicia sesión con Google → <strong>Create API Key</strong><br>
+      3. Pega aquí (o déjalo vacío)
+    </div>
+    <div class="slbl">API Key de Google Gemini <span style="font-weight:400;color:var(--text3)">(opcional)</span></div>
+    <input type="password" class="sinp" id="api-key-input" placeholder="AIza... (opcional)" autocomplete="off">
+    <div class="shint">Los picks funcionan 100% sin key · Datos reales de MLB Stats API</div>
+    <div class="serr" id="setup-err">Key inválida — debe empezar con AIza</div>
+    <button class="sbtn" onclick="startApp()"><i class="ti ti-trophy"></i>Entrar a MLB Picks Pro</button>
+  </div>
+</div>
+
+<!-- App -->
+<div id="app">
+  <div class="hdr">
+    <div class="hl">
+      <div class="hic"><i class="ti ti-trophy"></i></div>
+      <div><div class="htit">MLB Picks Pro</div><div class="hsub">MLB Stats API · Clima real · Modelo estadístico</div></div>
+    </div>
+    <div class="hr2">
+      <span class="hdate" id="hdr-date">—</span>
+      <button class="hkbtn" onclick="changeKey()"><i class="ti ti-key" style="font-size:11px"></i></button>
+    </div>
+  </div>
+
+  <nav class="nav">
+    <button class="nb active" id="nav-0" onclick="switchTab(0)"><i class="ti ti-chart-bar"></i>Picks del Día</button>
+    <button class="nb" id="nav-1" onclick="switchTab(1)"><i class="ti ti-link"></i>Parlays</button>
+    <button class="nb" id="nav-2" onclick="switchTab(2)"><i class="ti ti-circle-dashed"></i>Pitchers K</button>
+    <button class="nb" id="nav-3" onclick="switchTab(3)"><i class="ti ti-run"></i>Bateadores</button>
+    <button class="nb" id="nav-4" onclick="switchTab(4);loadHistory()"><i class="ti ti-history"></i>Historial</button>
+    <button class="nb" id="nav-5" onclick="switchTab(5);loadAnalytics()"><i class="ti ti-chart-line"></i>Analytics</button>
+  </nav>
+
+  <!-- Tab 0 -->
+  <div class="tab active" id="tab-0">
+    <div class="tb">
+      <input type="date" id="date-pick">
+      <button class="bb" id="main-btn" onclick="runAll()"><i class="ti ti-refresh"></i>Analizar partidos</button>
+    </div>
+    <div class="disc"><i class="ti ti-alert-circle" style="vertical-align:-2px;margin-right:3px"></i>Solo para entretenimiento. Apuesta con responsabilidad.</div>
+    <div class="legend"><span class="legend-item"><span class="legend-abbr">ML</span>Money Line — apuesta a quién gana el partido</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">RL -1.5</span>Run Line — favorito debe ganar por 2+ carreras</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">F5</span>Primeras 5 innings</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">OVER/UNDER</span>El total de carreras supera o no supera la línea</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">P(Hit)</span>Probabilidad de conectar ≥1 hit</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">TB</span>Total Bases</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">Edge</span>Ventaja del modelo vs el mercado (>5% = fuerte)</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">🟢 Alta</span>≥58% de probabilidad</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">🟡 Media</span>53–58% de probabilidad</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">🔴 Baja</span><53% de probabilidad</span></div>
+    <div class="srow" id="srow" style="display:none">
+      <div class="scard"><div class="scard-l">Partidos</div><div class="scard-v" id="sm-g">0</div></div>
+      <div class="scard"><div class="scard-l">🟢 Alta conf.</div><div class="scard-v" id="sm-h">0</div></div>
+      <div class="scard"><div class="scard-l">🟡 Media conf.</div><div class="scard-v" id="sm-m">0</div></div>
+      <div class="scard"><div class="scard-l">Overs totales</div><div class="scard-v" id="sm-ov">0</div></div>
+      <div class="scard"><div class="scard-l">Mejores parlays</div><div class="scard-v" id="sm-p">0</div></div>
+    </div>
+    <div id="picks-area"><div class="ebox"><i class="ti ti-trophy" style="font-size:36px;opacity:.15;display:block;margin:0 auto 10px"></i>Selecciona fecha y presiona <strong>Analizar partidos</strong></div></div>
+  </div>
+
+  <!-- Tab 1 -->
+  <div class="tab" id="tab-1">
+    <div style="margin-bottom:.9rem;font-size:12px;color:var(--text2)"><i class="ti ti-info-circle" style="vertical-align:-2px;margin-right:4px"></i>Solo picks de <strong>Alta Confianza (≥58%)</strong>. Probabilidad combinada calculada con datos reales.</div>
+    <div id="parlay-area"><div class="ebox">Corre el análisis primero.</div></div>
+  </div>
+
+  <!-- Tab 2 -->
+  <div class="tab" id="tab-2">
+    <div style="margin-bottom:.9rem;font-size:12px;color:var(--text2)">Proyección de Ks = K/9 × innings esperados. Datos reales de temporada.</div>
+    <div class="legend"><span class="legend-item"><span class="legend-abbr">ERA</span>Carreras limpias por 9 innings</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">FIP</span>ERA independiente del campo — más predictivo que ERA</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">WHIP</span>Bases por bola + hits por inning</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">K/9</span>Ponches por 9 innings</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">BB/9</span>Bases por bola por 9 innings — control del pitcher</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">IP/sal.</span>Innings promedio por salida</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">Ks Exp.</span>Ponches proyectados = K/9 × IP esperados</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">OVER Ks</span>Se espera que supere la línea de ponches</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">UNDER Ks</span>Se espera que quede por debajo de la línea</span></div>
+    <div id="pitcher-area"><div class="ebox">Corre el análisis primero.</div></div>
+  </div>
+
+  <!-- Tab 3 -->
+  <div class="tab" id="tab-3">
+    <div style="margin-bottom:.9rem;font-size:12px;color:var(--text2)">P(Hit) = probabilidad de conectar ≥1 hit por partido. TB estimadas = SLG × 3.7 ABs.</div>
+    <div class="legend"><span class="legend-item"><span class="legend-abbr">BA</span>Batting Average — promedio de bateo</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">SLG</span>Slugging Percentage — poder ofensivo</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">OPS</span>OBP + SLG — métrica combinada de ofensiva</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">HR</span>Home Runs en la temporada</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">P(Hit)</span>1-(1-BA)^4.2 — probabilidad de ≥1 hit en el juego</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">TB Exp.</span>Total bases esperadas = SLG × 3.7 ABs estimados</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">OVER 1.5</span>Se esperan ≥2 total bases</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">OVER 2.5</span>Se esperan ≥3 total bases (bateador de poder)</span></div>
+    <div id="batter-area"><div class="ebox">Corre el análisis primero.</div></div>
+  </div>
+  <!-- Tab 4 -->
+  <div class="tab" id="tab-4">
+    <div class="setup-db" id="db-config-panel">
+      <div class="setup-db-title"><i class="ti ti-database"></i>Base de datos Supabase <span class="db-badge db-off" id="db-status-badge">Desconectado</span></div>
+      <div class="setup-db-row">
+        <div>
+          <div style="font-size:10px;font-weight:600;color:var(--text2);margin-bottom:4px">Project URL</div>
+          <input class="db-input" id="sb-url" placeholder="https://xxxx.supabase.co" type="text">
+        </div>
+        <div>
+          <div style="font-size:10px;font-weight:600;color:var(--text2);margin-bottom:4px">Anon Key</div>
+          <input class="db-input" id="sb-key" placeholder="eyJhbGciOiJ..." type="password">
+        </div>
+      </div>
+      <div style="display:flex;gap:6px;align-items:center">
+        <button class="btn-sm btn-green" onclick="connectDB()"><i class="ti ti-plug" style="font-size:11px"></i> Conectar</button>
+        <button class="btn-sm btn-gray" onclick="disconnectDB()">Desconectar</button>
+        <span style="font-size:10px;color:var(--text3);margin-left:4px">La key se guarda en tu navegador · <a href="https://supabase.com" target="_blank" style="color:var(--blue)">Crear cuenta gratis</a></span>
+      </div>
+    </div>
+    <div class="community-toggle">
+      <button class="toggle-btn active" id="tog-mine" onclick="setHistView('mine')">Mis picks</button>
+      <button class="toggle-btn" id="tog-all" onclick="setHistView('all')">Comunidad</button>
+    </div>
+    <div class="legend"><span class="legend-item"><span class="legend-abbr">% Acierto</span>Porcentaje de favoritos que ganaron</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">Picks altos</span>Acierto solo en picks de Alta Confianza (≥58%)</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">ROI</span>Retorno sobre inversión a línea -110 (91:100)</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">✓ Ganó</span>El favorito del modelo ganó el partido</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">✗ Perdió</span>El favorito del modelo perdió el partido</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">Calibración</span>Compara prob. del modelo vs acierto real por rango</span></div>
+    <div class="srow" id="h-srow">
+      <div class="scard"><div class="scard-l">Predicciones guardadas</div><div class="scard-v" id="h-total">0</div></div>
+      <div class="scard"><div class="scard-l">Con resultado</div><div class="scard-v" id="h-graded">0</div></div>
+      <div class="scard"><div class="scard-l">% Acierto (favorito)</div><div class="scard-v" id="h-acc">—</div></div>
+      <div class="scard"><div class="scard-l">Picks altos correctos</div><div class="scard-v" id="h-high-acc">—</div></div>
+      <div class="scard"><div class="scard-l">ROI estimado</div><div class="scard-v" id="h-roi">—</div></div>
+    </div>
+    <div style="background:var(--bg2);border-radius:var(--rs);padding:.9rem;margin-bottom:1rem">
+      <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:10px">Calibración del modelo — predicción vs acierto real</div>
+      <canvas id="calib-chart" height="160"></canvas>
+    </div>
+    <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:.75rem">Registro de predicciones</div>
+    <div id="hist-wrap"><div class="ebox">No hay predicciones guardadas aún.<br><span style="font-size:11px">Corre el análisis y marca resultados con ✓ ✗</span></div></div>
+  </div>
+
+
+  <!-- Tab 5 - Analytics -->
+  <div class="tab" id="tab-5">
+    <div class="legend"><span class="legend-item"><span class="legend-abbr">Win%</span>Porcentaje de acierto del modelo</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">ROI</span>Retorno a -110 (91:100)</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">Calibración</span>Prob. modelo vs acierto real</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">Comunidad</span>Datos de todos los usuarios</span></div>
+    <div class="anal-grid" id="anal-stats">
+      <div class="anal-card"><div class="anal-label">Total predicciones</div><div class="anal-val" id="an-total">—</div></div>
+      <div class="anal-card"><div class="anal-label">Win% general</div><div class="anal-val" id="an-winpct">—</div></div>
+      <div class="anal-card"><div class="anal-label">Win% picks altos 🟢</div><div class="anal-val" id="an-highwp">—</div></div>
+      <div class="anal-card"><div class="anal-label">ROI estimado</div><div class="anal-val" id="an-roi">—</div></div>
+      <div class="anal-card"><div class="anal-label">Mejor racha</div><div class="anal-val" id="an-streak">—</div></div>
+      <div class="anal-card"><div class="anal-label">Partidos analizados</div><div class="anal-val" id="an-games">—</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:1rem">
+      <div style="background:var(--bg2);border-radius:var(--rs);padding:.9rem">
+        <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:9px">Calibración por confianza</div>
+        <canvas id="anal-calib" height="180"></canvas>
+      </div>
+      <div style="background:var(--bg2);border-radius:var(--rs);padding:.9rem">
+        <div style="font-size:11px;font-weight:600;color:var(--text2);margin-bottom:9px">Win% por nivel de confianza</div>
+        <canvas id="anal-conf" height="180"></canvas>
+      </div>
+    </div>
+    <div style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:.6rem">Rendimiento diario</div>
+    <div id="anal-daily"><div class="ebox">Corre el análisis y marca resultados para ver estadísticas.</div></div>
+  </div>
+
+
+</div>
+
+<script>
+const ST={108:{n:'Angel Stadium',lat:33.8003,lon:-117.8827,pf:.99,roof:'open'},109:{n:'Chase Field',lat:33.4455,lon:-112.0667,pf:.98,roof:'retractable'},110:{n:'Camden Yards',lat:39.2838,lon:-76.6218,pf:1.03,roof:'open'},111:{n:'Fenway Park',lat:42.3467,lon:-71.0972,pf:1.06,roof:'open'},112:{n:'Wrigley Field',lat:41.9484,lon:-87.6553,pf:1.04,roof:'open'},113:{n:'GABP',lat:39.0979,lon:-84.5082,pf:1.08,roof:'open'},114:{n:'Progressive Field',lat:41.4962,lon:-81.6852,pf:.97,roof:'open'},115:{n:'Coors Field',lat:39.7559,lon:-104.9942,pf:1.24,roof:'open'},116:{n:'Comerica Park',lat:42.339,lon:-83.0485,pf:.95,roof:'open'},117:{n:'Minute Maid Park',lat:29.7572,lon:-95.3555,pf:1.00,roof:'retractable'},118:{n:'Kauffman Stadium',lat:39.0514,lon:-94.4803,pf:.96,roof:'open'},119:{n:'Dodger Stadium',lat:34.0739,lon:-118.24,pf:.96,roof:'open'},120:{n:'Nationals Park',lat:38.873,lon:-77.0074,pf:1.00,roof:'open'},121:{n:'Citi Field',lat:40.7571,lon:-73.8458,pf:.97,roof:'open'},133:{n:'Oakland Coliseum',lat:37.7516,lon:-122.2005,pf:.93,roof:'open'},134:{n:'PNC Park',lat:40.4469,lon:-80.0057,pf:.97,roof:'open'},135:{n:'Petco Park',lat:32.7076,lon:-117.157,pf:.93,roof:'open'},136:{n:'T-Mobile Park',lat:47.5914,lon:-122.3325,pf:.94,roof:'retractable'},137:{n:'Oracle Park',lat:37.7786,lon:-122.3893,pf:.93,roof:'open'},138:{n:'Busch Stadium',lat:38.6226,lon:-90.1928,pf:.99,roof:'open'},139:{n:'Tropicana Field',lat:27.7683,lon:-82.6534,pf:.96,roof:'dome'},140:{n:'Globe Life Field',lat:32.7473,lon:-97.0822,pf:1.01,roof:'retractable'},141:{n:'Rogers Centre',lat:43.6414,lon:-79.3894,pf:1.03,roof:'dome'},142:{n:'Target Field',lat:44.9817,lon:-93.2786,pf:1.01,roof:'open'},143:{n:'Citizens Bank Park',lat:39.9061,lon:-75.1665,pf:1.04,roof:'open'},144:{n:'Truist Park',lat:33.8908,lon:-84.4681,pf:1.02,roof:'open'},145:{n:'Guaranteed Rate',lat:41.8299,lon:-87.6338,pf:1.01,roof:'open'},146:{n:'loanDepot Park',lat:25.7781,lon:-80.2196,pf:.92,roof:'retractable'},147:{n:'Yankee Stadium',lat:40.8296,lon:-73.9262,pf:1.02,roof:'open'},158:{n:'Am. Family Field',lat:43.028,lon:-87.9712,pf:1.02,roof:'retractable'}};
+let API_KEY='',allGames=[],allPicks=[];
+const MLB='https://statsapi.mlb.com/api/v1';
+const sf=(v,d=4.5)=>{const n=parseFloat(v);return isNaN(n)?d:n;};
+const cl=(v,a=0,b=1)=>Math.max(a,Math.min(b,v));
+const sig=x=>1/(1+Math.exp(-x));
+const p2ml=p=>{p=cl(p,.01,.99);return p>=.5?String(Math.round(-p/(1-p)*100)):`+${Math.round((1-p)/p*100)}`;};
+const pct=p=>`${Math.round(p*100)}%`;
+const normCDF=x=>{const t=1/(1+.3275911*Math.abs(x));const y=1-((.254829592+t*(-.284496736+t*(1.421413741+t*(-1.453152027+t*1.061405429))))*t*Math.exp(-x*x/2));return x>=0?y:1-y;};
+
+// ── Setup ─────────────────────────────────────────────────────────────────────
+function startApp(){const k=document.getElementById('api-key-input').value.trim();if(k&&!k.startsWith('AIza')){document.getElementById('setup-err').style.display='block';return;}API_KEY=k;document.getElementById('setup').style.display='none';document.getElementById('app').style.display='block';const t=new Date();document.getElementById('date-pick').value=t.toISOString().slice(0,10);document.getElementById('hdr-date').textContent=t.toLocaleDateString('es-MX',{weekday:'short',month:'short',day:'numeric'});
+  initDB();  loadHistory();}
+document.getElementById('api-key-input').addEventListener('keydown',e=>{if(e.key==='Enter')startApp();});
+function changeKey(){document.getElementById('setup').style.display='flex';document.getElementById('app').style.display='none';}
+function switchTab(i){document.querySelectorAll('.tab').forEach((t,j)=>t.classList.toggle('active',j===i));document.querySelectorAll('.nb').forEach((b,j)=>b.classList.toggle('active',j===i));}
+
+// ── API ───────────────────────────────────────────────────────────────────────
+async function mlb(p){const r=await fetch(MLB+p);if(!r.ok)throw new Error('MLB API '+r.status);return r.json();}
+function fmtTime(iso){
+  if(!iso)return'TBD';
+  const d=new Date(iso);
+  const mi=d.toLocaleTimeString('es-MX',{timeZone:'America/New_York',hour:'2-digit',minute:'2-digit',hour12:true});
+  const mx=d.toLocaleTimeString('es-MX',{timeZone:'America/Mexico_City',hour:'2-digit',minute:'2-digit',hour12:true});
+  return mi+' Miami · '+mx+' CDMX';
+}
+async function getSched(d){const j=await mlb(`/schedule?sportId=1&date=${d}&hydrate=probablePitcher,team,venue`);return(j.dates||[]).flatMap(x=>x.games||[]);}
+async function getPSt(id,yr){if(!id)return{};try{const j=await mlb(`/people/${id}/stats?stats=season&group=pitching&season=${yr}&sportId=1`);return j.stats?.[0]?.splits?.[0]?.stat||{};}catch{return{};}}
+async function getTSt(id,yr){try{const j=await mlb(`/teams/${id}/stats?stats=season&group=hitting,pitching&season=${yr}&sportId=1`);const r={};(j.stats||[]).forEach(g=>{const k=g.group?.displayName?.toLowerCase();if(g.splits?.[0])r[k]=g.splits[0].stat;});return r;}catch{return{};}}
+async function getWL(id,yr){try{const e=new Date().toISOString().slice(0,10),s=new Date(Date.now()-50*864e5).toISOString().slice(0,10);const j=await mlb(`/teams/${id}/game/log/stats?stats=gameLog&group=hitting&season=${yr}&startDate=${s}&endDate=${e}&sportId=1`);const sp=(j.stats||[]).flatMap(g=>g.splits||[]);sp.sort((a,b)=>(b.date||'').localeCompare(a.date||''));return sp.slice(0,15);}catch{return[];}}
+async function getTeamLeaders(teamId, yr) {
+  try {
+    const d = await mlb(`/teams/${teamId}/leaders?leaderCategories=battingAverage,sluggingPercentage,onBasePlusSlugging,homeRuns&season=${yr}&leaderGameTypes=R&limit=5&hydrate=person`);
+    return d.teamLeaders || [];
+  } catch { return []; }
+}
+
+async function getTopBatters(teamId, yr) {
+  try {
+    // Use /stats endpoint — most reliable for individual season hitting stats by team
+    const d = await mlb(`/stats?stats=season&group=hitting&season=${yr}&teamId=${teamId}&playerPool=All&limit=20&sortStat=onBasePlusSlugging&order=desc`);
+    const splits = (d.stats || []).flatMap(g => g.splits || []);
+    const players = splits
+      .map(s => {
+        const st = s.stat || {};
+        const p = s.player || {};
+        const pos = s.position?.abbreviation || '?';
+        return {
+          name: p.fullName || p.nameFirstLast || '?',
+          pos,
+          ba:  parseFloat(st.avg       || 0),
+          slg: parseFloat(st.slg       || 0),
+          ops: parseFloat(st.ops       || 0),
+          obp: parseFloat(st.obp       || 0),
+          hr:  parseInt(st.homeRuns    || 0),
+          hits:parseInt(st.hits        || 0),
+          ab:  parseInt(st.atBats      || 0),
+          rbi: parseInt(st.rbi         || 0),
+        };
+      })
+      .filter(p => p.ab >= 20 && !['P','SP','RP','TWP'].includes(p.pos))
+      .sort((a, b) => b.ops - a.ops)
+      .slice(0, 9);
+    return players;
+  } catch(e) { return []; }
+}
+
+
+async function getWeather(lat,lon,roof){if(roof==='dome')return{tf:72,wm:0,wd:'—',cond:'Domo',wn:'irrelevante',wmod:1.0};try{const j=await fetch(`https://wttr.in/${lat},${lon}?format=j1`).then(r=>r.json());const c=j.current_condition?.[0]||{};const wm=parseFloat(c.windspeedMiles||5),wdg=parseFloat(c.winddirDegree||180);const dirs=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];const diff=Math.abs(wdg-225)%360,al=Math.cos((diff>180?360-diff:diff)*Math.PI/180);const wn=al>.3&&wm>7?'sale-bateadores':al<-.3&&wm>7?'entra-pitchers':'cruzado';return{tf:parseFloat(c.temp_F||70),wm,wd:dirs[Math.round(wdg/22.5)%16],cond:c.weatherDesc?.[0]?.value||'',wn,wmod:1+(al*Math.min(wm/20,1)*0.08)};}catch{return{tf:70,wm:5,wd:'S',cond:'—',wn:'neutro',wmod:1.0};}}
+
+// ── Compute ───────────────────────────────────────────────────────────────────
+function computeGame(g,apSt,hpSt,aSt,hSt,aR,hR,wx,stad){
+  const apk9=sf(apSt.strikeoutsPer9Inn,8),hpk9=sf(hpSt.strikeoutsPer9Inn,8);
+  const apera=sf(apSt.era),hpera=sf(hpSt.era);
+  const apfip=sf(apSt.fieldsIndependentPitching||apSt.fip,apera),hpfip=sf(hpSt.fieldsIndependentPitching||hpSt.fip,hpera);
+  const apwhip=sf(apSt.whip,1.3),hpwhip=sf(hpSt.whip,1.3),apbb9=sf(apSt.walksPer9Inn,3.2),hpbb9=sf(hpSt.walksPer9Inn,3.2);
+  const apGS=Math.max(1,sf(apSt.gamesStarted,1)),hpGS=Math.max(1,sf(hpSt.gamesStarted,1));
+  const apExpIP=Math.min(6.5,Math.max(4,sf(apSt.inningsPitched,0)/apGS||5.5));
+  const hpExpIP=Math.min(6.5,Math.max(4,sf(hpSt.inningsPitched,0)/hpGS||5.5));
+  const aOPS=sf(aSt.hitting?.ops,.72),hOPS=sf(hSt.hitting?.ops,.72);
+  const aBA=sf(aSt.hitting?.avg,.25),hBA=sf(hSt.hitting?.avg,.25);
+  const aSLG=sf(aSt.hitting?.slg,.38),hSLG=sf(hSt.hitting?.slg,.38);
+  const aBpE=sf(aSt.pitching?.era,4),hBpE=sf(hSt.pitching?.era,4);
+  const aWL=aR.filter(r=>r.isWin).length/Math.max(1,aR.length);
+  const hWL=hR.filter(r=>r.isWin).length/Math.max(1,hR.length);
+  const pf=stad?.pf||1,wmod=wx?.wmod||1,altB=1+Math.max(0,(stad?.alt||0)-1000)/10000*.15;
+  const tmp=wx?.tf<50?.92:wx?.tf>85?1.04:1.0;
+  const aps=cl(.35*(1-(apfip-2)/4)+.25*(1-(apera-2)/4)+.20*((apk9-5)/5)+.20*(1-(apbb9-1.5)/3.5));
+  const hps=cl(.35*(1-(hpfip-2)/4)+.25*(1-(hpera-2)/4)+.20*((hpk9-5)/5)+.20*(1-(hpbb9-1.5)/3.5));
+  const logit=1.05*hps-1.05*aps+.70*cl((hOPS-.65)/.2)-.70*cl((aOPS-.65)/.2)+.45*cl((hBpE-2.5)/-3.5+.5)-.45*cl((aBpE-2.5)/-3.5+.5)+(hWL-aWL)*.35+.18;
+  const hwp=sig(logit),awp=1-hwp;
+  const lg=4.4;
+  const hExp=lg*(1+(.5-hps)*.85)*(1+cl((aOPS-.65)/.2-.5)*.55)*pf*wmod*altB*tmp;
+  const aExp=lg*(1+(.5-aps)*.85)*(1+cl((hOPS-.65)/.2-.5)*.55)*pf*wmod*altB*tmp;
+  const total=+(hExp+aExp).toFixed(1);
+  const sigma=Math.sqrt(hExp+aExp)*.9;
+  const favHome=hwp>=awp;
+  const rlProb=favHome?normCDF((hExp-aExp-1.5)/sigma):normCDF((aExp-hExp-1.5)/sigma);
+  const totalLine=+(Math.round(total*2)/2-.5).toFixed(1);
+  const totalEdge=total-totalLine;
+  const f5logit=logit*1.15-.07;
+  const f5hwp=sig(f5logit),f5awp=1-f5hwp;
+  const f5total=+(total*.545).toFixed(1);
+  const f5line=+(Math.round(f5total*2)/2-.5).toFixed(1);
+  const apKExp=+(apk9/9*apExpIP).toFixed(1),hpKExp=+(hpk9/9*hpExpIP).toFixed(1);
+  const apKLine=Math.floor(apKExp)+.5,hpKLine=Math.floor(hpKExp)+.5;
+  const hLineTot=+(Math.round(hExp*2)/2-.5).toFixed(1),aLineTot=+(Math.round(aExp*2)/2-.5).toFixed(1);
+  const hHitP=1-Math.pow(1-hBA,4.2),aHitP=1-Math.pow(1-aBA,4.2);
+  const hTBExp=+(hSLG*3.7).toFixed(1),aTBExp=+(aSLG*3.7).toFixed(1);
+  const away=g.teams?.away?.team?.abbreviation,home=g.teams?.home?.team?.abbreviation;
+  // Generate all picks for this game
+  const rawPicks=[];
+  // ML
+  if(hwp>.52) rawPicks.push({cat:'Money Line',main:`${home} ML ${p2ml(hwp)}`,sub:`Modelo: ${pct(hwp)} victoria`,prob:hwp,edge:+(hwp-.52).toFixed(3)});
+  else rawPicks.push({cat:'Money Line',main:`${away} ML ${p2ml(awp)}`,sub:`Modelo: ${pct(awp)} victoria`,prob:awp,edge:+(awp-.52).toFixed(3)});
+  // Total
+  rawPicks.push({cat:'Total del partido',main:`${totalEdge>0?'OVER':'UNDER'} ${totalLine} runs`,sub:`Proyección: ${total} runs | Park factor ${pf}`,prob:totalEdge>0?cl(.50+totalEdge*.08):cl(.50+Math.abs(totalEdge)*.08),edge:+Math.abs(totalEdge*.07).toFixed(3)});
+  // Run line
+  rawPicks.push({cat:'Run Line (-1.5)',main:`${favHome?home:away} -1.5`,sub:`${pct(rlProb)} de ganar por 2+ carreras`,prob:rlProb,edge:+(rlProb-.52).toFixed(3)});
+  // F5 ML
+  const f5fav=f5hwp>=f5awp?home:away,f5favWP=Math.max(f5hwp,f5awp);
+  rawPicks.push({cat:'Primeras 5 Innings',main:`${f5fav} F5 ${p2ml(f5favWP)}`,sub:`${pct(f5favWP)} en F5 | Total F5: ${f5total} vs línea ${f5line}`,prob:f5favWP,edge:+(f5favWP-.52).toFixed(3)});
+  // F5 total
+  const f5tEdge=f5total-f5line;
+  rawPicks.push({cat:'Total F5',main:`${f5tEdge>0?'OVER':'UNDER'} ${f5line} runs (F5)`,sub:`Proyección F5: ${f5total} carreras`,prob:cl(.50+Math.abs(f5tEdge)*.09),edge:+Math.abs(f5tEdge*.08).toFixed(3)});
+  // Best K prop
+  const bestK=apKExp-apKLine>=hpKExp-hpKLine?{name:g.teams?.away?.probablePitcher?.fullName||away,kExp:apKExp,kLine:apKLine,kEdge:apKExp-apKLine}:{name:g.teams?.home?.probablePitcher?.fullName||home,kExp:hpKExp,kLine:hpKLine,kEdge:hpKExp-hpKLine};
+  rawPicks.push({cat:`Ks Pitcher`,main:`${bestK.name.split(' ').slice(-1)[0]} ${bestK.kEdge>=0?'OVER':'UNDER'} ${bestK.kLine}K`,sub:`Proyección: ${bestK.kExp}K`,prob:cl(.50+Math.abs(bestK.kEdge)*.09),edge:+Math.abs(bestK.kEdge*.08).toFixed(3)});
+  // Team total home
+  const hTE=hExp-hLineTot;
+  rawPicks.push({cat:`Total ${home}`,main:`${home} ${hTE>0?'OVER':'UNDER'} ${hLineTot}`,sub:`Proyección: ${hExp.toFixed(1)} carreras`,prob:cl(.50+Math.abs(hTE)*.09),edge:+Math.abs(hTE*.08).toFixed(3)});
+  // Sorted by prob desc
+  rawPicks.sort((a,b)=>b.prob-a.prob);
+  const top3=rawPicks.slice(0,3).map(p=>({...p,conf:p.prob>=.58?'High':p.prob>=.53?'Medium':'Low'}));
+  return{away,home,awayFull:g.teams?.away?.team?.name,homeFull:g.teams?.home?.team?.name,venue:stad?.n||g.venue?.name,time:fmtTime(g.gameDate),awayWP:+awp.toFixed(4),homeWP:+hwp.toFixed(4),awayML:p2ml(awp),homeML:p2ml(hwp),total,totalLine,hExp:+hExp.toFixed(2),aExp:+aExp.toFixed(2),hLineTot,aLineTot,rlProb:+rlProb.toFixed(4),rlFavHome:favHome,f5:{hwp:+f5hwp.toFixed(4),awp:+f5awp.toFixed(4),total:f5total,line:f5line},pitchers:{away:{name:g.teams?.away?.probablePitcher?.fullName||'TBD',era:+apera.toFixed(2),fip:+apfip.toFixed(2),whip:+apwhip.toFixed(2),k9:+apk9.toFixed(1),bb9:+apbb9.toFixed(1),expIP:+apExpIP.toFixed(1),kExp:apKExp,kLine:apKLine,kEdge:+(apKExp-apKLine).toFixed(2)},home:{name:g.teams?.home?.probablePitcher?.fullName||'TBD',era:+hpera.toFixed(2),fip:+hpfip.toFixed(2),whip:+hpwhip.toFixed(2),k9:+hpk9.toFixed(1),bb9:+hpbb9.toFixed(1),expIP:+hpExpIP.toFixed(1),kExp:hpKExp,kLine:hpKLine,kEdge:+(hpKExp-hpKLine).toFixed(2)}},batters:{aBA:+aBA.toFixed(3),hBA:+hBA.toFixed(3),aSLG:+aSLG.toFixed(3),hSLG:+hSLG.toFixed(3),aHitP:+aHitP.toFixed(3),hHitP:+hHitP.toFixed(3),aTBExp,hTBExp,aTBLine:aSLG>.45?2.5:1.5,hTBLine:hSLG>.45?2.5:1.5,aOPS:+aOPS.toFixed(3),hOPS:+hOPS.toFixed(3)},weather:wx,pf,picks:top3,allPicks:rawPicks,homeId:g.teams?.home?.team?.id,awayId:g.teams?.away?.team?.id};
+}
+
+// ── Main ──────────────────────────────────────────────────────────────────────
+async function runAll(){
+  const date=document.getElementById('date-pick').value;
+  const btn=document.getElementById('main-btn');
+  btn.disabled=true;btn.innerHTML='<i class="ti ti-loader-2" style="animation:spin .7s linear infinite"></i>Analizando...';
+  ['picks-area','parlay-area','pitcher-area','batter-area'].forEach(id=>document.getElementById(id).innerHTML='<div class="lbox"><div class="spin"></div><div>Consultando MLB Stats API...</div><p>Datos reales en tiempo real</p></div>');
+  document.getElementById('srow').style.display='none';
+  try{
+    const yr=new Date().getFullYear();
+    const sched=await getSched(date);
+    const active=sched.filter(g=>g.status?.abstractGameState!=='Final');
+    if(!active.length){document.getElementById('picks-area').innerHTML='<div class="ebox">No hay partidos para esta fecha.</div>';return;}
+    const games=[];
+    for(const g of active){
+      const hId=g.teams?.home?.team?.id,aId=g.teams?.away?.team?.id;
+      const hpId=g.teams?.home?.probablePitcher?.id,apId=g.teams?.away?.probablePitcher?.id;
+      const stad=ST[hId]||{};
+      const [apSt,hpSt,aSt,hSt,aR,hR,wx,aBatters,hBatters]=await Promise.all([getPSt(apId,yr),getPSt(hpId,yr),getTSt(aId,yr),getTSt(hId,yr),getWL(aId,yr),getWL(hId,yr),getWeather(stad.lat||35,stad.lon||-90,stad.roof||'open'),getTopBatters(aId,yr),getTopBatters(hId,yr)]);
+      const gd=computeGame(g,apSt,hpSt,aSt,hSt,aR,hR,wx,stad);gd.topBatters={away:aBatters,home:hBatters};games.push(gd);
+    }
+    allGames=games;
+    const allHigh=games.flatMap(g=>g.picks.filter(p=>p.conf==='High').map(p=>({...p,matchup:`${g.away} @ ${g.home}`,game:g})));
+    const allMed=games.flatMap(g=>g.picks.filter(p=>p.conf==='Medium'));
+    document.getElementById('srow').style.display='grid';
+    document.getElementById('sm-g').textContent=games.length;
+    document.getElementById('sm-h').textContent=allHigh.length;
+    document.getElementById('sm-m').textContent=allMed.length;
+    document.getElementById('sm-ov').textContent=games.filter(g=>g.total>g.totalLine).length;
+    const parlays=buildParlays(games);
+    document.getElementById('sm-p').textContent=parlays.length;
+    saveHistory(date, games);
+    renderPicksArea(games);
+    renderParlays(parlays,games);
+    renderPitchers(games);
+    renderBatters(games);
+  }catch(e){
+    document.getElementById('picks-area').innerHTML=`<div class="errbox"><i class="ti ti-alert-circle"></i> ${e.message}</div>`;
+    ['parlay-area','pitcher-area','batter-area'].forEach(id=>document.getElementById(id).innerHTML='');
+  }finally{btn.disabled=false;btn.innerHTML='<i class="ti ti-refresh"></i>Analizar partidos';}
+}
+
+// ── Renders ───────────────────────────────────────────────────────────────────
+function confClass(c){return c==='High'?'badge-high conf-high':c==='Medium'?'badge-med conf-med':'badge-low conf-low';}
+function confLabel(c){return c==='High'?'ALTA':c==='Medium'?'MEDIA':'BAJA';}
+function confBarClass(c){return c==='High'?'conf-high':c==='Medium'?'conf-med':'conf-low';}
+
+function renderPicksArea(games){
+  document.getElementById('picks-area').innerHTML='<div class="games-list">'+games.map(g=>{
+    const awayPct=Math.round(g.awayWP*100),homePct=Math.round(g.homeWP*100);
+    return`<div class="gcard">
+      <div class="gc-head">
+        <span><i class="ti ti-ball-baseball" style="font-size:10px;margin-right:4px"></i><strong>${g.away} @ ${g.home}</strong></span>
+        <span class="gc-venue">${g.time} · ${g.venue}</span>
+      </div>
+      <div class="gc-matchup">
+        <div class="gc-team"><div class="gc-abbr">${g.away}</div><div class="gc-pct" style="color:#378ADD">${awayPct}%</div><div class="gc-ml">${g.awayML}</div></div>
+        <div class="gc-divider">@</div>
+        <div class="gc-team home"><div class="gc-abbr">${g.home}</div><div class="gc-pct" style="color:var(--green)">${homePct}%</div><div class="gc-ml">${g.homeML}</div></div>
+      </div>
+      <div class="gc-bar"><div class="gc-bar-a" style="width:${awayPct}%"></div><div class="gc-bar-h" style="width:${homePct}%"></div></div>
+      <div class="picks-list">
+        ${g.picks.map(p=>`
+        <div class="pick-row">
+          <div class="pick-conf-bar ${confBarClass(p.conf)}"></div>
+          <div class="pick-badge ${confClass(p.conf)}">
+            <div class="pick-badge-label">${confLabel(p.conf)}</div>
+            <div class="pick-badge-val">${p.conf==='High'?'🟢':p.conf==='Medium'?'🟡':'🔴'}</div>
+          </div>
+          <div class="pick-content">
+            <div class="pick-cat">${p.cat}</div>
+            <div class="pick-main">${p.main}</div>
+            <div class="pick-sub">${p.sub}</div>
+          </div>
+          <div class="pick-right">
+            <div class="pick-prob" style="color:${p.conf==='High'?'var(--green)':p.conf==='Medium'?'var(--amber)':'var(--red)'}">${pct(p.prob)}</div>
+            <div class="pick-edge">edge +${(p.edge*100).toFixed(1)}%</div>
+          </div>
+        </div>`).join('')}
+      </div>
+      <div class="gc-weather"><i class="ti ti-cloud" style="font-size:10px"></i>${g.weather.tf}°F · ${g.weather.cond} · ${g.weather.wm}mph ${g.weather.wd} (${g.weather.wn}) · PF ${g.pf}</div>
+    </div>`;
+  }).join('')+'</div><div class="src">Fuente: MLB Stats API oficial · Clima: wttr.in · Modelo estadístico propio</div>';
+}
+
+function buildParlays(games){
+  // Collect HIGH confidence picks (prob >= 0.58), one per game
+  const highByGame=games.map(g=>{const h=g.allPicks.filter(p=>p.prob>=.58);return h.length?{...h[0],matchup:`${g.away} @ ${g.home}`}:null;}).filter(Boolean);
+  if(highByGame.length<2) return[];
+  const parlays=[];
+  // 2-leg parlays: top combinations
+  for(let i=0;i<Math.min(highByGame.length,6);i++){
+    for(let j=i+1;j<Math.min(highByGame.length,6);j++){
+      const legs=[highByGame[i],highByGame[j]];
+      const cp=legs.reduce((a,l)=>a*l.prob,1);
+      parlays.push({legs,cp,type:'2 equipos'});
+    }
+  }
+  // 3-leg parlay: best combo
+  if(highByGame.length>=3){
+    for(let i=0;i<Math.min(highByGame.length,5);i++){
+      for(let j=i+1;j<Math.min(highByGame.length,5);j++){
+        for(let k=j+1;k<Math.min(highByGame.length,5);k++){
+          const legs=[highByGame[i],highByGame[j],highByGame[k]];
+          const cp=legs.reduce((a,l)=>a*l.prob,1);
+          parlays.push({legs,cp,type:'3 equipos'});
+        }
+      }
+    }
+  }
+  // Best 4-leg
+  if(highByGame.length>=4){
+    const top4=highByGame.slice(0,4);
+    const cp=top4.reduce((a,l)=>a*l.prob,1);
+    parlays.push({legs:top4,cp,type:'4 equipos'});
+  }
+  parlays.sort((a,b)=>b.cp-a.cp);
+  return parlays.slice(0,6);
+}
+
+function renderParlays(parlays,games){
+  const highPicks=games.flatMap(g=>g.allPicks.filter(p=>p.conf==='High').map(p=>({...p,matchup:`${g.away} @ ${g.home}`})));
+  if(!parlays.length){document.getElementById('parlay-area').innerHTML='<div class="ebox">No hay suficientes picks de Alta Confianza para armar parlays hoy.<br><span style="font-size:11px">Se necesitan ≥2 picks con probabilidad ≥58%.</span></div>';return;}
+  document.getElementById('parlay-area').innerHTML=`
+    <div style="margin-bottom:1rem;padding:.6rem .9rem;background:var(--gbg);border:1px solid var(--gborder);border-radius:var(--rs);font-size:12px;color:var(--gtx)"><i class="ti ti-shield-check" style="vertical-align:-2px;margin-right:4px"></i><strong>Solo picks de Alta Confianza (≥58%)</strong> · Todos los picks son verdes</div>
+    `+parlays.map((p,idx)=>{
+    const impliedOdds=+(1/p.cp).toFixed(2);
+    const americanOdds=impliedOdds>=2?`+${Math.round((impliedOdds-1)*100)}`:String(Math.round(-100/(impliedOdds-1)));
+    const payout100=Math.round((impliedOdds-1)*100);
+    return`<div class="parlay-card">
+      <div class="parlay-head">
+        <div class="parlay-title"><i class="ti ti-link" style="vertical-align:-2px;margin-right:4px"></i>Parlay ${idx+1} · ${p.type}</div>
+        <div class="parlay-odds">${americanOdds}</div>
+      </div>
+      <div class="parlay-body">
+        ${p.legs.map((leg,li)=>`<div class="parlay-leg">
+          <div class="parlay-leg-num">${li+1}</div>
+          <div class="parlay-leg-info">
+            <div class="parlay-leg-pick">${leg.main}</div>
+            <div class="parlay-leg-game">${leg.matchup} · ${leg.cat}</div>
+          </div>
+          <div class="parlay-leg-prob">${pct(leg.prob)}</div>
+        </div>`).join('')}
+      </div>
+      <div class="parlay-foot">
+        <span class="parlay-pct">Prob. combinada: ${pct(p.cp)} · Cuota: ${impliedOdds}x</span>
+        <span class="parlay-payout">$100 → $${payout100+100} (gana $${payout100})</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderPitchers(games){
+  const pitchers=games.flatMap(g=>[{...g.pitchers.away,team:g.away,opp:g.home,oppOPS:g.batters.aOPS,matchup:`${g.away} @ ${g.home}`,time:g.time},{...g.pitchers.home,team:g.home,opp:g.away,oppOPS:g.batters.hOPS,matchup:`${g.away} @ ${g.home}`,time:g.time}]).filter(p=>p.name!=='TBD').sort((a,b)=>b.k9-a.k9);
+  document.getElementById('pitcher-area').innerHTML=pitchers.map(p=>{
+    const kRec=p.kEdge>.3?'OVER':p.kEdge<-.3?'UNDER':'NEUTRAL';
+    const kCls=p.kEdge>.3?'rec-over':p.kEdge<-.3?'rec-under':'rec-neu';
+    return`<div class="pitch-card">
+      <div class="pitch-head">
+        <div><div class="pitch-name">${p.name}</div><div class="pitch-meta">${p.team} vs ${p.opp} · ${p.time} · OPS rival: ${p.oppOPS}</div></div>
+      </div>
+      <div class="pitch-stats">
+        <div class="pstat"><div class="pstat-l">ERA</div><div class="pstat-v">${p.era}</div></div>
+        <div class="pstat"><div class="pstat-l">FIP</div><div class="pstat-v">${p.fip}</div></div>
+        <div class="pstat"><div class="pstat-l">K/9</div><div class="pstat-v" style="color:var(--green)">${p.k9}</div></div>
+        <div class="pstat"><div class="pstat-l">BB/9</div><div class="pstat-v">${p.bb9}</div></div>
+        <div class="pstat"><div class="pstat-l">IP/sal.</div><div class="pstat-v">${p.expIP}</div></div>
+      </div>
+      <div class="pitch-prop">
+        <div class="pp-label">Prop Ks — Proyección: <strong>${p.kExp}K</strong> · Línea aprox: ${p.kLine}</div>
+        <div class="pp-val" style="color:${p.kEdge>0?'var(--green)':'var(--red)'}">${kRec} ${p.kLine}</div>
+        <div class="pp-rec ${kCls}">${Math.abs(p.kEdge)>.3?'★ '+kRec:'NEUTRAL'}</div>
+      </div>
+    </div>`;
+  }).join('')+'<div class="src">K/9 × IP esperados = proyección Ks · Datos de temporada actual</div>';}
+
+function renderBatters(games){
+  // Build individual player rows from topBatters
+  const rows=[];
+  games.forEach(g=>{
+    const addPlayers=(players,team,oppPitcher,matchup,time,side)=>{
+      players.forEach(p=>{
+        if(!p.ba||p.ba===0)return;
+        const hitP=1-Math.pow(1-p.ba,4.2);
+        const tbExp=+(p.slg*3.7).toFixed(1);
+        const tbLine=p.slg>.45?2.5:1.5;
+        rows.push({name:p.name,pos:p.pos,team,ba:p.ba,slg:p.slg,ops:p.ops,obp:p.obp||0,hr:p.hr,rbi:p.rbi||0,hitP,tbExp,tbLine,oppPitcher,matchup,time,side});
+      });
+    };
+    if(g.topBatters?.away?.length) addPlayers(g.topBatters.away,g.away,g.pitchers.home.name,`${g.away} @ ${g.home}`,g.time,'away');
+    else rows.push({name:'Sin datos',pos:'—',team:g.away,ba:g.batters.aBA,slg:g.batters.aSLG,ops:g.batters.aOPS,obp:0,hr:0,rbi:0,hitP:g.batters.aHitP,tbExp:g.batters.aTBExp,tbLine:g.batters.aTBLine,oppPitcher:g.pitchers.home.name,matchup:`${g.away} @ ${g.home}`,time:g.time,side:'away'});
+    if(g.topBatters?.home?.length) addPlayers(g.topBatters.home,g.home,g.pitchers.away.name,`${g.away} @ ${g.home}`,g.time,'home');
+    else rows.push({name:'Sin datos',pos:'—',team:g.home,ba:g.batters.hBA,slg:g.batters.hSLG,ops:g.batters.hOPS,obp:0,hr:0,rbi:0,hitP:g.batters.hHitP,tbExp:g.batters.hTBExp,tbLine:g.batters.hTBLine,oppPitcher:g.pitchers.away.name,matchup:`${g.away} @ ${g.home}`,time:g.time,side:'home'});
+  });
+  rows.sort((a,b)=>b.hitP-a.hitP);
+  document.getElementById('batter-area').innerHTML=`
+    <div style="margin-bottom:.75rem;font-size:12px;color:var(--text2)">Top bateadores del día ordenados por P(Hit). Datos individuales de temporada actual via MLB Stats API.</div>
+    <div style="background:var(--bg2);border-radius:var(--rs);overflow:hidden">
+    <table class="bat-table"><thead><tr>
+      <th>Jugador</th><th>Equipo</th><th>vs Pitcher</th><th>BA</th><th>OBP</th><th>SLG</th><th>OPS</th><th>HR</th><th>RBI</th><th>P(Hit)</th><th>TB Exp.</th><th>Rec. TB</th>
+    </tr></thead><tbody>
+    ${rows.map((r,i)=>{
+      const hpCls=r.hitP>.74?'hp-h':r.hitP>.68?'hp-m':'hp-l';
+      const tbRec=r.tbExp>r.tbLine+.25?'★ OVER '+r.tbLine:r.tbExp<r.tbLine-.25?'UNDER '+r.tbLine:'—';
+      const tbColor=r.tbExp>r.tbLine?'var(--green)':'var(--text3)';
+      return `<tr style="${i%2===0?'':'background:var(--bg)'}">
+        <td><strong>${r.name}</strong><div style="font-size:9px;color:var(--text3)">${r.pos} · ${r.matchup}</div></td>
+        <td><span style="font-size:11px;font-weight:700;padding:1px 6px;border-radius:4px;background:var(--bg3)">${r.team}</span></td>
+        <td style="font-size:10px;color:var(--text2)">${r.oppPitcher?.split(' ').slice(-1)[0]||'TBD'}</td>
+        <td style="font-weight:700">${r.ba?.toFixed(3)||'—'}</td>
+        <td>${r.obp?.toFixed(3)||'—'}</td>
+        <td>${r.slg?.toFixed(3)||'—'}</td>
+        <td>${r.ops?.toFixed(3)||'—'}</td>
+        <td style="color:var(--amber);font-weight:600">${r.hr||0}</td>
+        <td style="color:var(--text2)">${r.rbi||0}</td>
+        <td><span class="hp-pill ${hpCls}">${pct(r.hitP)}</span></td>
+        <td style="font-weight:700;color:var(--green)">${r.tbExp||'—'}</td>
+        <td style="font-size:11px;font-weight:700;color:${tbColor}">${tbRec}</td>
+      </tr>`;
+    }).join('')}
+    </tbody></table></div>
+    <div class="src">P(Hit) = 1-(1-BA)^4.2 · TB = SLG×3.7 · Fuente: MLB Stats API temporada actual</div>`;
+}
+
+
+// ── Database layer ───────────────────────────────────────────────────────────
+let sbClient = null;
+let histView = 'mine'; // 'mine' | 'all'
+let calibChart = null, analCalibChart = null, analConfChart = null;
+
+// Get or create anonymous session ID
+function getSessionId() {
+  let sid = localStorage.getItem('mlbpro-session');
+  if (!sid) { sid = 'sess-' + Date.now() + '-' + Math.random().toString(36).slice(2,8); localStorage.setItem('mlbpro-session', sid); }
+  return sid;
+}
+
+function connectDB() {
+  const url = document.getElementById('sb-url').value.trim();
+  const key = document.getElementById('sb-key').value.trim();
+  if (!url || !key) { alert('Ingresa URL y Anon Key de Supabase'); return; }
+  try {
+    sbClient = supabase.createClient(url, key);
+    localStorage.setItem('sb-url', url);
+    localStorage.setItem('sb-key', key);
+    updateDBBadge(true);
+    loadHistory();
+    alert('✅ Conectado a Supabase correctamente');
+  } catch(e) { alert('Error conectando: ' + e.message); }
+}
+
+function disconnectDB() {
+  sbClient = null;
+  localStorage.removeItem('sb-url');
+  localStorage.removeItem('sb-key');
+  updateDBBadge(false);
+  loadHistory();
+}
+
+function updateDBBadge(connected) {
+  const badge = document.getElementById('db-status-badge');
+  if (!badge) return;
+  badge.textContent = connected ? '● Conectado' : 'Desconectado';
+  badge.className = 'db-badge ' + (connected ? 'db-on' : 'db-off');
+}
+
+function initDB() {
+  const url = localStorage.getItem('sb-url');
+  const key = localStorage.getItem('sb-key');
+  if (url && key) {
+    document.getElementById('sb-url').value = url;
+    document.getElementById('sb-key').value = key;
+    try { sbClient = supabase.createClient(url, key); updateDBBadge(true); } catch(e) {}
+  }
+}
+
+function setHistView(v) {
+  histView = v;
+  document.getElementById('tog-mine').classList.toggle('active', v === 'mine');
+  document.getElementById('tog-all').classList.toggle('active', v === 'all');
+  loadHistory();
+}
+
+// ── Save predictions ──────────────────────────────────────────────────────────
+async function saveHistory(date, games) {
+  const sessionId = getSessionId();
+  // Always save to localStorage as backup
+  const key = 'mlbpro-' + date;
+  const summary = games.map(g => ({
+    id: null, // will be set by Supabase
+    away: g.away, home: g.home,
+    fav: g.homeWP >= g.awayWP ? g.home : g.away,
+    favP: Math.max(g.homeWP, g.awayWP),
+    conf: g.picks[0]?.conf || 'Low',
+    total: g.total, result: null,
+    topPick: g.picks[0]?.main || '',
+    topPickProb: g.picks[0]?.prob || 0,
+    homeWP: g.homeWP, awayWP: g.awayWP,
+    homeML: g.homeML, awayML: g.awayML,
+    venue: g.venue, session_id: sessionId
+  }));
+  const ex = JSON.parse(localStorage.getItem(key) || 'null');
+  if (ex) summary.forEach((s,i) => { if (ex[i]) s.result = ex[i].result; s.id = ex[i]?.id; });
+  localStorage.setItem(key, JSON.stringify(summary));
+  const idx = JSON.parse(localStorage.getItem('mlbpro-idx') || '[]');
+  if (!idx.includes(date)) { idx.unshift(date); localStorage.setItem('mlbpro-idx', JSON.stringify(idx.slice(0,90))); }
+
+  // Save to Supabase if connected
+  if (sbClient) {
+    try {
+      const rows = games.map(g => ({
+        session_id: sessionId,
+        game_date: date,
+        away: g.away, home: g.home,
+        venue: g.venue,
+        fav: g.homeWP >= g.awayWP ? g.home : g.away,
+        fav_prob: +Math.max(g.homeWP, g.awayWP).toFixed(4),
+        confidence: g.picks[0]?.conf || 'Low',
+        predicted_total: g.total,
+        home_wp: +g.homeWP.toFixed(4), away_wp: +g.awayWP.toFixed(4),
+        home_ml: g.homeML, away_ml: g.awayML,
+        top_pick_cat: g.picks[0]?.cat || '',
+        top_pick_main: g.picks[0]?.main || '',
+        top_pick_prob: +(g.picks[0]?.prob || 0).toFixed(4),
+        top_pick_edge: +(g.picks[0]?.edge || 0).toFixed(4),
+      }));
+      const { data, error } = await sbClient.from('predictions').insert(rows).select('id,away,home');
+      if (!error && data) {
+        // Update localStorage with Supabase IDs
+        const stored = JSON.parse(localStorage.getItem(key) || '[]');
+        data.forEach(row => {
+          const item = stored.find(s => s.away === row.away && s.home === row.home);
+          if (item) item.id = row.id;
+        });
+        localStorage.setItem(key, JSON.stringify(stored));
+      }
+    } catch(e) { console.warn('Supabase save error:', e); }
+  }
+}
+
+// ── Mark result ───────────────────────────────────────────────────────────────
+async function markResult(date, away, home, result) {
+  // Update localStorage
+  const key = 'mlbpro-' + date;
+  const data = JSON.parse(localStorage.getItem(key) || 'null');
+  if (!data) return;
+  const g = data.find(x => x.away === away && x.home === home);
+  if (g) {
+    g.result = result;
+    localStorage.setItem(key, JSON.stringify(data));
+    // Update Supabase if we have an ID
+    if (sbClient && g.id) {
+      await sbClient.from('predictions').update({ result }).eq('id', g.id).catch(()=>{});
+    }
+  }
+  loadHistory();
+}
+
+// ── Load history ──────────────────────────────────────────────────────────────
+async function loadHistory() {
+  let rows = [];
+  if (sbClient && histView === 'all') {
+    // Load from Supabase (community view)
+    try {
+      const { data, error } = await sbClient
+        .from('predictions')
+        .select('*')
+        .order('game_date', { ascending: false })
+        .limit(200);
+      if (!error && data) {
+        rows = data.map(r => ({
+          id: r.id, date: r.game_date,
+          away: r.away, home: r.home,
+          fav: r.fav, favP: r.fav_prob,
+          conf: r.confidence, total: r.predicted_total,
+          topPick: r.top_pick_main, result: r.result,
+          session_id: r.session_id
+        }));
+      }
+    } catch(e) { console.warn('Supabase load error:', e); }
+  } else {
+    // Load from localStorage (personal view)
+    const idx = JSON.parse(localStorage.getItem('mlbpro-idx') || '[]');
+    idx.forEach(d => {
+      const r = JSON.parse(localStorage.getItem('mlbpro-' + d) || 'null');
+      if (r) r.forEach(g => rows.push({...g, date: d}));
+    });
+  }
+
+  const total = rows.length;
+  const graded = rows.filter(r => r.result != null).length;
+  const correct = rows.filter(r => r.result === 'win').length;
+  const highGraded = rows.filter(r => r.result != null && r.conf === 'High');
+  const highCorrect = highGraded.filter(r => r.result === 'win').length;
+  const roi = graded > 0 ? (correct * 91 - (graded - correct) * 100) / graded : null;
+
+  document.getElementById('h-total').textContent = total;
+  document.getElementById('h-graded').textContent = graded;
+  document.getElementById('h-acc').textContent = graded > 0 ? Math.round(correct / graded * 100) + '%' : '—';
+  document.getElementById('h-high-acc').textContent = highGraded.length > 0 ? Math.round(highCorrect / highGraded.length * 100) + '%' : '—';
+  document.getElementById('h-roi').textContent = roi != null ? (roi >= 0 ? '+' : '') + roi.toFixed(1) + '%' : '—';
+  updateCalib(rows.filter(r => r.result != null));
+
+  if (!rows.length) {
+    document.getElementById('hist-wrap').innerHTML = '<div class="ebox">No hay predicciones aún.<br><span style="font-size:11px">Corre el análisis y marca resultados con ✓ ✗</span></div>';
+    return;
+  }
+  const mySessionId = getSessionId();
+  const cS = c => c==='High'?'background:var(--gbg);color:var(--gtx)':c==='Medium'?'background:var(--abg);color:var(--atx)':'background:var(--bg3);color:var(--text2)';
+  const cL = c => c==='High'?'🟢 Alta':c==='Medium'?'🟡 Media':'🔴 Baja';
+  document.getElementById('hist-wrap').innerHTML = `
+    <div style="overflow-x:auto">
+    <table class="htb"><thead><tr>
+      <th>Fecha</th><th>Partido</th><th>Favorito</th><th>Prob</th><th>Conf</th><th>Total</th><th>Mejor Pick</th><th>Resultado</th>
+    </tr></thead><tbody>
+    ${rows.map(r => `<tr style="${r.session_id && r.session_id !== mySessionId ? 'opacity:.7' : ''}">
+      <td>${r.date}</td>
+      <td><strong>${r.away}</strong> @ <strong>${r.home}</strong></td>
+      <td>${r.fav}</td>
+      <td style="font-weight:700">${Math.round((r.favP||0)*100)}%</td>
+      <td><span style="font-size:10px;padding:2px 7px;border-radius:4px;font-weight:600;${cS(r.conf)}">${cL(r.conf)}</span></td>
+      <td>${r.total?.toFixed(1)||'—'}</td>
+      <td style="font-size:10px;color:var(--text2);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.topPick||'—'}</td>
+      <td>
+        ${(histView==='mine'||r.session_id===mySessionId)?`
+        <button class="rb ${r.result==='win'?'win':''}" onclick="markResult('${r.date}','${r.away}','${r.home}','win')">✓</button>
+        <button class="rb ${r.result==='loss'?'loss':''}" onclick="markResult('${r.date}','${r.away}','${r.home}','loss')">✗</button>
+        `:r.result?`<span style="font-size:11px;font-weight:700;color:${r.result==='win'?'var(--green)':'var(--red)'}">${r.result==='win'?'✓ Ganó':'✗ Perdió'}</span>`:'<span style="color:var(--text3);font-size:10px">Pendiente</span>'}
+      </td>
+    </tr>`).join('')}
+    </tbody></table></div>`;
+}
+
+// ── Analytics ─────────────────────────────────────────────────────────────────
+async function loadAnalytics() {
+  let rows = [];
+  if (sbClient) {
+    try {
+      const { data } = await sbClient.from('predictions').select('*').order('game_date', { ascending: false }).limit(500);
+      if (data) rows = data.map(r => ({ conf: r.confidence, favP: r.fav_prob, result: r.result, date: r.game_date, total: r.predicted_total }));
+    } catch(e) {}
+  }
+  // Merge with localStorage
+  const idx = JSON.parse(localStorage.getItem('mlbpro-idx') || '[]');
+  idx.forEach(d => {
+    const r = JSON.parse(localStorage.getItem('mlbpro-' + d) || 'null');
+    if (r) r.forEach(g => { if (!rows.find(x => x.date === d && x.away === g.away)) rows.push({ conf: g.conf, favP: g.favP, result: g.result, date: d, total: g.total }); });
+  });
+
+  const graded = rows.filter(r => r.result != null);
+  const wins = graded.filter(r => r.result === 'win').length;
+  const roi = graded.length > 0 ? (wins * 91 - (graded.length - wins) * 100) / graded.length : null;
+
+  // Best streak
+  let streak = 0, maxStreak = 0;
+  [...graded].reverse().forEach(r => { if (r.result==='win') { streak++; maxStreak = Math.max(maxStreak, streak); } else streak = 0; });
+
+  document.getElementById('an-total').textContent = rows.length;
+  document.getElementById('an-winpct').textContent = graded.length > 0 ? Math.round(wins/graded.length*100)+'%' : '—';
+  const hg = rows.filter(r => r.result != null && r.conf === 'High');
+  const hw = hg.filter(r => r.result === 'win').length;
+  document.getElementById('an-highwp').textContent = hg.length > 0 ? Math.round(hw/hg.length*100)+'%' : '—';
+  document.getElementById('an-roi').textContent = roi != null ? (roi>=0?'+':'')+roi.toFixed(1)+'%' : '—';
+  document.getElementById('an-streak').textContent = maxStreak > 0 ? maxStreak + ' seguidas' : '—';
+
+  // Count unique game dates
+  const dates = [...new Set(rows.map(r => r.date))];
+  document.getElementById('an-games').textContent = dates.length + ' fechas';
+
+  // Calibration chart
+  const bk = [{lo:.5,hi:.6,label:'50–60%'},{lo:.6,hi:.7,label:'60–70%'},{lo:.7,hi:.8,label:'70–80%'},{lo:.8,hi:1,label:'80%+'}];
+  bk.forEach(b => { b.m=0; b.c=0; });
+  graded.forEach(r => { const b=bk.find(b=>r.favP>=b.lo&&r.favP<b.hi); if(b){b.m++;if(r.result==='win')b.c++;} });
+  const dark = window.matchMedia('(prefers-color-scheme:dark)').matches;
+  const gc = c => dark?'rgba(255,255,255,.07)':'rgba(0,0,0,.06)';
+
+  if (analCalibChart) { analCalibChart.destroy(); analCalibChart = null; }
+  const ctx1 = document.getElementById('anal-calib');
+  if (ctx1) analCalibChart = new Chart(ctx1, {type:'bar',data:{labels:bk.map(b=>b.label),datasets:[{label:'Acierto real',data:bk.map(b=>b.m>0?Math.round(b.c/b.m*100):null),backgroundColor:'#1D9E75',borderRadius:4},{label:'Predicción',data:bk.map(b=>Math.round((b.lo+b.hi)/2*100)),backgroundColor:'#85B7EB',borderRadius:4}]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:10},boxWidth:10}}},scales:{y:{beginAtZero:true,max:100,ticks:{callback:v=>v+'%',font:{size:9}},grid:{color:gc()}},x:{ticks:{font:{size:9}},grid:{display:false}}}}});
+
+  // Win% by confidence
+  const confData = ['High','Medium','Low'].map(c => {
+    const cg = rows.filter(r => r.result!=null && r.conf===c);
+    const cw = cg.filter(r => r.result==='win').length;
+    return cg.length > 0 ? Math.round(cw/cg.length*100) : null;
+  });
+  if (analConfChart) { analConfChart.destroy(); analConfChart = null; }
+  const ctx2 = document.getElementById('anal-conf');
+  if (ctx2) analConfChart = new Chart(ctx2, {type:'bar',data:{labels:['🟢 Alta','🟡 Media','🔴 Baja'],datasets:[{label:'Win%',data:confData,backgroundColor:['#1D9E75','#BA7517','#c0392b'],borderRadius:4}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{y:{beginAtZero:true,max:100,ticks:{callback:v=>v+'%',font:{size:9}},grid:{color:gc()}},x:{ticks:{font:{size:9}},grid:{display:false}}}}});
+
+  // Daily performance table
+  const byDate = {};
+  graded.forEach(r => {
+    if (!byDate[r.date]) byDate[r.date] = {wins:0,losses:0};
+    if (r.result==='win') byDate[r.date].wins++; else byDate[r.date].losses++;
+  });
+  const dailyRows = Object.entries(byDate).sort((a,b)=>b[0].localeCompare(a[0])).slice(0,30);
+  if (dailyRows.length) {
+    document.getElementById('anal-daily').innerHTML = `<div style="overflow-x:auto"><table class="perf-table"><thead><tr><th>Fecha</th><th>Ganados</th><th>Perdidos</th><th>Win%</th><th>Barra</th></tr></thead><tbody>${dailyRows.map(([date,d])=>{const wp=Math.round(d.wins/(d.wins+d.losses)*100);return`<tr><td>${date}</td><td style="color:var(--green);font-weight:700">${d.wins}</td><td style="color:var(--red)">${d.losses}</td><td style="font-weight:700">${wp}%</td><td style="width:120px"><div class="win-bar"><div class="win-bar-fill" style="width:${wp}%"></div></div></td></tr>`;}).join('')}</tbody></table></div>`;
+  } else {
+    document.getElementById('anal-daily').innerHTML = '<div class="ebox">Marca resultados para ver el rendimiento diario.</div>';
+  }
+}
+
+function updateCalib(graded) {
+  const ctx = document.getElementById('calib-chart');
+  if (!ctx) return;
+  if (calibChart) { calibChart.destroy(); calibChart = null; }
+  const bk = [{lo:.5,hi:.6,label:'50–60%'},{lo:.6,hi:.7,label:'60–70%'},{lo:.7,hi:.8,label:'70–80%'},{lo:.8,hi:1,label:'80%+'}];
+  bk.forEach(b => { b.m=0; b.c=0; });
+  graded.forEach(r => { const b=bk.find(b=>r.favP>=b.lo&&r.favP<b.hi); if(b){b.m++;if(r.result==='win')b.c++;} });
+  const dark = window.matchMedia('(prefers-color-scheme:dark)').matches;
+  calibChart = new Chart(ctx,{type:'bar',data:{labels:bk.map(b=>b.label),datasets:[{label:'Acierto real',data:bk.map(b=>b.m>0?Math.round(b.c/b.m*100):null),backgroundColor:'#1D9E75',borderRadius:4},{label:'Predicción modelo',data:bk.map(b=>Math.round((b.lo+b.hi)/2*100)),backgroundColor:'#85B7EB',borderRadius:4}]},options:{responsive:true,plugins:{legend:{position:'top',labels:{font:{size:11},boxWidth:12}}},scales:{y:{beginAtZero:true,max:100,ticks:{callback:v=>v+'%',font:{size:10}},grid:{color:dark?'rgba(255,255,255,.07)':'rgba(0,0,0,.06)'}},x:{ticks:{font:{size:10}},grid:{display:false}}}}});
+}
+
+</script>
+</body>
+</html>

@@ -382,6 +382,16 @@ input[type=range]{width:100%;accent-color:var(--gold)}
 <script>
 const ST={108:{n:'Angel Stadium',lat:33.8003,lon:-117.8827,pf:.99,roof:'open'},109:{n:'Chase Field',lat:33.4455,lon:-112.0667,pf:.98,roof:'retractable'},110:{n:'Camden Yards',lat:39.2838,lon:-76.6218,pf:1.03,roof:'open'},111:{n:'Fenway Park',lat:42.3467,lon:-71.0972,pf:1.06,roof:'open'},112:{n:'Wrigley Field',lat:41.9484,lon:-87.6553,pf:1.04,roof:'open'},113:{n:'GABP',lat:39.0979,lon:-84.5082,pf:1.08,roof:'open'},114:{n:'Progressive Field',lat:41.4962,lon:-81.6852,pf:.97,roof:'open'},115:{n:'Coors Field',lat:39.7559,lon:-104.9942,pf:1.24,roof:'open'},116:{n:'Comerica Park',lat:42.339,lon:-83.0485,pf:.95,roof:'open'},117:{n:'Minute Maid Park',lat:29.7572,lon:-95.3555,pf:1.00,roof:'retractable'},118:{n:'Kauffman Stadium',lat:39.0514,lon:-94.4803,pf:.96,roof:'open'},119:{n:'Dodger Stadium',lat:34.0739,lon:-118.24,pf:.96,roof:'open'},120:{n:'Nationals Park',lat:38.873,lon:-77.0074,pf:1.00,roof:'open'},121:{n:'Citi Field',lat:40.7571,lon:-73.8458,pf:.97,roof:'open'},133:{n:'Oakland Coliseum',lat:37.7516,lon:-122.2005,pf:.93,roof:'open'},134:{n:'PNC Park',lat:40.4469,lon:-80.0057,pf:.97,roof:'open'},135:{n:'Petco Park',lat:32.7076,lon:-117.157,pf:.93,roof:'open'},136:{n:'T-Mobile Park',lat:47.5914,lon:-122.3325,pf:.94,roof:'retractable'},137:{n:'Oracle Park',lat:37.7786,lon:-122.3893,pf:.93,roof:'open'},138:{n:'Busch Stadium',lat:38.6226,lon:-90.1928,pf:.99,roof:'open'},139:{n:'Tropicana Field',lat:27.7683,lon:-82.6534,pf:.96,roof:'dome'},140:{n:'Globe Life Field',lat:32.7473,lon:-97.0822,pf:1.01,roof:'retractable'},141:{n:'Rogers Centre',lat:43.6414,lon:-79.3894,pf:1.03,roof:'dome'},142:{n:'Target Field',lat:44.9817,lon:-93.2786,pf:1.01,roof:'open'},143:{n:'Citizens Bank Park',lat:39.9061,lon:-75.1665,pf:1.04,roof:'open'},144:{n:'Truist Park',lat:33.8908,lon:-84.4681,pf:1.02,roof:'open'},145:{n:'Guaranteed Rate',lat:41.8299,lon:-87.6338,pf:1.01,roof:'open'},146:{n:'loanDepot Park',lat:25.7781,lon:-80.2196,pf:.92,roof:'retractable'},147:{n:'Yankee Stadium',lat:40.8296,lon:-73.9262,pf:1.02,roof:'open'},158:{n:'Am. Family Field',lat:43.028,lon:-87.9712,pf:1.02,roof:'retractable'}};
 let API_KEY='',allGames=[],allPicks=[],allOddsLines=[];
+
+// Pre-fill setup fields from localStorage on page load
+window.addEventListener('DOMContentLoaded', () => {
+  const savedGas  = localStorage.getItem('gas-url');
+  const savedGem  = localStorage.getItem('mlbpro-gemini');
+  const savedOdds = localStorage.getItem('odds-key');
+  if(savedGas)  { const el=document.getElementById('gas-url-input');  if(el) el.value=savedGas; }
+  if(savedGem)  { const el=document.getElementById('api-key-input');  if(el) el.value=savedGem; }
+  if(savedOdds) { const el=document.getElementById('odds-key-input'); if(el) el.value=savedOdds; }
+});
 const MLB='https://statsapi.mlb.com/api/v1';
 const sf=(v,d=4.5)=>{const n=parseFloat(v);return isNaN(n)?d:n;};
 const cl=(v,a=0,b=1)=>Math.max(a,Math.min(b,v));
@@ -391,17 +401,48 @@ const pct=p=>`${Math.round(p*100)}%`;
 const normCDF=x=>{const t=1/(1+.3275911*Math.abs(x));const y=1-((.254829592+t*(-.284496736+t*(1.421413741+t*(-1.453152027+t*1.061405429))))*t*Math.exp(-x*x/2));return x>=0?y:1-y;};
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
-function startApp(){const k=document.getElementById('api-key-input').value.trim();if(k&&!k.startsWith('AIza')){document.getElementById('setup-err').style.display='block';return;}API_KEY=k;document.getElementById('setup').style.display='none';document.getElementById('app').style.display='block';const t=new Date();document.getElementById('date-pick').value=t.toISOString().slice(0,10);document.getElementById('hdr-date').textContent=t.toLocaleDateString('es-MX',{weekday:'short',month:'short',day:'numeric'});
-  const gasUrl = document.getElementById('gas-url-input')?.value?.trim();
-  if(gasUrl) localStorage.setItem('gas-url', gasUrl);
-  const ok=document.getElementById('odds-key-input')?.value?.trim();
-  if(ok) localStorage.setItem('odds-key',ok);
-  // Pre-fill saved values
-  const savedGas = localStorage.getItem('gas-url');
-  const savedOdds = localStorage.getItem('odds-key');
-  if(savedGas) document.getElementById('gas-url-input').value = savedGas;
-  if(savedOdds) document.getElementById('odds-key-input').value = savedOdds;
-  initDB();  loadHistory();}
+function startApp(){
+  try {
+    const k = document.getElementById('api-key-input').value.trim();
+    if(k && !k.startsWith('AIza')){
+      document.getElementById('setup-err').style.display='block';
+      return;
+    }
+    API_KEY = k;
+    if(k) localStorage.setItem('mlbpro-gemini', k);
+
+    // Save keys to localStorage
+    const gasUrl = document.getElementById('gas-url-input')?.value?.trim();
+    if(gasUrl) localStorage.setItem('gas-url', gasUrl);
+    const ok = document.getElementById('odds-key-input')?.value?.trim();
+    if(ok) localStorage.setItem('odds-key', ok);
+
+    // Show app immediately — no waiting
+    document.getElementById('setup').style.display = 'none';
+    document.getElementById('app').style.display   = 'block';
+
+    const t = new Date();
+    document.getElementById('date-pick').value = t.toISOString().slice(0,10);
+    document.getElementById('hdr-date').textContent = t.toLocaleDateString('es-MX',{weekday:'short',month:'short',day:'numeric'});
+
+    // Load weights from localStorage first (instant)
+    loadWeights();
+
+    // Load local history immediately (instant)
+    loadHistory();
+
+    // Then sync from cloud in background (non-blocking)
+    setTimeout(() => {
+      initDB();
+    }, 100);
+
+  } catch(err) {
+    console.error('startApp error:', err);
+    // Show app anyway even if something fails
+    document.getElementById('setup').style.display = 'none';
+    document.getElementById('app').style.display   = 'block';
+  }
+}
 document.getElementById('api-key-input').addEventListener('keydown',e=>{if(e.key==='Enter')startApp();});
 function changeKey(){document.getElementById('setup').style.display='flex';document.getElementById('app').style.display='none';}
 function switchTab(i){document.querySelectorAll('.tab').forEach((t,j)=>t.classList.toggle('active',j===i));document.querySelectorAll('.nb').forEach((b,j)=>b.classList.toggle('active',j===i));}
@@ -1258,23 +1299,51 @@ function updateDBBadge(connected) {
 }
 
 function initDB() {
-  const url = localStorage.getItem('sb-url');
-  const key = localStorage.getItem('sb-key');
-  if (url && key) {
-    document.getElementById('sb-url').value = url;
-    document.getElementById('sb-key').value = key;
-    try { sbClient = supabase.createClient(url, key); updateDBBadge(true); } catch(e) {}
-  }
-  // Auto-sync from cloud on startup
-  syncFromCloud().then(() => {
-    loadHistory();
-    const badge = document.getElementById('cloud-status');
-    if (badge && getGasUrl()) {
-      badge.innerHTML = '<i class="ti ti-cloud" style="font-size:10px"></i> Google Sheets';
-      badge.style.background = 'var(--gbg)';
-      badge.style.color = 'var(--gtx)';
+  try {
+    // Restore Supabase credentials if saved
+    const url = localStorage.getItem('sb-url');
+    const key = localStorage.getItem('sb-key');
+    if (url && key) {
+      const sbUrlEl = document.getElementById('sb-url');
+      const sbKeyEl = document.getElementById('sb-key');
+      if(sbUrlEl) sbUrlEl.value = url;
+      if(sbKeyEl) sbKeyEl.value = key;
+      try { sbClient = supabase.createClient(url, key); updateDBBadge(true); } catch(e) {}
     }
-  }).catch(()=>{});
+
+    // Cloud sync — with 8 second timeout so it never hangs
+    const gasUrl = getGasUrl();
+    if (!gasUrl) return;
+
+    const badge = document.getElementById('cloud-status');
+    if (badge) {
+      badge.innerHTML = '<i class="ti ti-loader-2" style="font-size:10px;animation:spin .7s linear infinite"></i> Sincronizando...';
+    }
+
+    const syncPromise = syncFromCloud();
+    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000));
+
+    Promise.race([syncPromise, timeoutPromise])
+      .then(() => {
+        loadHistory();
+        if (badge) {
+          badge.innerHTML = '<i class="ti ti-cloud" style="font-size:10px"></i> Google Sheets ✓';
+          badge.style.background = 'var(--gbg)';
+          badge.style.color = 'var(--gtx)';
+        }
+      })
+      .catch((err) => {
+        console.warn('Cloud sync failed:', err.message);
+        if (badge) {
+          badge.innerHTML = '<i class="ti ti-cloud-off" style="font-size:10px"></i> Sin conexión';
+          badge.style.background = 'var(--rbg)';
+          badge.style.color = 'var(--rtx)';
+        }
+        // App still works with local data
+      });
+  } catch(e) {
+    console.warn('initDB error:', e);
+  }
 }
 
 function setHistView(v) {

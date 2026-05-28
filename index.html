@@ -756,9 +756,11 @@ function computeGame(g,apSt,hpSt,aSt,hSt,aR,hR,wx,stad,injuries,matchups,confirm
   rawPicks.sort((a,b)=>b.prob-a.prob);
   const top3=rawPicks.slice(0,3).map(p=>({...p,conf:p.prob>=.58?'High':p.prob>=.53?'Medium':'Low'}));
 
+  const gStatus = g.status?.abstractGameState || 'Preview';
   return{
     away,home,awayFull:g.teams?.away?.team?.name,homeFull:g.teams?.home?.team?.name,
     venue:stad?.n||g.venue?.name,time:fmtTime(g.gameDate),gamePk:g.gamePk,
+    status:gStatus,gameStarted:gStatus==='Live'||gStatus==='Final',
     awayWP:+awp.toFixed(4),homeWP:+hwp.toFixed(4),awayML:p2ml(awp),homeML:p2ml(hwp),
     total,totalLine,hExp:+hExp.toFixed(2),aExp:+aExp.toFixed(2),hLineTot,aLineTot,
     rlProb:+rlProb.toFixed(4),rlFavHome:favHome,
@@ -784,12 +786,33 @@ function confLabel(c){return c==='High'?'ALTA':c==='Medium'?'MEDIA':'BAJA';}
 function confBarClass(c){return c==='High'?'conf-high':c==='Medium'?'conf-med':'conf-low';}
 
 function renderPicksArea(games){
-  document.getElementById('picks-area').innerHTML='<div class="games-list">'+games.map(g=>{
+  const date  = document.getElementById('date-pick')?.value || '';
+  const saved = JSON.parse(localStorage.getItem('mlbpro-' + date) || '[]');
+
+  // Merge each game with its locked picks (if saved before game started)
+  const mergedGames = games.map(g => {
+    const sv = saved.find(s => s.away === g.away && s.home === g.home);
+    if (sv?.locked && sv?.allPicks?.length && !g.gameStarted) {
+      return { ...g,
+        picks:   sv.allPicks,
+        homeWP:  sv.homeWP,  awayWP:  sv.awayWP,
+        homeML:  sv.homeML,  awayML:  sv.awayML,
+        isLocked: true,      savedAt:  sv.savedAt };
+    }
+    return { ...g, isLocked: false };
+  });
+
+  const _pa = document.getElementById('picks-area');
+  if (!_pa) return;
+  _pa.innerHTML = '<div class="games-list">' + mergedGames.map(g => {
     const awayPct=Math.round(g.awayWP*100),homePct=Math.round(g.homeWP*100);
     return`<div class="gcard">
       <div class="gc-head">
         <span><i class="ti ti-ball-baseball" style="font-size:10px;margin-right:4px"></i><strong>${g.away} @ ${g.home}</strong></span>
-        <span class="gc-venue">${g.time} · ${g.venue}</span>
+        <div style="display:flex;gap:5px;align-items:center">
+          ${g.isLocked ? '<span style="font-size:9px;padding:2px 6px;border-radius:3px;background:var(--bbg);color:var(--btx);display:flex;align-items:center;gap:3px"><i class="ti ti-lock" style="font-size:9px"></i>Pick original</span>' : ''}
+          <span class="gc-venue">${g.time} · ${g.venue}</span>
+        </div>
       </div>
       <div class="gc-matchup">
         <div class="gc-team"><div class="gc-abbr">${g.away}</div><div class="gc-pct" style="color:#378ADD">${awayPct}%</div><div class="gc-ml">${g.awayML}</div></div>
@@ -798,63 +821,30 @@ function renderPicksArea(games){
       </div>
       <div class="gc-bar"><div class="gc-bar-a" style="width:${awayPct}%"></div><div class="gc-bar-h" style="width:${homePct}%"></div></div>
       <div class="picks-list">
-        ${g.picks.map(p=>`
+        ${(g.picks||[]).map(p=>`
         <div class="pick-row">
-          <div class="pick-conf-bar ${confBarClass(p.conf)}"></div>
-          <div class="pick-badge ${confClass(p.conf)}">
-            <div class="pick-badge-label">${confLabel(p.conf)}</div>
+          <div class="pick-conf-bar ${p.conf==='High'?'conf-high':p.conf==='Medium'?'conf-med':'conf-low'}"></div>
+          <div class="pick-badge ${p.conf==='High'?'badge-high conf-high':p.conf==='Medium'?'badge-med conf-med':'badge-low conf-low'}">
+            <div class="pick-badge-label">${p.conf==='High'?'ALTA':p.conf==='Medium'?'MEDIA':'BAJA'}</div>
             <div class="pick-badge-val">${p.conf==='High'?'🟢':p.conf==='Medium'?'🟡':'🔴'}</div>
           </div>
           <div class="pick-content">
             <div class="pick-cat">${p.cat}</div>
             <div class="pick-main">${p.main}</div>
-            <div class="pick-sub">${p.sub}</div>
+            <div class="pick-sub">${p.sub||''}</div>
           </div>
           <div class="pick-right">
-            <div class="pick-prob" style="color:${p.conf==='High'?'var(--green)':p.conf==='Medium'?'var(--amber)':'var(--red)'}">${pct(p.prob)}</div>
-            <div class="pick-edge">edge +${(p.edge*100).toFixed(1)}%</div>
+            <div class="pick-prob" style="color:${p.conf==='High'?'var(--green)':p.conf==='Medium'?'var(--amber)':'var(--red)'}">${Math.round((p.prob||0)*100)}%</div>
+            <div class="pick-edge">edge +${((p.edge||0)*100).toFixed(1)}%</div>
           </div>
         </div>`).join('')}
       </div>
-      <div class="gc-weather"><i class="ti ti-cloud" style="font-size:10px"></i>${g.weather.tf}°F · ${g.weather.cond} · ${g.weather.wm}mph ${g.weather.wd} (${g.weather.wn}) · PF ${g.pf}</div>
+      <div class="gc-weather"><i class="ti ti-cloud" style="font-size:10px"></i>${g.weather?.tf||'—'}°F · ${g.weather?.cond||''} · ${g.weather?.wm||0}mph ${g.weather?.wd||''} (${g.weather?.wn||'—'}) · PF ${g.pf||'—'}</div>
     </div>`;
-  }).join('')+'</div><div class="src">Fuente: MLB Stats API oficial · Clima: wttr.in · Modelo estadístico propio</div>';
+  }).join('') + '</div>' +
+  '<div class="src"><i class="ti ti-lock" style="font-size:10px;vertical-align:-1px"></i> Picks bloqueados al guardar · Solo cambian si el partido ya inició · MLB Stats API</div>';
 }
 
-function buildParlays(games){
-  // Collect HIGH confidence picks (prob >= 0.58), one per game
-  const highByGame=games.map(g=>{const h=g.allPicks.filter(p=>p.prob>=.58);return h.length?{...h[0],matchup:`${g.away} @ ${g.home}`}:null;}).filter(Boolean);
-  if(highByGame.length<2) return[];
-  const parlays=[];
-  // 2-leg parlays: top combinations
-  for(let i=0;i<Math.min(highByGame.length,6);i++){
-    for(let j=i+1;j<Math.min(highByGame.length,6);j++){
-      const legs=[highByGame[i],highByGame[j]];
-      const cp=legs.reduce((a,l)=>a*l.prob,1);
-      parlays.push({legs,cp,type:'2 equipos'});
-    }
-  }
-  // 3-leg parlay: best combo
-  if(highByGame.length>=3){
-    for(let i=0;i<Math.min(highByGame.length,5);i++){
-      for(let j=i+1;j<Math.min(highByGame.length,5);j++){
-        for(let k=j+1;k<Math.min(highByGame.length,5);k++){
-          const legs=[highByGame[i],highByGame[j],highByGame[k]];
-          const cp=legs.reduce((a,l)=>a*l.prob,1);
-          parlays.push({legs,cp,type:'3 equipos'});
-        }
-      }
-    }
-  }
-  // Best 4-leg
-  if(highByGame.length>=4){
-    const top4=highByGame.slice(0,4);
-    const cp=top4.reduce((a,l)=>a*l.prob,1);
-    parlays.push({legs:top4,cp,type:'4 equipos'});
-  }
-  parlays.sort((a,b)=>b.cp-a.cp);
-  return parlays.slice(0,6);
-}
 
 function renderParlays(parlays,games){
   const highPicks=games.flatMap(g=>g.allPicks.filter(p=>p.conf==='High').map(p=>({...p,matchup:`${g.away} @ ${g.home}`})));
@@ -1303,21 +1293,41 @@ async function saveHistory(date, games) {
   const sessionId = getSessionId();
   // Always save to localStorage as backup
   const key = 'mlbpro-' + date;
-  const summary = games.map(g => ({
-    id: null, // will be set by Supabase
-    away: g.away, home: g.home,
-    fav: g.homeWP >= g.awayWP ? g.home : g.away,
-    favP: Math.max(g.homeWP, g.awayWP),
-    conf: g.picks[0]?.conf || 'Low',
-    total: g.total, result: null,
-    topPick: g.picks[0]?.main || '',
-    topPickProb: g.picks[0]?.prob || 0,
-    homeWP: g.homeWP, awayWP: g.awayWP,
-    homeML: g.homeML, awayML: g.awayML,
-    venue: g.venue, session_id: sessionId
-  }));
   const ex = JSON.parse(localStorage.getItem(key) || 'null');
-  if (ex) summary.forEach((s,i) => { if (ex[i]) s.result = ex[i].result; s.id = ex[i]?.id; });
+
+  const summary = games.map(g => {
+    // Check if we already have a saved pick for this game
+    const saved = ex ? ex.find(x => x.away === g.away && x.home === g.home) : null;
+    const gameStarted = g.status === 'Live' || g.status === 'Final' || g.gameStarted;
+
+    // If picks already exist AND game hasn't started → keep original picks (LOCKED)
+    if (saved && saved.locked && !gameStarted) {
+      return { ...saved }; // return the original pick unchanged
+    }
+
+    // Otherwise create/update the pick
+    return {
+      id:           saved?.id || null,
+      away:         g.away,
+      home:         g.home,
+      fav:          g.homeWP >= g.awayWP ? g.home : g.away,
+      favP:         Math.max(g.homeWP, g.awayWP),
+      conf:         g.picks[0]?.conf || 'Low',
+      total:        g.total,
+      result:       saved?.result || null,       // preserve result if marked
+      topPick:      g.picks[0]?.main || '',
+      topPickProb:  g.picks[0]?.prob || 0,
+      allPicks:     g.picks.map(p => ({cat:p.cat,main:p.main,prob:p.prob,edge:p.edge,conf:p.conf})),
+      homeWP:       g.homeWP,
+      awayWP:       g.awayWP,
+      homeML:       g.homeML,
+      awayML:       g.awayML,
+      venue:        g.venue,
+      session_id:   sessionId,
+      locked:       true,          // lock these picks — won't be overwritten
+      savedAt:      saved?.savedAt || new Date().toISOString(),
+    };
+  });
   localStorage.setItem(key, JSON.stringify(summary));
   const idx = JSON.parse(localStorage.getItem('mlbpro-idx') || '[]');
   if (!idx.includes(date)) { idx.unshift(date); localStorage.setItem('mlbpro-idx', JSON.stringify(idx.slice(0,90))); }

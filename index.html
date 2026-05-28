@@ -970,7 +970,7 @@ async function runAll(){
   ['picks-area','parlay-area','pitcher-area','batter-area'].forEach(id =>
     document.getElementById(id).innerHTML = '<div class="lbox"><div class="spin"></div><div>Consultando MLB Stats API...</div><p>Obteniendo lesiones, lineups, BvP y cuotas en tiempo real</p></div>'
   );
-  document.getElementById('srow').style.display = 'none';
+  const _sr=document.getElementById('srow'); if(_sr) _sr.style.display='none';
   try {
     const yr = new Date().getFullYear();
     loadWeights();
@@ -1016,13 +1016,13 @@ async function runAll(){
     const allMed  = games.flatMap(g => g.picks.filter(p => p.conf === 'Medium'));
     const injuryCount = games.reduce((s,g) => s + (g.injuries?.away?.length||0) + (g.injuries?.home?.length||0), 0);
     // Stats bar
-    document.getElementById('srow').style.display = 'grid';
-    setText('s-g', games.length);
-    setText('s-h', allHigh.length);
-    setText('s-m', allMed.length);
-    setText('s-o', games.filter(g => g.total > g.totalLine).length);
+    const _sr2=document.getElementById('srow'); if(_sr2) _sr2.style.display='grid';
+    setText('sm-g', games.length);
+    setText('sm-h', allHigh.length);
+    setText('sm-m', allMed.length);
+    setText('sm-ov', games.filter(g => g.total > g.totalLine).length);
     const parlays = buildParlays(games);
-    setText('s-p', parlays.length);
+    setText('sm-p', parlays.length);
     // Model stats
     setText('m-iters', trainIter);
     setText('m-loss', lossVal != null ? lossVal.toFixed(4) : '—');
@@ -1273,8 +1273,10 @@ function initDB() {
   const url = localStorage.getItem('sb-url');
   const key = localStorage.getItem('sb-key');
   if (url && key) {
-    document.getElementById('sb-url').value = url;
-    document.getElementById('sb-key').value = key;
+    const sbUrlEl = document.getElementById('sb-url');
+    const sbKeyEl = document.getElementById('sb-key');
+    if(sbUrlEl) sbUrlEl.value = url;
+    if(sbKeyEl) sbKeyEl.value = key;
     try { sbClient = supabase.createClient(url, key); updateDBBadge(true); } catch(e) {}
   }
   // Auto-sync from cloud on startup

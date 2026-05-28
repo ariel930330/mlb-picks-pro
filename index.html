@@ -156,6 +156,19 @@ input[type=date]{border:1px solid var(--b2);padding:6px 9px;border-radius:var(--
 .community-toggle{display:flex;gap:6px;margin-bottom:.85rem}
 .toggle-btn{padding:5px 14px;border-radius:20px;font-size:11px;cursor:pointer;border:1px solid var(--b2);background:transparent;color:var(--text2);font-family:inherit;font-weight:500}
 .toggle-btn.active{background:var(--gold);color:#fff;border-color:var(--gold)}
+
+.se{font-size:12px;color:var(--text3);padding:1.5rem;text-align:center}
+.injury-row{display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--b);font-size:11px}
+.injury-row:last-child{border-bottom:none}
+.injury-tag{font-size:9px;font-weight:700;padding:1px 5px;border-radius:3px;background:var(--rbg);color:var(--rtx)}
+.edge-row{display:flex;align-items:center;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--b);font-size:11px}
+.edge-row:last-child{border-bottom:none}
+.edge-val{font-weight:700;font-size:13px}
+.edge-pos{color:var(--green)}.edge-neg{color:var(--red)}.edge-neu{color:var(--text3)}
+.slider-row{margin-bottom:8px}
+.slider-label{font-size:10px;color:var(--text2);display:flex;justify-content:space-between;margin-bottom:3px}
+.slider-label span{font-weight:700;color:var(--gold)}
+input[type=range]{width:100%;accent-color:var(--gold)}
 </style>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
@@ -178,7 +191,28 @@ input[type=date]{border:1px solid var(--b2);padding:6px 9px;border-radius:var(--
     <div class="slbl">API Key de Google Gemini <span style="font-weight:400;color:var(--text3)">(opcional)</span></div>
     <input type="password" class="sinp" id="api-key-input" placeholder="AIza... (opcional)" autocomplete="off">
     <div class="shint">Los picks funcionan 100% sin key · Datos reales de MLB Stats API</div>
+    <div style="margin-top:1rem;border-top:1px solid var(--b);padding-top:1rem">
+      <div class="slbl">🔗 URL de tu Google Apps Script <span style="font-weight:400;color:var(--text3)">(para guardar datos en la nube — gratis)</span></div>
+      <input type="text" class="sinp" id="gas-url-input" placeholder="https://script.google.com/macros/s/XXXX/exec" autocomplete="off" style="font-size:11px">
+      <div class="shint">Tus datos se guardan automáticamente en tu Google Sheet · Sin botones · Accesible desde cualquier dispositivo · <strong>Ver instrucciones abajo</strong></div>
+    </div>
+    <div style="margin-top:.75rem;border-top:1px solid var(--b);padding-top:.75rem">
+      <div class="slbl">The Odds API Key <span style="font-weight:400;color:var(--text3)">(opcional — cuotas reales)</span></div>
+      <input type="password" class="sinp" id="odds-key-input" placeholder="gratis en the-odds-api.com" autocomplete="off">
+    </div>
     <div class="serr" id="setup-err">Key inválida — debe empezar con AIza</div>
+    <details style="margin-top:.85rem;font-size:11px;color:var(--text2)">
+      <summary style="cursor:pointer;font-weight:600;color:var(--text)">📋 Cómo configurar Google Sheets (5 min, solo una vez)</summary>
+      <ol style="padding:.75rem 1rem;line-height:2.2;background:var(--bg3);border-radius:var(--rs);margin-top:.5rem">
+        <li>Ve a <a href="https://script.google.com" target="_blank" style="color:var(--blue);font-weight:600">script.google.com</a> con tu cuenta de Google</li>
+        <li>Clic en <strong>Nuevo proyecto</strong></li>
+        <li>Borra el código y pega el contenido de <code>google-apps-script.js</code></li>
+        <li>Clic en <strong>Implementar → Nueva implementación</strong></li>
+        <li>Tipo: <strong>Aplicación web</strong> → Ejecutar como: <strong>Yo</strong> → Acceso: <strong>Cualquier persona</strong></li>
+        <li>Clic en <strong>Implementar</strong> → autoriza los permisos → copia la URL</li>
+        <li>Pega esa URL en el campo de arriba → ¡Listo!</li>
+      </ol>
+    </details>
     <button class="sbtn" onclick="startApp()"><i class="ti ti-trophy"></i>Entrar a MLB Picks Pro</button>
   </div>
 </div>
@@ -192,6 +226,7 @@ input[type=date]{border:1px solid var(--b2);padding:6px 9px;border-radius:var(--
     </div>
     <div class="hr2">
       <span class="hdate" id="hdr-date">—</span>
+      <span id="cloud-status" style="font-size:10px;padding:2px 8px;border-radius:4px;background:var(--bg3);color:var(--text3)"><i class="ti ti-cloud-off" style="font-size:10px"></i> Local</span>
       <button class="hkbtn" onclick="changeKey()"><i class="ti ti-key" style="font-size:11px"></i></button>
     </div>
   </div>
@@ -203,6 +238,7 @@ input[type=date]{border:1px solid var(--b2);padding:6px 9px;border-radius:var(--
     <button class="nb" id="nav-3" onclick="switchTab(3)"><i class="ti ti-run"></i>Bateadores</button>
     <button class="nb" id="nav-4" onclick="switchTab(4);loadHistory()"><i class="ti ti-history"></i>Historial</button>
     <button class="nb" id="nav-5" onclick="switchTab(5);loadAnalytics()"><i class="ti ti-chart-line"></i>Analytics</button>
+    <button class="nb" id="nav-6" onclick="switchTab(6);loadModelTab()"><i class="ti ti-brain"></i>Modelo IA</button>
   </nav>
 
   <!-- Tab 0 -->
@@ -309,11 +345,43 @@ input[type=date]{border:1px solid var(--b2);padding:6px 9px;border-radius:var(--
   </div>
 
 
+  <!-- Tab 6 - Modelo IA -->
+  <div class="tab" id="tab-6">
+    <div class="legend"><span class="legend-item"><span class="legend-abbr">Pesos</span>Importancia de cada factor en la predicción</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">Entrenamiento</span>SGD ajusta pesos con cada resultado marcado</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">Edge vs libro</span>Diferencia entre modelo y cuota real del sportsbook</span></div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:1rem">
+      <div style="background:var(--bg2);border-radius:var(--rs);padding:.9rem">
+        <div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:4px">Pesos actuales del modelo</div>
+        <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Se actualizan automáticamente con cada resultado marcado (SGD)</div>
+        <canvas id="weights-chart" height="220"></canvas>
+      </div>
+      <div style="background:var(--bg2);border-radius:var(--rs);padding:.9rem">
+        <div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:4px">Edge del modelo vs sportsbooks</div>
+        <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Requiere Odds API Key — ingresa en el setup inicial</div>
+        <div id="odds-edge-area"><div class="se">Corre el análisis primero.</div></div>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-bottom:1rem" id="model-stats-row">
+      <div class="scard"><div class="scard-l">Iteraciones de entrenamiento</div><div class="scard-v" id="m-iters">0</div></div>
+      <div class="scard"><div class="scard-l">Pérdida (log-loss)</div><div class="scard-v" id="m-loss">—</div></div>
+      <div class="scard"><div class="scard-l">Picks con lesionados detectados</div><div class="scard-v" id="m-injuries">0</div></div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+      <div style="background:var(--bg2);border-radius:var(--rs);padding:.9rem">
+        <div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:8px"><i class="ti ti-alert-triangle" style="vertical-align:-2px;margin-right:4px;color:var(--amber)"></i>Lesionados detectados hoy</div>
+        <div id="injury-report"><div class="se">Corre el análisis para ver el reporte.</div></div>
+      </div>
+      <div style="background:var(--bg2);border-radius:var(--rs);padding:.9rem">
+        <div style="font-size:11px;font-weight:700;color:var(--text2);margin-bottom:8px"><i class="ti ti-adjustments" style="vertical-align:-2px;margin-right:4px"></i>Ajustar pesos manualmente</div>
+        <div id="weight-sliders"></div>
+        <button class="bb" style="margin-top:10px;width:100%" onclick="resetWeights()"><i class="ti ti-refresh"></i>Resetear a valores por defecto</button>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
 const ST={108:{n:'Angel Stadium',lat:33.8003,lon:-117.8827,pf:.99,roof:'open'},109:{n:'Chase Field',lat:33.4455,lon:-112.0667,pf:.98,roof:'retractable'},110:{n:'Camden Yards',lat:39.2838,lon:-76.6218,pf:1.03,roof:'open'},111:{n:'Fenway Park',lat:42.3467,lon:-71.0972,pf:1.06,roof:'open'},112:{n:'Wrigley Field',lat:41.9484,lon:-87.6553,pf:1.04,roof:'open'},113:{n:'GABP',lat:39.0979,lon:-84.5082,pf:1.08,roof:'open'},114:{n:'Progressive Field',lat:41.4962,lon:-81.6852,pf:.97,roof:'open'},115:{n:'Coors Field',lat:39.7559,lon:-104.9942,pf:1.24,roof:'open'},116:{n:'Comerica Park',lat:42.339,lon:-83.0485,pf:.95,roof:'open'},117:{n:'Minute Maid Park',lat:29.7572,lon:-95.3555,pf:1.00,roof:'retractable'},118:{n:'Kauffman Stadium',lat:39.0514,lon:-94.4803,pf:.96,roof:'open'},119:{n:'Dodger Stadium',lat:34.0739,lon:-118.24,pf:.96,roof:'open'},120:{n:'Nationals Park',lat:38.873,lon:-77.0074,pf:1.00,roof:'open'},121:{n:'Citi Field',lat:40.7571,lon:-73.8458,pf:.97,roof:'open'},133:{n:'Oakland Coliseum',lat:37.7516,lon:-122.2005,pf:.93,roof:'open'},134:{n:'PNC Park',lat:40.4469,lon:-80.0057,pf:.97,roof:'open'},135:{n:'Petco Park',lat:32.7076,lon:-117.157,pf:.93,roof:'open'},136:{n:'T-Mobile Park',lat:47.5914,lon:-122.3325,pf:.94,roof:'retractable'},137:{n:'Oracle Park',lat:37.7786,lon:-122.3893,pf:.93,roof:'open'},138:{n:'Busch Stadium',lat:38.6226,lon:-90.1928,pf:.99,roof:'open'},139:{n:'Tropicana Field',lat:27.7683,lon:-82.6534,pf:.96,roof:'dome'},140:{n:'Globe Life Field',lat:32.7473,lon:-97.0822,pf:1.01,roof:'retractable'},141:{n:'Rogers Centre',lat:43.6414,lon:-79.3894,pf:1.03,roof:'dome'},142:{n:'Target Field',lat:44.9817,lon:-93.2786,pf:1.01,roof:'open'},143:{n:'Citizens Bank Park',lat:39.9061,lon:-75.1665,pf:1.04,roof:'open'},144:{n:'Truist Park',lat:33.8908,lon:-84.4681,pf:1.02,roof:'open'},145:{n:'Guaranteed Rate',lat:41.8299,lon:-87.6338,pf:1.01,roof:'open'},146:{n:'loanDepot Park',lat:25.7781,lon:-80.2196,pf:.92,roof:'retractable'},147:{n:'Yankee Stadium',lat:40.8296,lon:-73.9262,pf:1.02,roof:'open'},158:{n:'Am. Family Field',lat:43.028,lon:-87.9712,pf:1.02,roof:'retractable'}};
-let API_KEY='',allGames=[],allPicks=[];
+let API_KEY='',allGames=[],allPicks=[],allOddsLines=[];
 const MLB='https://statsapi.mlb.com/api/v1';
 const sf=(v,d=4.5)=>{const n=parseFloat(v);return isNaN(n)?d:n;};
 const cl=(v,a=0,b=1)=>Math.max(a,Math.min(b,v));
@@ -324,6 +392,15 @@ const normCDF=x=>{const t=1/(1+.3275911*Math.abs(x));const y=1-((.254829592+t*(-
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
 function startApp(){const k=document.getElementById('api-key-input').value.trim();if(k&&!k.startsWith('AIza')){document.getElementById('setup-err').style.display='block';return;}API_KEY=k;document.getElementById('setup').style.display='none';document.getElementById('app').style.display='block';const t=new Date();document.getElementById('date-pick').value=t.toISOString().slice(0,10);document.getElementById('hdr-date').textContent=t.toLocaleDateString('es-MX',{weekday:'short',month:'short',day:'numeric'});
+  const gasUrl = document.getElementById('gas-url-input')?.value?.trim();
+  if(gasUrl) localStorage.setItem('gas-url', gasUrl);
+  const ok=document.getElementById('odds-key-input')?.value?.trim();
+  if(ok) localStorage.setItem('odds-key',ok);
+  // Pre-fill saved values
+  const savedGas = localStorage.getItem('gas-url');
+  const savedOdds = localStorage.getItem('odds-key');
+  if(savedGas) document.getElementById('gas-url-input').value = savedGas;
+  if(savedOdds) document.getElementById('odds-key-input').value = savedOdds;
   initDB();  loadHistory();}
 document.getElementById('api-key-input').addEventListener('keydown',e=>{if(e.key==='Enter')startApp();});
 function changeKey(){document.getElementById('setup').style.display='flex';document.getElementById('app').style.display='none';}
@@ -380,10 +457,185 @@ async function getTopBatters(teamId, yr) {
 }
 
 
+
+async function getInjuryList(teamId) {
+  try {
+    const d = await mlb(`/teams/${teamId}/roster?rosterType=allInjuries`);
+    return (d.roster || []).map(p => ({
+      name: p.person?.fullName || '?',
+      pos:  p.position?.abbreviation || '?',
+      note: p.status?.description || 'IL',
+      days: parseInt(p.status?.code?.replace('D','') || 10)
+    }));
+  } catch { return []; }
+}
+
+async function getBvP(batterId, pitcherId, yr) {
+  if (!batterId || !pitcherId) return null;
+  try {
+    const d = await mlb(`/people/${batterId}/stats?stats=vsPlayer&group=hitting&opposingPlayerId=${pitcherId}&season=${yr}&sportId=1`);
+    const st = (d.stats||[]).flatMap(g=>g.splits||[])[0]?.stat;
+    if (!st || parseInt(st.atBats||0) < 5) return null;
+    return {
+      ab:  parseInt(st.atBats||0),
+      h:   parseInt(st.hits||0),
+      hr:  parseInt(st.homeRuns||0),
+      ba:  parseFloat(st.avg||0),
+      ops: parseFloat(st.ops||0),
+      slg: parseFloat(st.slg||0),
+    };
+  } catch { return null; }
+}
+
+async function getOddsLines(oddsKey, gameDate) {
+  if (!oddsKey) return [];
+  try {
+    const url = `https://api.the-odds-api.com/v4/sports/baseball_mlb/odds/?apiKey=${oddsKey}&regions=us&markets=h2h,spreads,totals&dateFormat=iso&oddsFormat=american&commenceTimeFrom=${gameDate}T00:00:00Z&commenceTimeTo=${gameDate}T23:59:59Z`;
+    const r = await fetch(url);
+    if (!r.ok) return [];
+    const data = await r.json();
+    return data.map(game => {
+      const dk = game.bookmakers?.find(b => b.key === 'draftkings') || game.bookmakers?.[0];
+      if (!dk) return null;
+      const h2h    = dk.markets?.find(m => m.key === 'h2h');
+      const spread = dk.markets?.find(m => m.key === 'spreads');
+      const total  = dk.markets?.find(m => m.key === 'totals');
+      const awayH2H = h2h?.outcomes?.find(o => o.name === game.away_team)?.price;
+      const homeH2H = h2h?.outcomes?.find(o => o.name === game.home_team)?.price;
+      const totalLine = total?.outcomes?.[0]?.point;
+      const totalOver = total?.outcomes?.find(o => o.name === 'Over')?.price;
+      return {
+        homeTeam: game.home_team, awayTeam: game.away_team,
+        commence:  game.commence_time,
+        awayML: awayH2H, homeML: homeH2H,
+        totalLine, totalOverOdds: totalOver,
+        bookmaker: dk.title
+      };
+    }).filter(Boolean);
+  } catch(e) { console.warn('Odds API error:', e); return []; }
+}
+
+async function getConfirmedLineup(gamePk) {
+  try {
+    const d = await mlb(`/game/${gamePk}/boxscore`);
+    const parse = side => {
+      const players = Object.values(d.teams?.[side]?.players || {})
+        .filter(p => p.battingOrder && parseInt(p.battingOrder) > 0)
+        .sort((a,b) => parseInt(a.battingOrder)-parseInt(b.battingOrder))
+        .slice(0, 9);
+      return {
+        confirmed: players.length >= 8,
+        playerIds: players.map(p => p.person?.id).filter(Boolean),
+        players:   players.map(p => ({ id: p.person?.id, name: p.person?.fullName, pos: p.position?.abbreviation, order: parseInt(p.battingOrder) }))
+      };
+    };
+    return { away: parse('away'), home: parse('home') };
+  } catch { return { away:{confirmed:false,playerIds:[],players:[]}, home:{confirmed:false,playerIds:[],players:[]} }; }
+}
+
+async function getMatchupScores(lineupIds, pitcherId, yr) {
+  // Returns average BvP OPS for the lineup vs this pitcher
+  if (!pitcherId || !lineupIds?.length) return null;
+  const results = await Promise.allSettled(
+    lineupIds.slice(0,9).map(bid => getBvP(bid, pitcherId, yr))
+  );
+  const valid = results.map(r => r.value).filter(v => v && v.ab >= 5);
+  if (!valid.length) return null;
+  return {
+    avgBA:  valid.reduce((s,v)=>s+v.ba,0)/valid.length,
+    avgOPS: valid.reduce((s,v)=>s+v.ops,0)/valid.length,
+    sampleSize: valid.length
+  };
+}
+
 async function getWeather(lat,lon,roof){if(roof==='dome')return{tf:72,wm:0,wd:'—',cond:'Domo',wn:'irrelevante',wmod:1.0};try{const j=await fetch(`https://wttr.in/${lat},${lon}?format=j1`).then(r=>r.json());const c=j.current_condition?.[0]||{};const wm=parseFloat(c.windspeedMiles||5),wdg=parseFloat(c.winddirDegree||180);const dirs=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];const diff=Math.abs(wdg-225)%360,al=Math.cos((diff>180?360-diff:diff)*Math.PI/180);const wn=al>.3&&wm>7?'sale-bateadores':al<-.3&&wm>7?'entra-pitchers':'cruzado';return{tf:parseFloat(c.temp_F||70),wm,wd:dirs[Math.round(wdg/22.5)%16],cond:c.weatherDesc?.[0]?.value||'',wn,wmod:1+(al*Math.min(wm/20,1)*0.08)};}catch{return{tf:70,wm:5,wd:'S',cond:'—',wn:'neutro',wmod:1.0};}}
 
 // ── Compute ───────────────────────────────────────────────────────────────────
-function computeGame(g,apSt,hpSt,aSt,hSt,aR,hR,wx,stad){
+// ── Adaptive Weight System (SGD Logistic Regression) ─────────────────────────
+const DEFAULT_WEIGHTS = {
+  w_hp:    1.05,   // home pitcher quality
+  w_ap:   -1.05,   // away pitcher quality (negative = hurts home)
+  w_ho:    0.70,   // home offense
+  w_ao:   -0.70,   // away offense
+  w_hb:    0.45,   // home bullpen
+  w_ab:   -0.45,   // away bullpen
+  w_str:   0.35,   // streak differential
+  w_hfa:   0.18,   // home field advantage
+  w_pf:    0.30,   // park factor effect
+  w_wind:  0.20,   // wind modifier effect
+};
+let MODEL_WEIGHTS = {...DEFAULT_WEIGHTS};
+let trainIter = 0;
+const LR = 0.01; // learning rate
+
+function loadWeights() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('mlbpro-weights') || 'null');
+    if (saved && saved.w_hp !== undefined) { MODEL_WEIGHTS = saved; }
+    trainIter = parseInt(localStorage.getItem('mlbpro-train-iter') || '0');
+  } catch {}
+}
+
+function saveWeights() {
+  localStorage.setItem('mlbpro-weights', JSON.stringify(MODEL_WEIGHTS));
+  localStorage.setItem('mlbpro-train-iter', String(trainIter));
+}
+
+function resetWeights() {
+  MODEL_WEIGHTS = {...DEFAULT_WEIGHTS};
+  trainIter = 0;
+  saveWeights();
+  loadModelTab();
+  alert('✅ Pesos reseteados a valores por defecto');
+}
+
+function trainOnResult(features, actual) {
+  // actual = 1 (home won) or 0 (away won)
+  const logit = computeLogit(features);
+  const pred  = 1 / (1 + Math.exp(-logit));
+  const err   = actual - pred;
+  // SGD update: w += lr * err * feature
+  MODEL_WEIGHTS.w_hp   += LR * err * features.hps;
+  MODEL_WEIGHTS.w_ap   += LR * err * features.aps;
+  MODEL_WEIGHTS.w_ho   += LR * err * features.hos;
+  MODEL_WEIGHTS.w_ao   += LR * err * features.aos;
+  MODEL_WEIGHTS.w_hb   += LR * err * features.hbs;
+  MODEL_WEIGHTS.w_ab   += LR * err * features.abs;
+  MODEL_WEIGHTS.w_str  += LR * err * features.str;
+  MODEL_WEIGHTS.w_hfa  += LR * err * 1;
+  trainIter++;
+  saveWeights();
+  return Math.log(pred + 1e-9) * actual + Math.log(1 - pred + 1e-9) * (1 - actual);
+}
+
+function computeLogit(f) {
+  return MODEL_WEIGHTS.w_hp  * f.hps
+       + MODEL_WEIGHTS.w_ap  * f.aps
+       + MODEL_WEIGHTS.w_ho  * f.hos
+       + MODEL_WEIGHTS.w_ao  * f.aos
+       + MODEL_WEIGHTS.w_hb  * f.hbs
+       + MODEL_WEIGHTS.w_ab  * f.abs
+       + MODEL_WEIGHTS.w_str * f.str
+       + MODEL_WEIGHTS.w_hfa;
+}
+
+function trainFromHistory() {
+  const idx = JSON.parse(localStorage.getItem('mlbpro-idx') || '[]');
+  let totalLoss = 0, count = 0;
+  idx.forEach(d => {
+    const rows = JSON.parse(localStorage.getItem('mlbpro-' + d) || 'null');
+    if (!rows) return;
+    rows.forEach(r => {
+      if (!r.result || !r.features) return;
+      const actual = r.fav === r.home ? (r.result === 'win' ? 1 : 0) : (r.result === 'win' ? 0 : 1);
+      const loss = trainOnResult(r.features, actual);
+      totalLoss += loss; count++;
+    });
+  });
+  return count > 0 ? -(totalLoss / count) : null;
+}
+
+function computeGame(g,apSt,hpSt,aSt,hSt,aR,hR,wx,stad,injuries,matchups,confirmedLineup) {
   const apk9=sf(apSt.strikeoutsPer9Inn,8),hpk9=sf(hpSt.strikeoutsPer9Inn,8);
   const apera=sf(apSt.era),hpera=sf(hpSt.era);
   const apfip=sf(apSt.fieldsIndependentPitching||apSt.fip,apera),hpfip=sf(hpSt.fieldsIndependentPitching||hpSt.fip,hpera);
@@ -391,21 +643,57 @@ function computeGame(g,apSt,hpSt,aSt,hSt,aR,hR,wx,stad){
   const apGS=Math.max(1,sf(apSt.gamesStarted,1)),hpGS=Math.max(1,sf(hpSt.gamesStarted,1));
   const apExpIP=Math.min(6.5,Math.max(4,sf(apSt.inningsPitched,0)/apGS||5.5));
   const hpExpIP=Math.min(6.5,Math.max(4,sf(hpSt.inningsPitched,0)/hpGS||5.5));
-  const aOPS=sf(aSt.hitting?.ops,.72),hOPS=sf(hSt.hitting?.ops,.72);
+
+  // Base offensive stats
+  let aOPS=sf(aSt.hitting?.ops,.72),hOPS=sf(hSt.hitting?.ops,.72);
   const aBA=sf(aSt.hitting?.avg,.25),hBA=sf(hSt.hitting?.avg,.25);
   const aSLG=sf(aSt.hitting?.slg,.38),hSLG=sf(hSt.hitting?.slg,.38);
   const aBpE=sf(aSt.pitching?.era,4),hBpE=sf(hSt.pitching?.era,4);
+
+  // ── Injury adjustment ─────────────────────────────────────────────────────
+  const aInjuries = (injuries?.away || []).filter(p => !['P','RP','SP'].includes(p.pos));
+  const hInjuries = (injuries?.home || []).filter(p => !['P','RP','SP'].includes(p.pos));
+  const injuryPenalty = inj => inj.length >= 3 ? 0.04 : inj.length >= 1 ? 0.02 : 0;
+  aOPS -= injuryPenalty(aInjuries) * 0.5;  // injured lineup → lower OPS proxy
+  hOPS -= injuryPenalty(hInjuries) * 0.5;
+
+  // ── BvP matchup adjustment ────────────────────────────────────────────────
+  // If batter vs pitcher matchup data available, blend with season OPS
+  const awayBvP = matchups?.awayBattersVsHomePitcher;   // away batters vs home SP
+  const homeBvP = matchups?.homeBattersVsAwayPitcher;   // home batters vs away SP
+  if (awayBvP && awayBvP.sampleSize >= 2) {
+    aOPS = aOPS * 0.65 + awayBvP.avgOPS * 0.35;  // blend season + matchup
+  }
+  if (homeBvP && homeBvP.sampleSize >= 2) {
+    hOPS = hOPS * 0.65 + homeBvP.avgOPS * 0.35;
+  }
+
+  // ── Confirmed lineup boost ────────────────────────────────────────────────
+  const lineupConf = confirmedLineup?.home?.confirmed || confirmedLineup?.away?.confirmed;
+
   const aWL=aR.filter(r=>r.isWin).length/Math.max(1,aR.length);
   const hWL=hR.filter(r=>r.isWin).length/Math.max(1,hR.length);
   const pf=stad?.pf||1,wmod=wx?.wmod||1,altB=1+Math.max(0,(stad?.alt||0)-1000)/10000*.15;
   const tmp=wx?.tf<50?.92:wx?.tf>85?1.04:1.0;
+
+  // ── Pitcher scores ────────────────────────────────────────────────────────
   const aps=cl(.35*(1-(apfip-2)/4)+.25*(1-(apera-2)/4)+.20*((apk9-5)/5)+.20*(1-(apbb9-1.5)/3.5));
   const hps=cl(.35*(1-(hpfip-2)/4)+.25*(1-(hpera-2)/4)+.20*((hpk9-5)/5)+.20*(1-(hpbb9-1.5)/3.5));
-  const logit=1.05*hps-1.05*aps+.70*cl((hOPS-.65)/.2)-.70*cl((aOPS-.65)/.2)+.45*cl((hBpE-2.5)/-3.5+.5)-.45*cl((aBpE-2.5)/-3.5+.5)+(hWL-aWL)*.35+.18;
-  const hwp=sig(logit),awp=1-hwp;
+  const hos=cl((hOPS-.65)/.2);
+  const aos=cl((aOPS-.65)/.2);
+  const hbs=cl((hBpE-2.5)/-3.5+.5);
+  const abs2=cl((aBpE-2.5)/-3.5+.5);
+  const str=hWL-aWL;
+
+  // ── Model logit using trained weights ─────────────────────────────────────
+  const features = {hps,aps,hos,aos,hbs,abs:abs2,str};
+  const logit = computeLogit(features);
+  const hwp=sig(logit), awp=1-hwp;
+
+  // ── Expected runs (park/weather/altitude aware) ────────────────────────────
   const lg=4.4;
-  const hExp=lg*(1+(.5-hps)*.85)*(1+cl((aOPS-.65)/.2-.5)*.55)*pf*wmod*altB*tmp;
-  const aExp=lg*(1+(.5-aps)*.85)*(1+cl((hOPS-.65)/.2-.5)*.55)*pf*wmod*altB*tmp;
+  const hExp=lg*(1+(.5-hps)*.85)*(1+(aos-.5)*.55)*pf*wmod*altB*tmp;
+  const aExp=lg*(1+(.5-aps)*.85)*(1+(hos-.5)*.55)*pf*wmod*altB*tmp;
   const total=+(hExp+aExp).toFixed(1);
   const sigma=Math.sqrt(hExp+aExp)*.9;
   const favHome=hwp>=awp;
@@ -422,75 +710,56 @@ function computeGame(g,apSt,hpSt,aSt,hSt,aR,hR,wx,stad){
   const hHitP=1-Math.pow(1-hBA,4.2),aHitP=1-Math.pow(1-aBA,4.2);
   const hTBExp=+(hSLG*3.7).toFixed(1),aTBExp=+(aSLG*3.7).toFixed(1);
   const away=g.teams?.away?.team?.abbreviation,home=g.teams?.home?.team?.abbreviation;
-  // Generate all picks for this game
+
+  // ── Generate candidate picks (sorted by prob) ─────────────────────────────
   const rawPicks=[];
-  // ML
-  if(hwp>.52) rawPicks.push({cat:'Money Line',main:`${home} ML ${p2ml(hwp)}`,sub:`Modelo: ${pct(hwp)} victoria`,prob:hwp,edge:+(hwp-.52).toFixed(3)});
-  else rawPicks.push({cat:'Money Line',main:`${away} ML ${p2ml(awp)}`,sub:`Modelo: ${pct(awp)} victoria`,prob:awp,edge:+(awp-.52).toFixed(3)});
-  // Total
-  rawPicks.push({cat:'Total del partido',main:`${totalEdge>0?'OVER':'UNDER'} ${totalLine} runs`,sub:`Proyección: ${total} runs | Park factor ${pf}`,prob:totalEdge>0?cl(.50+totalEdge*.08):cl(.50+Math.abs(totalEdge)*.08),edge:+Math.abs(totalEdge*.07).toFixed(3)});
-  // Run line
-  rawPicks.push({cat:'Run Line (-1.5)',main:`${favHome?home:away} -1.5`,sub:`${pct(rlProb)} de ganar por 2+ carreras`,prob:rlProb,edge:+(rlProb-.52).toFixed(3)});
-  // F5 ML
+  if(hwp>.52) rawPicks.push({cat:'Money Line',main:`${home} ML ${p2ml(hwp)}`,sub:`Modelo: ${pct(hwp)} · ${lineupConf?'✓ Lineup confirmado':'Lineup estimado'}`,prob:hwp,edge:+(hwp-.52).toFixed(3)});
+  else rawPicks.push({cat:'Money Line',main:`${away} ML ${p2ml(awp)}`,sub:`Modelo: ${pct(awp)} · ${lineupConf?'✓ Lineup confirmado':'Lineup estimado'}`,prob:awp,edge:+(awp-.52).toFixed(3)});
+  rawPicks.push({cat:'Total del partido',main:`${totalEdge>0?'OVER':'UNDER'} ${totalLine} runs`,sub:`Proyección: ${total} runs | PF ${pf}${awayBvP?' | BvP datos incluidos':''}`,prob:totalEdge>0?cl(.50+totalEdge*.08):cl(.50+Math.abs(totalEdge)*.08),edge:+Math.abs(totalEdge*.07).toFixed(3)});
+  rawPicks.push({cat:'Run Line (-1.5)',main:`${favHome?home:away} -1.5`,sub:`${pct(rlProb)} prob ganar por 2+`,prob:rlProb,edge:+(rlProb-.52).toFixed(3)});
   const f5fav=f5hwp>=f5awp?home:away,f5favWP=Math.max(f5hwp,f5awp);
-  rawPicks.push({cat:'Primeras 5 Innings',main:`${f5fav} F5 ${p2ml(f5favWP)}`,sub:`${pct(f5favWP)} en F5 | Total F5: ${f5total} vs línea ${f5line}`,prob:f5favWP,edge:+(f5favWP-.52).toFixed(3)});
-  // F5 total
-  const f5tEdge=f5total-f5line;
-  rawPicks.push({cat:'Total F5',main:`${f5tEdge>0?'OVER':'UNDER'} ${f5line} runs (F5)`,sub:`Proyección F5: ${f5total} carreras`,prob:cl(.50+Math.abs(f5tEdge)*.09),edge:+Math.abs(f5tEdge*.08).toFixed(3)});
-  // Best K prop
-  const bestK=apKExp-apKLine>=hpKExp-hpKLine?{name:g.teams?.away?.probablePitcher?.fullName||away,kExp:apKExp,kLine:apKLine,kEdge:apKExp-apKLine}:{name:g.teams?.home?.probablePitcher?.fullName||home,kExp:hpKExp,kLine:hpKLine,kEdge:hpKExp-hpKLine};
-  rawPicks.push({cat:`Ks Pitcher`,main:`${bestK.name.split(' ').slice(-1)[0]} ${bestK.kEdge>=0?'OVER':'UNDER'} ${bestK.kLine}K`,sub:`Proyección: ${bestK.kExp}K`,prob:cl(.50+Math.abs(bestK.kEdge)*.09),edge:+Math.abs(bestK.kEdge*.08).toFixed(3)});
-  // Team total home
+  rawPicks.push({cat:'Primeras 5 Innings',main:`${f5fav} F5 ${p2ml(f5favWP)}`,sub:`${pct(f5favWP)} en F5 | Pitcher: ${f5hwp>=f5awp?g.teams?.home?.probablePitcher?.fullName||home:g.teams?.away?.probablePitcher?.fullName||away}`,prob:f5favWP,edge:+(f5favWP-.52).toFixed(3)});
+  const f5tE=f5total-f5line;
+  rawPicks.push({cat:'Total F5',main:`${f5tE>0?'OVER':'UNDER'} ${f5line} (F5)`,sub:`Proyección F5: ${f5total} carreras`,prob:cl(.50+Math.abs(f5tE)*.09),edge:+Math.abs(f5tE*.08).toFixed(3)});
+  const bestK=apKExp-apKLine>=hpKExp-hpKLine?{name:g.teams?.away?.probablePitcher?.fullName||away,kExp:apKExp,kLine:apKLine,kEdge:+(apKExp-apKLine).toFixed(2)}:{name:g.teams?.home?.probablePitcher?.fullName||home,kExp:hpKExp,kLine:hpKLine,kEdge:+(hpKExp-hpKLine).toFixed(2)};
+  rawPicks.push({cat:'Ks Pitcher',main:`${bestK.name.split(' ').slice(-1)[0]} ${bestK.kEdge>=0?'OVER':'UNDER'} ${bestK.kLine}K`,sub:`Proyección: ${bestK.kExp}K`,prob:cl(.50+Math.abs(bestK.kEdge)*.09),edge:+Math.abs(bestK.kEdge*.08).toFixed(3)});
   const hTE=hExp-hLineTot;
   rawPicks.push({cat:`Total ${home}`,main:`${home} ${hTE>0?'OVER':'UNDER'} ${hLineTot}`,sub:`Proyección: ${hExp.toFixed(1)} carreras`,prob:cl(.50+Math.abs(hTE)*.09),edge:+Math.abs(hTE*.08).toFixed(3)});
-  // Sorted by prob desc
+
+  // If BvP data available, add a batter vs pitcher pick
+  if(awayBvP && awayBvP.avgOPS > .800 && awayBvP.sampleSize >= 3) {
+    rawPicks.push({cat:'BvP — Ofensiva visitante',main:`${away} OVER ${aLineTot} (BvP)`,sub:`OPS histórico ${away} vs ${g.teams?.home?.probablePitcher?.fullName?.split(' ').slice(-1)[0]}: ${awayBvP.avgOPS.toFixed(3)} (${awayBvP.sampleSize} muestras)`,prob:cl(.50+((awayBvP.avgOPS-.720)/.15)*0.10),edge:0.04});
+  }
+  if(homeBvP && homeBvP.avgOPS > .800 && homeBvP.sampleSize >= 3) {
+    rawPicks.push({cat:'BvP — Ofensiva local',main:`${home} OVER ${hLineTot} (BvP)`,sub:`OPS histórico ${home} vs ${g.teams?.away?.probablePitcher?.fullName?.split(' ').slice(-1)[0]}: ${homeBvP.avgOPS.toFixed(3)} (${homeBvP.sampleSize} muestras)`,prob:cl(.50+((homeBvP.avgOPS-.720)/.15)*0.10),edge:0.04});
+  }
+
   rawPicks.sort((a,b)=>b.prob-a.prob);
   const top3=rawPicks.slice(0,3).map(p=>({...p,conf:p.prob>=.58?'High':p.prob>=.53?'Medium':'Low'}));
-  return{away,home,awayFull:g.teams?.away?.team?.name,homeFull:g.teams?.home?.team?.name,venue:stad?.n||g.venue?.name,time:fmtTime(g.gameDate),awayWP:+awp.toFixed(4),homeWP:+hwp.toFixed(4),awayML:p2ml(awp),homeML:p2ml(hwp),total,totalLine,hExp:+hExp.toFixed(2),aExp:+aExp.toFixed(2),hLineTot,aLineTot,rlProb:+rlProb.toFixed(4),rlFavHome:favHome,f5:{hwp:+f5hwp.toFixed(4),awp:+f5awp.toFixed(4),total:f5total,line:f5line},pitchers:{away:{name:g.teams?.away?.probablePitcher?.fullName||'TBD',era:+apera.toFixed(2),fip:+apfip.toFixed(2),whip:+apwhip.toFixed(2),k9:+apk9.toFixed(1),bb9:+apbb9.toFixed(1),expIP:+apExpIP.toFixed(1),kExp:apKExp,kLine:apKLine,kEdge:+(apKExp-apKLine).toFixed(2)},home:{name:g.teams?.home?.probablePitcher?.fullName||'TBD',era:+hpera.toFixed(2),fip:+hpfip.toFixed(2),whip:+hpwhip.toFixed(2),k9:+hpk9.toFixed(1),bb9:+hpbb9.toFixed(1),expIP:+hpExpIP.toFixed(1),kExp:hpKExp,kLine:hpKLine,kEdge:+(hpKExp-hpKLine).toFixed(2)}},batters:{aBA:+aBA.toFixed(3),hBA:+hBA.toFixed(3),aSLG:+aSLG.toFixed(3),hSLG:+hSLG.toFixed(3),aHitP:+aHitP.toFixed(3),hHitP:+hHitP.toFixed(3),aTBExp,hTBExp,aTBLine:aSLG>.45?2.5:1.5,hTBLine:hSLG>.45?2.5:1.5,aOPS:+aOPS.toFixed(3),hOPS:+hOPS.toFixed(3)},weather:wx,pf,picks:top3,allPicks:rawPicks,homeId:g.teams?.home?.team?.id,awayId:g.teams?.away?.team?.id};
+
+  return{
+    away,home,awayFull:g.teams?.away?.team?.name,homeFull:g.teams?.home?.team?.name,
+    venue:stad?.n||g.venue?.name,time:fmtTime(g.gameDate),gamePk:g.gamePk,
+    awayWP:+awp.toFixed(4),homeWP:+hwp.toFixed(4),awayML:p2ml(awp),homeML:p2ml(hwp),
+    total,totalLine,hExp:+hExp.toFixed(2),aExp:+aExp.toFixed(2),hLineTot,aLineTot,
+    rlProb:+rlProb.toFixed(4),rlFavHome:favHome,
+    f5:{hwp:+f5hwp.toFixed(4),awp:+f5awp.toFixed(4),total:f5total,line:f5line},
+    pitchers:{
+      away:{name:g.teams?.away?.probablePitcher?.fullName||'TBD',era:+apera.toFixed(2),fip:+apfip.toFixed(2),whip:+apwhip.toFixed(2),k9:+apk9.toFixed(1),bb9:+apbb9.toFixed(1),expIP:+apExpIP.toFixed(1),kExp:apKExp,kLine:apKLine,kEdge:+(apKExp-apKLine).toFixed(2)},
+      home:{name:g.teams?.home?.probablePitcher?.fullName||'TBD',era:+hpera.toFixed(2),fip:+hpfip.toFixed(2),whip:+hpwhip.toFixed(2),k9:+hpk9.toFixed(1),bb9:+hpbb9.toFixed(1),expIP:+hpExpIP.toFixed(1),kExp:hpKExp,kLine:hpKLine,kEdge:+(hpKExp-hpKLine).toFixed(2)}
+    },
+    batters:{aBA:+aBA.toFixed(3),hBA:+hBA.toFixed(3),aSLG:+aSLG.toFixed(3),hSLG:+hSLG.toFixed(3),aHitP:+aHitP.toFixed(3),hHitP:+hHitP.toFixed(3),aTBExp,hTBExp,aTBLine:aSLG>.45?2.5:1.5,hTBLine:hSLG>.45?2.5:1.5,aOPS:+aOPS.toFixed(3),hOPS:+hOPS.toFixed(3)},
+    weather:wx,pf,
+    injuries:{away:aInjuries,home:hInjuries},
+    matchups:{awayBvP,homeBvP},
+    confirmedLineup,lineupConf,
+    features,   // stored for training
+    picks:top3,allPicks:rawPicks,
+    homeId:g.teams?.home?.team?.id,awayId:g.teams?.away?.team?.id
+  };
 }
 
-// ── Main ──────────────────────────────────────────────────────────────────────
-async function runAll(){
-  const date=document.getElementById('date-pick').value;
-  const btn=document.getElementById('main-btn');
-  btn.disabled=true;btn.innerHTML='<i class="ti ti-loader-2" style="animation:spin .7s linear infinite"></i>Analizando...';
-  ['picks-area','parlay-area','pitcher-area','batter-area'].forEach(id=>document.getElementById(id).innerHTML='<div class="lbox"><div class="spin"></div><div>Consultando MLB Stats API...</div><p>Datos reales en tiempo real</p></div>');
-  document.getElementById('srow').style.display='none';
-  try{
-    const yr=new Date().getFullYear();
-    const sched=await getSched(date);
-    const active=sched.filter(g=>g.status?.abstractGameState!=='Final');
-    if(!active.length){document.getElementById('picks-area').innerHTML='<div class="ebox">No hay partidos para esta fecha.</div>';return;}
-    const games=[];
-    for(const g of active){
-      const hId=g.teams?.home?.team?.id,aId=g.teams?.away?.team?.id;
-      const hpId=g.teams?.home?.probablePitcher?.id,apId=g.teams?.away?.probablePitcher?.id;
-      const stad=ST[hId]||{};
-      const [apSt,hpSt,aSt,hSt,aR,hR,wx,aBatters,hBatters]=await Promise.all([getPSt(apId,yr),getPSt(hpId,yr),getTSt(aId,yr),getTSt(hId,yr),getWL(aId,yr),getWL(hId,yr),getWeather(stad.lat||35,stad.lon||-90,stad.roof||'open'),getTopBatters(aId,yr),getTopBatters(hId,yr)]);
-      const gd=computeGame(g,apSt,hpSt,aSt,hSt,aR,hR,wx,stad);gd.topBatters={away:aBatters,home:hBatters};games.push(gd);
-    }
-    allGames=games;
-    const allHigh=games.flatMap(g=>g.picks.filter(p=>p.conf==='High').map(p=>({...p,matchup:`${g.away} @ ${g.home}`,game:g})));
-    const allMed=games.flatMap(g=>g.picks.filter(p=>p.conf==='Medium'));
-    document.getElementById('srow').style.display='grid';
-    document.getElementById('sm-g').textContent=games.length;
-    document.getElementById('sm-h').textContent=allHigh.length;
-    document.getElementById('sm-m').textContent=allMed.length;
-    document.getElementById('sm-ov').textContent=games.filter(g=>g.total>g.totalLine).length;
-    const parlays=buildParlays(games);
-    document.getElementById('sm-p').textContent=parlays.length;
-    saveHistory(date, games);
-    renderPicksArea(games);
-    renderParlays(parlays,games);
-    renderPitchers(games);
-    renderBatters(games);
-  }catch(e){
-    document.getElementById('picks-area').innerHTML=`<div class="errbox"><i class="ti ti-alert-circle"></i> ${e.message}</div>`;
-    ['parlay-area','pitcher-area','batter-area'].forEach(id=>document.getElementById(id).innerHTML='');
-  }finally{btn.disabled=false;btn.innerHTML='<i class="ti ti-refresh"></i>Analizar partidos';}
-}
 
-// ── Renders ───────────────────────────────────────────────────────────────────
 function confClass(c){return c==='High'?'badge-high conf-high':c==='Medium'?'badge-med conf-med':'badge-low conf-low';}
 function confLabel(c){return c==='High'?'ALTA':c==='Medium'?'MEDIA':'BAJA';}
 function confBarClass(c){return c==='High'?'conf-high':c==='Medium'?'conf-med':'conf-low';}
@@ -673,6 +942,280 @@ function renderBatters(games){
 }
 
 
+// ── Main analysis runner ──────────────────────────────────────────────────────
+async function runAll(){
+  const date = document.getElementById('date-pick').value;
+  const btn  = document.getElementById('main-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="ti ti-loader-2" style="animation:spin .7s linear infinite"></i>Analizando...';
+  ['picks-area','parlay-area','pitcher-area','batter-area'].forEach(id =>
+    document.getElementById(id).innerHTML = '<div class="lbox"><div class="spin"></div><div>Consultando MLB Stats API...</div><p>Obteniendo lesiones, lineups, BvP y cuotas en tiempo real</p></div>'
+  );
+  document.getElementById('srow').style.display = 'none';
+  try {
+    const yr = new Date().getFullYear();
+    loadWeights();
+    const oddsKey   = localStorage.getItem('odds-key') || '';
+    const [sched, oddsLines] = await Promise.all([getSched(date), getOddsLines(oddsKey, date)]);
+    allOddsLines = oddsLines;
+    const active = sched.filter(g => g.status?.abstractGameState !== 'Final');
+    if (!active.length) {
+      document.getElementById('picks-area').innerHTML = '<div class="ebox">No hay partidos programados para esta fecha.</div>';
+      return;
+    }
+    document.getElementById('picks-area').innerHTML = `<div class="lbox"><div class="spin"></div><div>Analizando ${active.length} partidos — lesionados, BvP, lineups, clima...</div></div>`;
+    const games = [];
+    for (const g of active) {
+      const hId = g.teams?.home?.team?.id, aId = g.teams?.away?.team?.id;
+      const hpId = g.teams?.home?.probablePitcher?.id, apId = g.teams?.away?.probablePitcher?.id;
+      const stad = ST[hId] || {};
+      // Fetch all data in parallel per game
+      const [apSt,hpSt,aSt,hSt,aR,hR,wx,aBatters,hBatters,aInjuries,hInjuries,lineup] = await Promise.all([
+        getPSt(apId,yr), getPSt(hpId,yr),
+        getTSt(aId,yr),  getTSt(hId,yr),
+        getWL(aId,yr),   getWL(hId,yr),
+        getWeather(stad.lat||35, stad.lon||-90, stad.roof||'open'),
+        getTopBatters(aId,yr), getTopBatters(hId,yr),
+        getInjuryList(aId),    getInjuryList(hId),
+        getConfirmedLineup(g.gamePk)
+      ]);
+      // BvP matchups (uses confirmed lineup player IDs when available)
+      const [awayBvP, homeBvP] = await Promise.all([
+        getMatchupScores(lineup?.away?.playerIds, hpId, yr),
+        getMatchupScores(lineup?.home?.playerIds, apId, yr)
+      ]);
+      const matchups  = { awayBattersVsHomePitcher: awayBvP, homeBattersVsAwayPitcher: homeBvP };
+      const injuries  = { away: aInjuries, home: hInjuries };
+      const gd = computeGame(g, apSt, hpSt, aSt, hSt, aR, hR, wx, stad, injuries, matchups, lineup);
+      gd.topBatters = { away: aBatters, home: hBatters };
+      games.push(gd);
+    }
+    allGames = games;
+    // Auto-train weights from historical results
+    const lossVal = trainFromHistory();
+    const allHigh = games.flatMap(g => g.picks.filter(p => p.conf === 'High'));
+    const allMed  = games.flatMap(g => g.picks.filter(p => p.conf === 'Medium'));
+    const injuryCount = games.reduce((s,g) => s + (g.injuries?.away?.length||0) + (g.injuries?.home?.length||0), 0);
+    // Stats bar
+    document.getElementById('srow').style.display = 'grid';
+    document.getElementById('s-g').textContent  = games.length;
+    document.getElementById('s-h').textContent  = allHigh.length;
+    document.getElementById('s-m').textContent  = allMed.length;
+    document.getElementById('s-o').textContent  = games.filter(g => g.total > g.totalLine).length;
+    const parlays = buildParlays(games);
+    document.getElementById('s-p').textContent = parlays.length;
+    // Model stats
+    document.getElementById('m-iters').textContent   = trainIter;
+    document.getElementById('m-loss').textContent    = lossVal != null ? lossVal.toFixed(4) : '—';
+    document.getElementById('m-injuries').textContent = injuryCount;
+    // Save + render
+    await saveHistory(date, games);
+    renderPicksArea(games);
+    renderParlays(parlays, games);
+    renderPitchers(games);
+    renderBatters(games);
+    renderInjuryReport(games);
+    renderOddsEdge(games, allOddsLines);
+    renderWeightsChart();
+    renderWeightSliders();
+  } catch(e) {
+    document.getElementById('picks-area').innerHTML = `<div class="errbox"><i class="ti ti-alert-circle"></i> ${e.message}</div>`;
+    ['parlay-area','pitcher-area','batter-area'].forEach(id => document.getElementById(id).innerHTML = '');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="ti ti-refresh"></i>Analizar partidos';
+  }
+}
+
+// ── Parlay builder ────────────────────────────────────────────────────────────
+function buildParlays(games) {
+  const highByGame = games.map(g => {
+    const h = g.allPicks.filter(p => p.prob >= .58);
+    return h.length ? {...h[0], matchup:`${g.away} @ ${g.home}`} : null;
+  }).filter(Boolean);
+  if (highByGame.length < 2) return [];
+  const parlays = [];
+  for (let i=0; i<Math.min(highByGame.length,6); i++)
+    for (let j=i+1; j<Math.min(highByGame.length,6); j++) {
+      const legs=[highByGame[i],highByGame[j]];
+      parlays.push({legs,cp:legs.reduce((a,l)=>a*l.prob,1),type:'2 equipos'});
+    }
+  if (highByGame.length>=3)
+    for (let i=0; i<Math.min(highByGame.length,5); i++)
+      for (let j=i+1; j<Math.min(highByGame.length,5); j++)
+        for (let k=j+1; k<Math.min(highByGame.length,5); k++) {
+          const legs=[highByGame[i],highByGame[j],highByGame[k]];
+          parlays.push({legs,cp:legs.reduce((a,l)=>a*l.prob,1),type:'3 equipos'});
+        }
+  if (highByGame.length>=4) {
+    const top4=highByGame.slice(0,4);
+    parlays.push({legs:top4,cp:top4.reduce((a,l)=>a*l.prob,1),type:'4 equipos'});
+  }
+  parlays.sort((a,b)=>b.cp-a.cp);
+  return parlays.slice(0,6);
+}
+
+// ── Modelo IA tab renderers ───────────────────────────────────────────────────
+function renderInjuryReport(games) {
+  const area = document.getElementById('injury-report');
+  if (!area) return;
+  const allInj = games.flatMap(g => [
+    ...(g.injuries?.away||[]).map(p=>({...p,team:g.away,matchup:`${g.away} @ ${g.home}`})),
+    ...(g.injuries?.home||[]).map(p=>({...p,team:g.home,matchup:`${g.away} @ ${g.home}`}))
+  ]);
+  if (!allInj.length) { area.innerHTML='<div class="se">No se detectaron lesionados en los IL activos.</div>'; return; }
+  area.innerHTML = allInj.map(p=>`
+    <div class="injury-row">
+      <span class="injury-tag">${p.note||'IL'}</span>
+      <strong>${p.name}</strong>
+      <span style="color:var(--text3);font-size:10px">${p.pos} · ${p.team} · ${p.matchup}</span>
+    </div>`).join('');
+}
+
+function renderOddsEdge(games, oddsLines) {
+  const area = document.getElementById('odds-edge-area');
+  if (!area) return;
+  if (!oddsLines?.length) {
+    area.innerHTML = '<div class="se" style="padding:.75rem">Ingresa tu Odds API Key en el setup para ver edge vs sportsbooks reales.</div>';
+    return;
+  }
+  const rows = games.map(g => {
+    const match = oddsLines.find(o => {
+      const hn = o.homeTeam.toLowerCase(), an = o.awayTeam.toLowerCase();
+      return hn.includes(g.home.toLowerCase().slice(0,3)) || an.includes(g.away.toLowerCase().slice(0,3));
+    });
+    if (!match) return null;
+    const mktHomeProb = match.homeML < 0 ? (-match.homeML)/(-match.homeML+100) : 100/(match.homeML+100);
+    const mktAwayProb = 1 - mktHomeProb;
+    const hEdge = ((g.homeWP - mktHomeProb)*100).toFixed(1);
+    const aEdge = ((g.awayWP - mktAwayProb)*100).toFixed(1);
+    const bestEdge = Math.abs(parseFloat(hEdge)) >= Math.abs(parseFloat(aEdge)) ? {team:g.home,edge:parseFloat(hEdge),ml:match.homeML} : {team:g.away,edge:parseFloat(aEdge),ml:match.awayML};
+    return {...bestEdge, matchup:`${g.away}@${g.home}`, book: match.bookmaker};
+  }).filter(Boolean).sort((a,b)=>Math.abs(b.edge)-Math.abs(a.edge));
+  if (!rows.length) { area.innerHTML='<div class="se">No se encontraron coincidencias de partidos.</div>'; return; }
+  area.innerHTML = rows.map(r=>`
+    <div class="edge-row">
+      <div><strong>${r.matchup}</strong><div style="font-size:9px;color:var(--text3)">${r.team} · ${r.book}</div></div>
+      <div class="edge-val ${r.edge>2?'edge-pos':r.edge<-2?'edge-neg':'edge-neu'}">${r.edge>0?'+':''}${r.edge}% edge</div>
+    </div>`).join('');
+}
+
+let weightsChart = null;
+function renderWeightsChart() {
+  const ctx = document.getElementById('weights-chart');
+  if (!ctx) return;
+  if (weightsChart) { weightsChart.destroy(); weightsChart = null; }
+  const dark = window.matchMedia('(prefers-color-scheme:dark)').matches;
+  const labels = ['Pitcher
+local','Pitcher
+visit.','Ofensiva
+local','Ofensiva
+visit.','Bullpen
+local','Bullpen
+visit.','Racha','Campo
+local'];
+  const values = [MODEL_WEIGHTS.w_hp,MODEL_WEIGHTS.w_ap,MODEL_WEIGHTS.w_ho,MODEL_WEIGHTS.w_ao,MODEL_WEIGHTS.w_hb,MODEL_WEIGHTS.w_ab,MODEL_WEIGHTS.w_str,MODEL_WEIGHTS.w_hfa];
+  const colors = values.map(v => v > 0 ? '#1D9E75' : '#c0392b');
+  weightsChart = new Chart(ctx, {type:'bar',data:{labels,datasets:[{data:values,backgroundColor:colors,borderRadius:4}]},options:{responsive:true,plugins:{legend:{display:false},tooltip:{callbacks:{label:v=>`Peso: ${v.raw.toFixed(3)}`}}},scales:{y:{ticks:{font:{size:9}},grid:{color:dark?'rgba(255,255,255,.07)':'rgba(0,0,0,.06)'},title:{display:true,text:'Peso en el modelo',font:{size:9}}},x:{ticks:{font:{size:8}},grid:{display:false}}}}});
+}
+
+function renderWeightSliders() {
+  const area = document.getElementById('weight-sliders');
+  if (!area) return;
+  const params = [
+    ['w_hp',  'Pitcher local',    0, 2],
+    ['w_ho',  'Ofensiva local',   0, 1.5],
+    ['w_hb',  'Bullpen local',    0, 1],
+    ['w_str', 'Racha (streak)',   0, 0.8],
+    ['w_hfa', 'Ventaja de campo', 0, 0.5],
+  ];
+  area.innerHTML = params.map(([key,label,min,max])=>`
+    <div class="slider-row">
+      <div class="slider-label"><span>${label}</span><span id="sw-${key}">${MODEL_WEIGHTS[key].toFixed(3)}</span></div>
+      <input type="range" min="${min}" max="${max}" step="0.01" value="${MODEL_WEIGHTS[key]}"
+        oninput="MODEL_WEIGHTS['${key}']=parseFloat(this.value);MODEL_WEIGHTS['${key.replace('w_h','w_a')}']=-(parseFloat(this.value));document.getElementById('sw-${key}').textContent=parseFloat(this.value).toFixed(3);saveWeights();">
+    </div>`).join('');
+}
+
+function loadModelTab() {
+  renderWeightsChart();
+  renderWeightSliders();
+  document.getElementById('m-iters').textContent = trainIter;
+  if (allGames.length) {
+    renderInjuryReport(allGames);
+    renderOddsEdge(allGames, allOddsLines);
+  }
+}
+
+
+
+// ── Cloud Storage (Google Apps Script → Google Sheets) ───────────────────────
+function getGasUrl() { return localStorage.getItem('gas-url') || ''; }
+
+async function cloudSave(action, data) {
+  const url = getGasUrl();
+  if (!url) return null;  // silently skip if not configured
+  try {
+    const r = await fetch(url, {
+      method: 'POST',
+      body: JSON.stringify({ action, ...data }),
+    });
+    return r.ok ? await r.json() : null;
+  } catch(e) { console.warn('Cloud save error:', e); return null; }
+}
+
+async function cloudGet(action, params = {}) {
+  const url = getGasUrl();
+  if (!url) return null;
+  try {
+    const qs = new URLSearchParams({ action, ...params }).toString();
+    const r = await fetch(`${url}?${qs}`);
+    return r.ok ? await r.json() : null;
+  } catch(e) { console.warn('Cloud load error:', e); return null; }
+}
+
+async function syncFromCloud() {
+  // Called on startup — pulls latest data from Google Sheet into localStorage
+  const sid = getSessionId();
+  const result = await cloudGet('getAll', { session: sid });
+  if (!result) return;
+
+  // Sync predictions
+  if (result.predictions?.rows?.length) {
+    const byDate = {};
+    result.predictions.rows.forEach(r => {
+      const d = String(r.game_date).slice(0,10);
+      if (!byDate[d]) byDate[d] = [];
+      byDate[d].push({
+        away: r.away, home: r.home, fav: r.fav,
+        favP: r.fav_prob, conf: r.confidence,
+        total: r.predicted_total, result: r.result || null,
+        topPick: r.top_pick_main, session_id: r.session_id
+      });
+    });
+    const idx = [...new Set(Object.keys(byDate))].sort().reverse();
+    localStorage.setItem('mlbpro-idx', JSON.stringify(idx));
+    idx.forEach(d => {
+      const existing = JSON.parse(localStorage.getItem('mlbpro-' + d) || '[]');
+      // Merge: preserve local results if cloud doesn't have them
+      const merged = byDate[d].map(cloudRow => {
+        const local = existing.find(x => x.away===cloudRow.away && x.home===cloudRow.home);
+        return { ...cloudRow, result: cloudRow.result || local?.result || null };
+      });
+      localStorage.setItem('mlbpro-' + d, JSON.stringify(merged));
+    });
+  }
+
+  // Sync weights
+  if (result.weights?.weights) {
+    MODEL_WEIGHTS = result.weights.weights;
+    trainIter = result.weights.iter || 0;
+    saveWeights(); // persist to localStorage
+  }
+}
+
+
+
 // ── Database layer ───────────────────────────────────────────────────────────
 let sbClient = null;
 let histView = 'mine'; // 'mine' | 'all'
@@ -722,6 +1265,16 @@ function initDB() {
     document.getElementById('sb-key').value = key;
     try { sbClient = supabase.createClient(url, key); updateDBBadge(true); } catch(e) {}
   }
+  // Auto-sync from cloud on startup
+  syncFromCloud().then(() => {
+    loadHistory();
+    const badge = document.getElementById('cloud-status');
+    if (badge && getGasUrl()) {
+      badge.innerHTML = '<i class="ti ti-cloud" style="font-size:10px"></i> Google Sheets';
+      badge.style.background = 'var(--gbg)';
+      badge.style.color = 'var(--gtx)';
+    }
+  }).catch(()=>{});
 }
 
 function setHistView(v) {
@@ -754,6 +1307,24 @@ async function saveHistory(date, games) {
   localStorage.setItem(key, JSON.stringify(summary));
   const idx = JSON.parse(localStorage.getItem('mlbpro-idx') || '[]');
   if (!idx.includes(date)) { idx.unshift(date); localStorage.setItem('mlbpro-idx', JSON.stringify(idx.slice(0,90))); }
+
+  // Auto-sync to Google Sheets (fire and forget — no button needed)
+  const sid2 = getSessionId();
+  const cloudRows = games.map(g => ({
+    session_id:      sid2,
+    game_date:       date,
+    away:            g.away, home: g.home, venue: g.venue||'',
+    fav:             g.homeWP >= g.awayWP ? g.home : g.away,
+    fav_prob:        +Math.max(g.homeWP, g.awayWP).toFixed(4),
+    confidence:      g.picks[0]?.conf || 'Low',
+    predicted_total: g.total || 0,
+    home_wp:         +g.homeWP.toFixed(4), away_wp: +g.awayWP.toFixed(4),
+    home_ml:         g.homeML||'', away_ml: g.awayML||'',
+    top_pick_cat:    g.picks[0]?.cat||'', top_pick_main: g.picks[0]?.main||'',
+    top_pick_prob:   +(g.picks[0]?.prob||0).toFixed(4),
+    top_pick_edge:   +(g.picks[0]?.edge||0).toFixed(4),
+  }));
+  cloudSave('savePredictions', { data: cloudRows });
 
   // Save to Supabase if connected
   if (sbClient) {
@@ -802,6 +1373,12 @@ async function markResult(date, away, home, result) {
     if (sbClient && g.id) {
       await sbClient.from('predictions').update({ result }).eq('id', g.id).catch(()=>{});
     }
+    // Auto-sync result to Google Sheets
+    cloudSave('markResult', { sessionId: getSessionId(), gameDate: date, away, home, result });
+    // Train model with new result
+    if (g.features) trainOnResult(g.features, g.fav === g.home ? (result==='win'?1:0) : (result==='win'?0:1));
+    // Sync weights to cloud
+    cloudSave('saveWeights', { sessionId: getSessionId(), weights: MODEL_WEIGHTS, iter: trainIter });
   }
   loadHistory();
 }

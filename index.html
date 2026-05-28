@@ -244,7 +244,7 @@ input[type=range]{width:100%;accent-color:var(--gold)}
   <!-- Tab 0 -->
   <div class="tab active" id="tab-0">
     <div class="tb">
-      <input type="date" id="date-pick">
+      <input type="date" id="date-pick" onchange="onDateChange(this.value)">
       <button class="bb" id="main-btn" onclick="runAll()"><i class="ti ti-refresh"></i>Analizar partidos</button>
     </div>
     <div class="disc"><i class="ti ti-alert-circle" style="vertical-align:-2px;margin-right:3px"></i>Solo para entretenimiento. Apuesta con responsabilidad.</div>
@@ -481,6 +481,40 @@ function renderPicksFromCache(games, date) {
     </div>`;
   }).join('') + '</div>' +
   '<div class="src"><i class="ti ti-lock" style="font-size:10px;vertical-align:-1px"></i> Picks del ' + date + ' restaurados desde caché · Presiona <strong>Analizar partidos</strong> para actualizar clima y lineups</div>';
+}
+
+
+function onDateChange(date) {
+  // When user changes the date, check if we have cached picks for that date
+  const cached = JSON.parse(localStorage.getItem('mlbpro-' + date) || '[]');
+  if (cached.length) {
+    // Show cached picks instantly
+    const games = cached.map(c => ({
+      away: c.away, home: c.home,
+      awayWP: c.awayWP || (c.fav === c.away ? c.favP : 1 - c.favP) || 0.5,
+      homeWP: c.homeWP || (c.fav === c.home ? c.favP : 1 - c.favP) || 0.5,
+      awayML: c.awayML || '—', homeML: c.homeML || '—',
+      venue: c.venue || '', time: '—',
+      picks: c.allPicks || (c.topPick ? [{cat:'Mejor pick',main:c.topPick,prob:c.topPickProb||0.55,edge:0,conf:c.conf||'Medium',sub:''}] : []),
+      allPicks: c.allPicks || [],
+      weather: {tf:'—',cond:'',wm:0,wd:'',wn:'—'}, pf:'—',
+      gameStarted: false, isLocked: true, savedAt: c.savedAt || '',
+    }));
+    const sr = document.getElementById('srow');
+    if (sr) sr.style.display = 'grid';
+    setText('sm-g', cached.length);
+    setText('sm-h', cached.filter(c => c.conf === 'High').length);
+    setText('sm-m', cached.filter(c => c.conf === 'Medium').length);
+    setText('sm-ov', '—');
+    setText('sm-p', '—');
+    renderPicksFromCache(games, date);
+  } else {
+    // No cache for this date — clear display and prompt to analyze
+    const _pa = document.getElementById('picks-area');
+    if (_pa) _pa.innerHTML = '<div class="ebox"><i class="ti ti-search" style="font-size:32px;opacity:.2;display:block;margin:0 auto 10px"></i>No hay picks guardados para esta fecha.<br>Presiona <strong>Analizar partidos</strong> para generar predicciones.</div>';
+    const sr = document.getElementById('srow');
+    if (sr) sr.style.display = 'none';
+  }
 }
 
 

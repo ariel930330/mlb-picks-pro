@@ -1454,7 +1454,7 @@ async function markResult(date, away, home, result) {
       await sbClient.from('predictions').update({ result }).eq('id', g.id).catch(()=>{});
     }
     // Auto-sync to Google Sheets
-    cloudSave('markResult', { sessionId: getSessionId(), gameDate: date, away, home, result });
+    cloudSave('markResult', { sessionId: getSessionId(), gameDate: date, away, home, result: result === null ? '' : result });
     // Only train if marking (not unmarking)
     if (result && g.features) {
       trainOnResult(g.features, g.fav === g.home ? (result==='win'?1:0) : (result==='win'?0:1));

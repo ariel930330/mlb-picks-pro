@@ -402,6 +402,88 @@ const pct=p=>`${Math.round(p*100)}%`;
 const normCDF=x=>{const t=1/(1+.3275911*Math.abs(x));const y=1-((.254829592+t*(-.284496736+t*(1.421413741+t*(-1.453152027+t*1.061405429))))*t*Math.exp(-x*x/2));return x>=0?y:1-y;};
 
 // ── Setup ─────────────────────────────────────────────────────────────────────
+// ── Restore cached picks on startup ──────────────────────────────────────────
+function restorePicksFromCache() {
+  const date = new Date().toISOString().slice(0, 10);
+  const cached = JSON.parse(localStorage.getItem('mlbpro-' + date) || '[]');
+  if (!cached.length) return; // nothing saved for today
+
+  // Reconstruct game objects from cached data to render
+  const games = cached.map(c => ({
+    away:      c.away,       home:      c.home,
+    awayWP:    c.awayWP || c.favP || 0.5,
+    homeWP:    c.homeWP || (1 - (c.favP || 0.5)),
+    awayML:    c.awayML || '—', homeML: c.homeML || '—',
+    venue:     c.venue || '',   time:   '—',
+    picks:     c.allPicks || (c.topPick ? [{cat:'Mejor pick',main:c.topPick,prob:c.topPickProb||0.55,edge:0,conf:c.conf||'Medium',sub:''}] : []),
+    allPicks:  c.allPicks || [],
+    weather:   { tf: '—', cond: '', wm: 0, wd: '', wn: '—' },
+    pf:        '—',
+    gameStarted: false,
+    isLocked:  c.locked || true,
+    savedAt:   c.savedAt || '',
+  }));
+
+  // Show stats bar
+  const highCount = cached.filter(c => c.conf === 'High').length;
+  const medCount  = cached.filter(c => c.conf === 'Medium').length;
+  const sr = document.getElementById('srow');
+  if (sr) sr.style.display = 'grid';
+  setText('sm-g',  cached.length);
+  setText('sm-h',  highCount);
+  setText('sm-m',  medCount);
+  setText('sm-ov', '—');
+  setText('sm-p',  '—');
+
+  // Render picks from cache
+  renderPicksFromCache(games, date);
+}
+
+function renderPicksFromCache(games, date) {
+  const _pa = document.getElementById('picks-area');
+  if (!_pa) return;
+  _pa.innerHTML = '<div class="games-list">' + games.map(g => {
+    const awayPct = Math.round((g.awayWP || 0) * 100);
+    const homePct = Math.round((g.homeWP || 0) * 100);
+    return `<div class="gcard">
+      <div class="gc-head">
+        <span><i class="ti ti-ball-baseball" style="font-size:10px;margin-right:4px"></i><strong>${g.away} @ ${g.home}</strong></span>
+        <div style="display:flex;gap:5px;align-items:center">
+          <span style="font-size:9px;padding:2px 6px;border-radius:3px;background:var(--bbg);color:var(--btx);display:flex;align-items:center;gap:3px"><i class="ti ti-lock" style="font-size:9px"></i>Pick guardado</span>
+          <span class="gc-venue">${g.venue}</span>
+        </div>
+      </div>
+      <div class="gc-matchup">
+        <div class="gc-team"><div class="gc-abbr">${g.away}</div><div class="gc-pct" style="color:#378ADD">${awayPct}%</div><div class="gc-ml">${g.awayML}</div></div>
+        <div class="gc-divider">@</div>
+        <div class="gc-team home"><div class="gc-abbr">${g.home}</div><div class="gc-pct" style="color:var(--green)">${homePct}%</div><div class="gc-ml">${g.homeML}</div></div>
+      </div>
+      <div class="gc-bar"><div class="gc-bar-a" style="width:${awayPct}%"></div><div class="gc-bar-h" style="width:${homePct}%"></div></div>
+      <div class="picks-list">
+        ${(g.picks || []).map(p => `
+        <div class="pick-row">
+          <div class="pick-conf-bar ${p.conf === 'High' ? 'conf-high' : p.conf === 'Medium' ? 'conf-med' : 'conf-low'}"></div>
+          <div class="pick-badge ${p.conf === 'High' ? 'badge-high conf-high' : p.conf === 'Medium' ? 'badge-med conf-med' : 'badge-low conf-low'}">
+            <div class="pick-badge-label">${p.conf === 'High' ? 'ALTA' : p.conf === 'Medium' ? 'MEDIA' : 'BAJA'}</div>
+            <div class="pick-badge-val">${p.conf === 'High' ? '🟢' : p.conf === 'Medium' ? '🟡' : '🔴'}</div>
+          </div>
+          <div class="pick-content">
+            <div class="pick-cat">${p.cat}</div>
+            <div class="pick-main">${p.main}</div>
+            <div class="pick-sub">${p.sub || ''}</div>
+          </div>
+          <div class="pick-right">
+            <div class="pick-prob" style="color:${p.conf === 'High' ? 'var(--green)' : p.conf === 'Medium' ? 'var(--amber)' : 'var(--red)'}">${Math.round((p.prob || 0) * 100)}%</div>
+            <div class="pick-edge">edge +${((p.edge || 0) * 100).toFixed(1)}%</div>
+          </div>
+        </div>`).join('')}
+      </div>
+    </div>`;
+  }).join('') + '</div>' +
+  '<div class="src"><i class="ti ti-lock" style="font-size:10px;vertical-align:-1px"></i> Picks del ' + date + ' restaurados desde caché · Presiona <strong>Analizar partidos</strong> para actualizar clima y lineups</div>';
+}
+
+
 function startApp(){
   try {
     var k       = (document.getElementById('api-key-input')?.value||'').trim();
@@ -419,6 +501,7 @@ function startApp(){
     if(hd) hd.textContent=t.toLocaleDateString('es-MX',{weekday:'short',month:'short',day:'numeric'});
     try{loadWeights();}catch(e){}
     try{loadHistory();}catch(e){}
+    try{restorePicksFromCache();}catch(e){console.warn('restore cache:',e);}
     setTimeout(function(){try{initDB();}catch(e){console.warn('initDB:',e);}},300);
   } catch(err) {
     console.error('startApp:',err);
@@ -662,7 +745,24 @@ function trainFromHistory() {
 function computeGame(g,apSt,hpSt,aSt,hSt,aR,hR,wx,stad,injuries,matchups,confirmedLineup) {
   const apk9=sf(apSt.strikeoutsPer9Inn,8),hpk9=sf(hpSt.strikeoutsPer9Inn,8);
   const apera=sf(apSt.era),hpera=sf(hpSt.era);
-  const apfip=sf(apSt.fieldsIndependentPitching||apSt.fip,apera),hpfip=sf(hpSt.fieldsIndependentPitching||hpSt.fip,hpera);
+  // Calculate real FIP: ((13×HR) + (3×(BB+HBP)) - (2×K)) / IP + 3.10
+  const cFIP = 3.10; // MLB league constant 2024-25
+  function calcFIP(st, eraFallback) {
+    const hr  = sf(st.homeRuns,      0);
+    const bb  = sf(st.baseOnBalls,   0);
+    const hbp = sf(st.hitByPitch,    0);
+    const k   = sf(st.strikeOuts,    0);
+    const ip  = sf(st.inningsPitched, 0);
+    // Convert IP from MLB format (e.g. 6.2 = 6 full + 2 outs = 6.667)
+    const fullInnings = Math.floor(ip);
+    const partialOuts = Math.round((ip - fullInnings) * 10);
+    const ipDecimal   = fullInnings + partialOuts / 3;
+    if (ipDecimal < 5) return eraFallback; // not enough innings → use ERA
+    const fip = ((13 * hr) + (3 * (bb + hbp)) - (2 * k)) / ipDecimal + cFIP;
+    return +Math.max(1.0, Math.min(8.0, fip)).toFixed(2); // clamp outliers
+  }
+  const apfip = calcFIP(apSt, apera);
+  const hpfip = calcFIP(hpSt, hpera);
   const apwhip=sf(apSt.whip,1.3),hpwhip=sf(hpSt.whip,1.3),apbb9=sf(apSt.walksPer9Inn,3.2),hpbb9=sf(hpSt.walksPer9Inn,3.2);
   const apGS=Math.max(1,sf(apSt.gamesStarted,1)),hpGS=Math.max(1,sf(hpSt.gamesStarted,1));
   const apExpIP=Math.min(6.5,Math.max(4,sf(apSt.inningsPitched,0)/apGS||5.5));

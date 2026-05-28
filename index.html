@@ -1424,19 +1424,19 @@ async function saveHistory(date, games) {
 
 // ── Mark result ───────────────────────────────────────────────────────────────
 function confirmMark(date, away, home, result, btn) {
-  // Single click highlights, double click confirms
-  if (btn._pending) {
-    clearTimeout(btn._pending);
-    btn._pending = null;
-    markResult(date, away, home, result);
+  // Get current result from localStorage
+  const key = 'mlbpro-' + date;
+  const data = JSON.parse(localStorage.getItem(key) || 'null');
+  if (!data) return;
+  const g = data.find(x => x.away === away && x.home === home);
+  const currentResult = g?.result || null;
+
+  if (currentResult === result) {
+    // Already marked with this result → UNMARK (toggle off)
+    markResult(date, away, home, null);
   } else {
-    btn.style.opacity = '0.6';
-    btn.textContent = result === 'win' ? '✓ ¿Confirmar?' : '✗ ¿Confirmar?';
-    btn._pending = setTimeout(() => {
-      btn._pending = null;
-      btn.style.opacity = '';
-      btn.textContent = result === 'win' ? '✓ Ganó' : '✗ Perdió';
-    }, 2500);
+    // Not marked or marked differently → mark with new result
+    markResult(date, away, home, result);
   }
 }
 
@@ -1447,18 +1447,19 @@ async function markResult(date, away, home, result) {
   if (!data) return;
   const g = data.find(x => x.away === away && x.home === home);
   if (g) {
-    g.result = result;
+    g.result = result; // null = unmark, 'win'/'loss' = mark
     localStorage.setItem(key, JSON.stringify(data));
     // Update Supabase if we have an ID
     if (sbClient && g.id) {
       await sbClient.from('predictions').update({ result }).eq('id', g.id).catch(()=>{});
     }
-    // Auto-sync result to Google Sheets
+    // Auto-sync to Google Sheets
     cloudSave('markResult', { sessionId: getSessionId(), gameDate: date, away, home, result });
-    // Train model with new result
-    if (g.features) trainOnResult(g.features, g.fav === g.home ? (result==='win'?1:0) : (result==='win'?0:1));
-    // Sync weights to cloud
-    cloudSave('saveWeights', { sessionId: getSessionId(), weights: MODEL_WEIGHTS, iter: trainIter });
+    // Only train if marking (not unmarking)
+    if (result && g.features) {
+      trainOnResult(g.features, g.fav === g.home ? (result==='win'?1:0) : (result==='win'?0:1));
+      cloudSave('saveWeights', { sessionId: getSessionId(), weights: MODEL_WEIGHTS, iter: trainIter });
+    }
   }
   loadHistory();
 }

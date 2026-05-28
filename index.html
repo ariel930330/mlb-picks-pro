@@ -298,9 +298,14 @@ input[type=range]{width:100%;accent-color:var(--gold)}
         <span style="font-size:10px;color:var(--text3);margin-left:4px">La key se guarda en tu navegador · <a href="https://supabase.com" target="_blank" style="color:var(--blue)">Crear cuenta gratis</a></span>
       </div>
     </div>
-    <div class="community-toggle">
-      <button class="toggle-btn active" id="tog-mine" onclick="setHistView('mine')">Mis picks</button>
-      <button class="toggle-btn" id="tog-all" onclick="setHistView('all')">Comunidad</button>
+    <div class="community-toggle" style="justify-content:space-between;align-items:center">
+      <div style="display:flex;gap:6px">
+        <button class="toggle-btn active" id="tog-mine" onclick="setHistView('mine')">Mis picks</button>
+        <button class="toggle-btn" id="tog-all" onclick="setHistView('all')">Comunidad</button>
+      </div>
+      <button class="btn-sm btn-gray" onclick="clearAllHistory()" title="Borra todo el historial local y de Google Sheets" style="font-size:10px;color:var(--rtx)">
+        <i class="ti ti-trash" style="font-size:10px"></i> Limpiar historial
+      </button>
     </div>
     <div class="legend"><span class="legend-item"><span class="legend-abbr">% Acierto</span>Porcentaje de favoritos que ganaron</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">Picks altos</span>Acierto solo en picks de Alta Confianza (≥58%)</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">ROI</span>Retorno sobre inversión a línea -110 (91:100)</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">✓ Ganó</span>El favorito del modelo ganó el partido</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">✗ Perdió</span>El favorito del modelo perdió el partido</span><span class="legend-sep"></span><span class="legend-item"><span class="legend-abbr">Calibración</span>Compara prob. del modelo vs acierto real por rango</span></div>
     <div class="srow" id="h-srow">
@@ -1177,45 +1182,67 @@ async function cloudGet(action, params = {}) {
 }
 
 async function syncFromCloud() {
-  // Called on startup — pulls latest data from Google Sheet into localStorage
+  // Google Sheets = fuente de verdad
+  // localStorage = caché offline
   const sid = getSessionId();
   const result = await cloudGet('getAll', { session: sid });
-  if (!result) return;
+  if (!result) return; // sin internet → usar caché local
 
-  // Sync predictions
   if (result.predictions?.rows?.length) {
     const byDate = {};
     result.predictions.rows.forEach(r => {
       const d = String(r.game_date).slice(0,10);
       if (!byDate[d]) byDate[d] = [];
-      byDate[d].push({
-        away: r.away, home: r.home, fav: r.fav,
-        favP: r.fav_prob, conf: r.confidence,
-        total: r.predicted_total, result: r.result || null,
-        topPick: r.top_pick_main, session_id: r.session_id
-      });
+      byDate[d].push(r);
     });
-    const idx = [...new Set(Object.keys(byDate))].sort().reverse();
-    localStorage.setItem('mlbpro-idx', JSON.stringify(idx));
-    idx.forEach(d => {
-      const existing = JSON.parse(localStorage.getItem('mlbpro-' + d) || '[]');
-      // Merge: preserve local results if cloud doesn't have them
+
+    const cloudDates = Object.keys(byDate);
+    // Rebuild index from cloud (source of truth)
+    localStorage.setItem('mlbpro-idx', JSON.stringify(cloudDates.sort().reverse()));
+
+    cloudDates.forEach(d => {
+      const local = JSON.parse(localStorage.getItem('mlbpro-' + d) || '[]');
+
       const merged = byDate[d].map(cloudRow => {
-        const local = existing.find(x => x.away===cloudRow.away && x.home===cloudRow.home);
-        return { ...cloudRow, result: cloudRow.result || local?.result || null };
+        const localRow = local.find(x => x.away === cloudRow.away && x.home === cloudRow.home);
+        return {
+          // Base: cloud data (source of truth for results and basic fields)
+          away:       cloudRow.away,
+          home:       cloudRow.home,
+          fav:        cloudRow.fav,
+          favP:       cloudRow.fav_prob,
+          conf:       cloudRow.confidence,
+          total:      cloudRow.predicted_total,
+          topPick:    cloudRow.top_pick_main,
+          session_id: cloudRow.session_id,
+          // Result: cloud wins (that's the whole point)
+          result:     cloudRow.result || null,
+          // Preserve local-only fields that cloud doesn't store
+          locked:     localRow?.locked     || false,
+          allPicks:   localRow?.allPicks   || [],
+          savedAt:    localRow?.savedAt    || cloudRow.created_at,
+          homeWP:     localRow?.homeWP     || 0,
+          awayWP:     localRow?.awayWP     || 0,
+          homeML:     localRow?.homeML     || '',
+          awayML:     localRow?.awayML     || '',
+          features:   localRow?.features   || null,
+        };
       });
+
       localStorage.setItem('mlbpro-' + d, JSON.stringify(merged));
     });
   }
 
-  // Sync weights
+  // Model weights: take whichever has MORE training iterations
   if (result.weights?.weights) {
-    MODEL_WEIGHTS = result.weights.weights;
-    trainIter = result.weights.iter || 0;
-    saveWeights(); // persist to localStorage
+    const cloudIter = result.weights.iter || 0;
+    if (cloudIter >= trainIter) {
+      MODEL_WEIGHTS = result.weights.weights;
+      trainIter = cloudIter;
+      saveWeights();
+    }
   }
 }
-
 
 
 // ── Database layer ───────────────────────────────────────────────────────────
@@ -1279,6 +1306,18 @@ function initDB() {
       badge.style.color = 'var(--gtx)';
     }
   }).catch(()=>{});
+}
+
+async function clearAllHistory() {
+  if (!confirm('¿Borrar TODO el historial? Esto elimina datos locales y de Google Sheets. No se puede deshacer.')) return;
+  // Clear localStorage
+  const idx = JSON.parse(localStorage.getItem('mlbpro-idx') || '[]');
+  idx.forEach(d => localStorage.removeItem('mlbpro-' + d));
+  localStorage.removeItem('mlbpro-idx');
+  // Clear Google Sheets via Apps Script
+  await cloudSave('clearHistory', { sessionId: getSessionId() });
+  loadHistory();
+  alert('✅ Historial limpiado.');
 }
 
 function setHistView(v) {
@@ -1384,6 +1423,23 @@ async function saveHistory(date, games) {
 }
 
 // ── Mark result ───────────────────────────────────────────────────────────────
+function confirmMark(date, away, home, result, btn) {
+  // Single click highlights, double click confirms
+  if (btn._pending) {
+    clearTimeout(btn._pending);
+    btn._pending = null;
+    markResult(date, away, home, result);
+  } else {
+    btn.style.opacity = '0.6';
+    btn.textContent = result === 'win' ? '✓ ¿Confirmar?' : '✗ ¿Confirmar?';
+    btn._pending = setTimeout(() => {
+      btn._pending = null;
+      btn.style.opacity = '';
+      btn.textContent = result === 'win' ? '✓ Ganó' : '✗ Perdió';
+    }, 2500);
+  }
+}
+
 async function markResult(date, away, home, result) {
   // Update localStorage
   const key = 'mlbpro-' + date;
@@ -1474,9 +1530,9 @@ async function loadHistory() {
       <td style="font-size:10px;color:var(--text2);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.topPick||'—'}</td>
       <td>
         ${(histView==='mine'||r.session_id===mySessionId)?`
-        <button class="rb ${r.result==='win'?'win':''}" onclick="markResult('${r.date}','${r.away}','${r.home}','win')">✓</button>
-        <button class="rb ${r.result==='loss'?'loss':''}" onclick="markResult('${r.date}','${r.away}','${r.home}','loss')">✗</button>
-        `:r.result?`<span style="font-size:11px;font-weight:700;color:${r.result==='win'?'var(--green)':'var(--red)'}">${r.result==='win'?'✓ Ganó':'✗ Perdió'}</span>`:'<span style="color:var(--text3);font-size:10px">Pendiente</span>'}
+        <button class="rb ${r.result==='win'?'win':''}" onclick="confirmMark('${r.date}','${r.away}','${r.home}','win',this)">✓ Ganó</button>
+        <button class="rb ${r.result==='loss'?'loss':''}" onclick="confirmMark('${r.date}','${r.away}','${r.home}','loss',this)">✗ Perdió</button>
+        `:r.result?`<span style="font-size:11px;font-weight:700;color:${r.result==='win'?'var(--green)':'var(--red)'}">${r.result==='win'?'✓ Ganó':'✗ Perdió'}</span>`:'<span style="color:var(--text3);font-size:10px">— Sin marcar —</span>'}
       </td>
     </tr>`).join('')}
     </tbody></table></div>`;

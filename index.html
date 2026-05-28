@@ -382,6 +382,12 @@ input[type=range]{width:100%;accent-color:var(--gold)}
 <script>
 const ST={108:{n:'Angel Stadium',lat:33.8003,lon:-117.8827,pf:.99,roof:'open'},109:{n:'Chase Field',lat:33.4455,lon:-112.0667,pf:.98,roof:'retractable'},110:{n:'Camden Yards',lat:39.2838,lon:-76.6218,pf:1.03,roof:'open'},111:{n:'Fenway Park',lat:42.3467,lon:-71.0972,pf:1.06,roof:'open'},112:{n:'Wrigley Field',lat:41.9484,lon:-87.6553,pf:1.04,roof:'open'},113:{n:'GABP',lat:39.0979,lon:-84.5082,pf:1.08,roof:'open'},114:{n:'Progressive Field',lat:41.4962,lon:-81.6852,pf:.97,roof:'open'},115:{n:'Coors Field',lat:39.7559,lon:-104.9942,pf:1.24,roof:'open'},116:{n:'Comerica Park',lat:42.339,lon:-83.0485,pf:.95,roof:'open'},117:{n:'Minute Maid Park',lat:29.7572,lon:-95.3555,pf:1.00,roof:'retractable'},118:{n:'Kauffman Stadium',lat:39.0514,lon:-94.4803,pf:.96,roof:'open'},119:{n:'Dodger Stadium',lat:34.0739,lon:-118.24,pf:.96,roof:'open'},120:{n:'Nationals Park',lat:38.873,lon:-77.0074,pf:1.00,roof:'open'},121:{n:'Citi Field',lat:40.7571,lon:-73.8458,pf:.97,roof:'open'},133:{n:'Oakland Coliseum',lat:37.7516,lon:-122.2005,pf:.93,roof:'open'},134:{n:'PNC Park',lat:40.4469,lon:-80.0057,pf:.97,roof:'open'},135:{n:'Petco Park',lat:32.7076,lon:-117.157,pf:.93,roof:'open'},136:{n:'T-Mobile Park',lat:47.5914,lon:-122.3325,pf:.94,roof:'retractable'},137:{n:'Oracle Park',lat:37.7786,lon:-122.3893,pf:.93,roof:'open'},138:{n:'Busch Stadium',lat:38.6226,lon:-90.1928,pf:.99,roof:'open'},139:{n:'Tropicana Field',lat:27.7683,lon:-82.6534,pf:.96,roof:'dome'},140:{n:'Globe Life Field',lat:32.7473,lon:-97.0822,pf:1.01,roof:'retractable'},141:{n:'Rogers Centre',lat:43.6414,lon:-79.3894,pf:1.03,roof:'dome'},142:{n:'Target Field',lat:44.9817,lon:-93.2786,pf:1.01,roof:'open'},143:{n:'Citizens Bank Park',lat:39.9061,lon:-75.1665,pf:1.04,roof:'open'},144:{n:'Truist Park',lat:33.8908,lon:-84.4681,pf:1.02,roof:'open'},145:{n:'Guaranteed Rate',lat:41.8299,lon:-87.6338,pf:1.01,roof:'open'},146:{n:'loanDepot Park',lat:25.7781,lon:-80.2196,pf:.92,roof:'retractable'},147:{n:'Yankee Stadium',lat:40.8296,lon:-73.9262,pf:1.02,roof:'open'},158:{n:'Am. Family Field',lat:43.028,lon:-87.9712,pf:1.02,roof:'retractable'}};
 let API_KEY='',allGames=[],allPicks=[],allOddsLines=[];
+
+// Safe DOM helpers — never throw if element doesn't exist
+function setHTML(id, html) { const el=document.getElementById(id); if(el) el.innerHTML=html; }
+function setText(id, txt)  { const el=document.getElementById(id); if(el) el.textContent=txt; }
+function getEl(id)         { return document.getElementById(id); }
+
 const MLB='https://statsapi.mlb.com/api/v1';
 const sf=(v,d=4.5)=>{const n=parseFloat(v);return isNaN(n)?d:n;};
 const cl=(v,a=0,b=1)=>Math.max(a,Math.min(b,v));
@@ -1011,16 +1017,16 @@ async function runAll(){
     const injuryCount = games.reduce((s,g) => s + (g.injuries?.away?.length||0) + (g.injuries?.home?.length||0), 0);
     // Stats bar
     document.getElementById('srow').style.display = 'grid';
-    document.getElementById('s-g').textContent  = games.length;
-    document.getElementById('s-h').textContent  = allHigh.length;
-    document.getElementById('s-m').textContent  = allMed.length;
-    document.getElementById('s-o').textContent  = games.filter(g => g.total > g.totalLine).length;
+    setText('s-g', games.length);
+    setText('s-h', allHigh.length);
+    setText('s-m', allMed.length);
+    setText('s-o', games.filter(g => g.total > g.totalLine).length);
     const parlays = buildParlays(games);
-    document.getElementById('s-p').textContent = parlays.length;
+    setText('s-p', parlays.length);
     // Model stats
-    document.getElementById('m-iters').textContent   = trainIter;
-    document.getElementById('m-loss').textContent    = lossVal != null ? lossVal.toFixed(4) : '—';
-    document.getElementById('m-injuries').textContent = injuryCount;
+    setText('m-iters', trainIter);
+    setText('m-loss', lossVal != null ? lossVal.toFixed(4) : '—');
+    setText('m-injuries', injuryCount);
     // Save + render
     await saveHistory(date, games);
     renderPicksArea(games);
@@ -1139,14 +1145,14 @@ function renderWeightSliders() {
     <div class="slider-row">
       <div class="slider-label"><span>${label}</span><span id="sw-${key}">${MODEL_WEIGHTS[key].toFixed(3)}</span></div>
       <input type="range" min="${min}" max="${max}" step="0.01" value="${MODEL_WEIGHTS[key]}"
-        oninput="MODEL_WEIGHTS['${key}']=parseFloat(this.value);MODEL_WEIGHTS['${key.replace('w_h','w_a')}']=-(parseFloat(this.value));document.getElementById('sw-${key}').textContent=parseFloat(this.value).toFixed(3);saveWeights();">
+        oninput="MODEL_WEIGHTS['${key}']=parseFloat(this.value);MODEL_WEIGHTS['${key.replace('w_h','w_a')}']=-(parseFloat(this.value));setText('sw-${key}', parseFloat(this.value).toFixed(3));saveWeights();">
     </div>`).join('');
 }
 
 function loadModelTab() {
   renderWeightsChart();
   renderWeightSliders();
-  document.getElementById('m-iters').textContent = trainIter;
+  setText('m-iters', trainIter);
   if (allGames.length) {
     renderInjuryReport(allGames);
     renderOddsEdge(allGames, allOddsLines);
@@ -1427,11 +1433,11 @@ async function loadHistory() {
   const highCorrect = highGraded.filter(r => r.result === 'win').length;
   const roi = graded > 0 ? (correct * 91 - (graded - correct) * 100) / graded : null;
 
-  document.getElementById('h-total').textContent = total;
-  document.getElementById('h-graded').textContent = graded;
-  document.getElementById('h-acc').textContent = graded > 0 ? Math.round(correct / graded * 100) + '%' : '—';
-  document.getElementById('h-high-acc').textContent = highGraded.length > 0 ? Math.round(highCorrect / highGraded.length * 100) + '%' : '—';
-  document.getElementById('h-roi').textContent = roi != null ? (roi >= 0 ? '+' : '') + roi.toFixed(1) + '%' : '—';
+  setText('h-total', total);
+  setText('h-graded', graded);
+  setText('h-acc', graded > 0 ? Math.round(correct / graded * 100) + '%' : '—');
+  setText('h-high-acc', highGraded.length > 0 ? Math.round(highCorrect / highGraded.length * 100) + '%' : '—');
+  setText('h-roi', roi != null ? (roi >= 0 ? '+' : '') + roi.toFixed(1) + '%' : '—');
   updateCalib(rows.filter(r => r.result != null));
 
   if (!rows.length) {
@@ -1488,17 +1494,17 @@ async function loadAnalytics() {
   let streak = 0, maxStreak = 0;
   [...graded].reverse().forEach(r => { if (r.result==='win') { streak++; maxStreak = Math.max(maxStreak, streak); } else streak = 0; });
 
-  document.getElementById('an-total').textContent = rows.length;
-  document.getElementById('an-winpct').textContent = graded.length > 0 ? Math.round(wins/graded.length*100)+'%' : '—';
+  setText('an-total', rows.length);
+  setText('an-winpct', graded.length > 0 ? Math.round(wins/graded.length*100)+'%' : '—');
   const hg = rows.filter(r => r.result != null && r.conf === 'High');
   const hw = hg.filter(r => r.result === 'win').length;
-  document.getElementById('an-highwp').textContent = hg.length > 0 ? Math.round(hw/hg.length*100)+'%' : '—';
-  document.getElementById('an-roi').textContent = roi != null ? (roi>=0?'+':'')+roi.toFixed(1)+'%' : '—';
-  document.getElementById('an-streak').textContent = maxStreak > 0 ? maxStreak + ' seguidas' : '—';
+  setText('an-highwp', hg.length > 0 ? Math.round(hw/hg.length*100)+'%' : '—');
+  setText('an-roi', roi != null ? (roi>=0?'+':'')+roi.toFixed(1)+'%' : '—');
+  setText('an-streak', maxStreak > 0 ? maxStreak + ' seguidas' : '—');
 
   // Count unique game dates
   const dates = [...new Set(rows.map(r => r.date))];
-  document.getElementById('an-games').textContent = dates.length + ' fechas';
+  setText('an-games', dates.length + ' fechas');
 
   // Calibration chart
   const bk = [{lo:.5,hi:.6,label:'50–60%'},{lo:.6,hi:.7,label:'60–70%'},{lo:.7,hi:.8,label:'70–80%'},{lo:.8,hi:1,label:'80%+'}];

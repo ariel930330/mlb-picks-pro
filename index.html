@@ -437,6 +437,9 @@ function restorePicksFromCache() {
 
   // Render picks from cache
   renderPicksFromCache(games, date);
+
+  // Restore other tabs from cache
+  restoreExtraTabs(date);
 }
 
 function renderPicksFromCache(games, date) {
@@ -484,6 +487,129 @@ function renderPicksFromCache(games, date) {
 }
 
 
+function restoreExtraTabs(date) {
+  try {
+    const extra = JSON.parse(localStorage.getItem('mlbpro-extra-' + date) || 'null');
+    if (!extra) return;
+
+    // Restore parlays tab
+    if (extra.parlays?.length) {
+      const parlayArea = document.getElementById('parlay-area');
+      if (parlayArea) {
+        parlayArea.innerHTML = `
+          <div style="margin-bottom:1rem;padding:.6rem .9rem;background:var(--gbg);border:1px solid var(--gborder);border-radius:var(--rs);font-size:12px;color:var(--gtx)">
+            <i class="ti ti-shield-check" style="vertical-align:-2px;margin-right:4px"></i><strong>Solo picks de Alta Confianza (≥58%)</strong> · Restaurado desde caché
+          </div>` +
+          extra.parlays.map((p, idx) => {
+            const impliedOdds = +(1 / p.cp).toFixed(2);
+            const americanOdds = impliedOdds >= 2 ? `+${Math.round((impliedOdds-1)*100)}` : String(Math.round(-100/(impliedOdds-1)));
+            const payout = Math.round((impliedOdds-1)*100);
+            return `<div class="parlay-card">
+              <div class="parlay-head">
+                <div class="parlay-title"><i class="ti ti-link" style="vertical-align:-2px;margin-right:4px"></i>Parlay ${idx+1} · ${p.type}</div>
+                <div class="parlay-odds">${americanOdds}</div>
+              </div>
+              <div class="parlay-body">
+                ${(p.legs||[]).map((leg,li) => `<div class="parlay-leg">
+                  <div class="parlay-leg-num">${li+1}</div>
+                  <div class="parlay-leg-info">
+                    <div class="parlay-leg-pick">${leg.main}</div>
+                    <div class="parlay-leg-game">${leg.matchup||''} · ${leg.cat||''}</div>
+                  </div>
+                  <div class="parlay-leg-prob">${Math.round((leg.prob||0)*100)}%</div>
+                </div>`).join('')}
+              </div>
+              <div class="parlay-foot">
+                <span class="parlay-pct">Prob. combinada: ${Math.round((p.cp||0)*100)}% · Cuota: ${impliedOdds}x</span>
+                <span class="parlay-payout">$100 → $${payout+100} (gana $${payout})</span>
+              </div>
+            </div>`;
+          }).join('');
+      }
+    }
+
+    // Restore pitchers tab
+    if (extra.pitchers?.length) {
+      const pitcherArea = document.getElementById('pitcher-area');
+      if (pitcherArea) {
+        const allPitchers = extra.pitchers.flatMap(g => [
+          {...g.away, team: g.away_team, opp: g.home_team, oppOPS: g.batters?.aOPS||'—', matchup: g.matchup, time: g.time},
+          {...g.home, team: g.home_team, opp: g.away_team, oppOPS: g.batters?.hOPS||'—', matchup: g.matchup, time: g.time},
+        ]).filter(p => p.name && p.name !== 'TBD').sort((a,b) => b.k9 - a.k9);
+        pitcherArea.innerHTML = allPitchers.map(p => {
+          const kRec = p.kEdge > .3 ? 'OVER' : p.kEdge < -.3 ? 'UNDER' : 'NEUTRAL';
+          const kCls = p.kEdge > .3 ? 'rec-over' : p.kEdge < -.3 ? 'rec-under' : 'rec-neu';
+          return `<div class="pitch-card">
+            <div class="pitch-head"><div>
+              <div class="pitch-name">${p.name}</div>
+              <div class="pitch-meta">${p.team} vs ${p.opp} · ${p.time} · OPS rival: ${p.oppOPS}</div>
+            </div></div>
+            <div class="pitch-stats">
+              <div class="pstat"><div class="pstat-l">ERA</div><div class="pstat-v">${p.era}</div></div>
+              <div class="pstat"><div class="pstat-l">FIP</div><div class="pstat-v">${p.fip}</div></div>
+              <div class="pstat"><div class="pstat-l">K/9</div><div class="pstat-v" style="color:var(--green)">${p.k9}</div></div>
+              <div class="pstat"><div class="pstat-l">BB/9</div><div class="pstat-v">${p.bb9}</div></div>
+              <div class="pstat"><div class="pstat-l">IP/sal.</div><div class="pstat-v">${p.expIP}</div></div>
+            </div>
+            <div class="pitch-prop">
+              <div class="pp-label">Prop Ks — Proyección: <strong>${p.kExp}K</strong> · Línea: ${p.kLine}</div>
+              <div class="pp-val" style="color:${p.kEdge>0?'var(--green)':'var(--red)'}">${kRec} ${p.kLine}</div>
+              <div class="pp-rec ${kCls}">${Math.abs(p.kEdge)>.3?'★ '+kRec:'NEUTRAL'}</div>
+            </div>
+          </div>`;
+        }).join('') + '<div class="src">Datos restaurados desde caché · K/9 × IP = proyección Ks</div>';
+      }
+    }
+
+    // Restore batters tab
+    if (extra.batters?.length) {
+      const batterArea = document.getElementById('batter-area');
+      if (batterArea) {
+        const rows = [];
+        extra.batters.forEach(g => {
+          const addP = (players, team, oppName, matchup, time) => {
+            (players||[]).forEach(p => {
+              if (!p.ba || p.ba === 0) return;
+              const hitP = 1 - Math.pow(1 - p.ba, 4.2);
+              const tbExp = +(p.slg * 3.7).toFixed(1);
+              const tbLine = p.slg > .45 ? 2.5 : 1.5;
+              rows.push({name:p.name,pos:p.pos,team,ba:p.ba,slg:p.slg,ops:p.ops,obp:p.obp||0,hr:p.hr||0,rbi:p.rbi||0,hitP,tbExp,tbLine,oppPitcher:oppName,matchup,time});
+            });
+          };
+          const matchup = `${g.away} @ ${g.home}`;
+          if (g.topBatters?.away?.length) addP(g.topBatters.away, g.away, g.pitchers?.home?.name||'TBD', matchup, g.time);
+          else rows.push({name:'Sin datos',pos:'—',team:g.away,ba:g.batters?.aBA||0,slg:g.batters?.aSLG||0,ops:g.batters?.aOPS||0,obp:0,hr:0,rbi:0,hitP:g.batters?.aHitP||0,tbExp:g.batters?.aTBExp||0,tbLine:g.batters?.aTBLine||1.5,oppPitcher:g.pitchers?.home?.name||'TBD',matchup,time:g.time});
+          if (g.topBatters?.home?.length) addP(g.topBatters.home, g.home, g.pitchers?.away?.name||'TBD', matchup, g.time);
+          else rows.push({name:'Sin datos',pos:'—',team:g.home,ba:g.batters?.hBA||0,slg:g.batters?.hSLG||0,ops:g.batters?.hOPS||0,obp:0,hr:0,rbi:0,hitP:g.batters?.hHitP||0,tbExp:g.batters?.hTBExp||0,tbLine:g.batters?.hTBLine||1.5,oppPitcher:g.pitchers?.away?.name||'TBD',matchup,time:g.time});
+        });
+        rows.sort((a,b) => b.hitP - a.hitP);
+        batterArea.innerHTML = `<div style="background:var(--bg2);border-radius:var(--rs);overflow:hidden"><table class="bat-table"><thead><tr>
+          <th>Jugador</th><th>Equipo</th><th>vs Pitcher</th><th>BA</th><th>OBP</th><th>SLG</th><th>OPS</th><th>HR</th><th>RBI</th><th>P(Hit)</th><th>TB Exp.</th><th>Rec. TB</th>
+        </tr></thead><tbody>${rows.map((r,i) => {
+          const hpCls = r.hitP>.74?'hp-h':r.hitP>.68?'hp-m':'hp-l';
+          const tbRec = r.tbExp>r.tbLine+.25?'★ OVER '+r.tbLine:r.tbExp<r.tbLine-.25?'UNDER '+r.tbLine:'—';
+          return `<tr style="${i%2===0?'':'background:var(--bg)'}">
+            <td><strong>${r.name}</strong><div style="font-size:9px;color:var(--text3)">${r.pos} · ${r.matchup}</div></td>
+            <td><span style="font-size:11px;font-weight:700;padding:1px 6px;border-radius:4px;background:var(--bg3)">${r.team}</span></td>
+            <td style="font-size:10px;color:var(--text2)">${(r.oppPitcher||'').split(' ').slice(-1)[0]}</td>
+            <td style="font-weight:700">${r.ba?.toFixed(3)||'—'}</td>
+            <td>${r.obp?.toFixed(3)||'—'}</td>
+            <td>${r.slg?.toFixed(3)||'—'}</td>
+            <td>${r.ops?.toFixed(3)||'—'}</td>
+            <td style="color:var(--amber);font-weight:600">${r.hr||0}</td>
+            <td>${r.rbi||0}</td>
+            <td><span class="hp-pill ${hpCls}">${Math.round(r.hitP*100)}%</span></td>
+            <td style="font-weight:700;color:var(--green)">${r.tbExp||'—'}</td>
+            <td style="font-size:11px;font-weight:700;color:${r.tbExp>r.tbLine?'var(--green)':'var(--text3)'}">${tbRec}</td>
+          </tr>`;
+        }).join('')}</tbody></table></div>
+        <div class="src">Datos restaurados desde caché · P(Hit) = 1-(1-BA)^4.2</div>`;
+      }
+    }
+  } catch(e) { console.warn('restoreExtraTabs error:', e); }
+}
+
+
 function onDateChange(date) {
   // When user changes the date, check if we have cached picks for that date
   const cached = JSON.parse(localStorage.getItem('mlbpro-' + date) || '[]');
@@ -508,6 +634,7 @@ function onDateChange(date) {
     setText('sm-ov', '—');
     setText('sm-p', '—');
     renderPicksFromCache(games, date);
+    restoreExtraTabs(date);
   } else {
     // No cache for this date — clear display and prompt to analyze
     const _pa = document.getElementById('picks-area');
@@ -1501,6 +1628,15 @@ async function saveHistory(date, games) {
       savedAt:      saved?.savedAt || new Date().toISOString(),
     };
   });
+  // Also save pitchers and batters for tab restoration
+  const extraKey = 'mlbpro-extra-' + date;
+  const extraData = {
+    pitchers: games.map(g => ({...g.pitchers, away_team: g.away, home_team: g.home, matchup: g.away+'@'+g.home, time: g.time, batters: g.batters})),
+    batters:  games.map(g => ({ away: g.away, home: g.home, topBatters: g.topBatters, batters: g.batters, pitchers: g.pitchers, time: g.time })),
+    parlays:  buildParlays(games).map(p => ({...p})),
+    date,
+  };
+  localStorage.setItem(extraKey, JSON.stringify(extraData));
   localStorage.setItem(key, JSON.stringify(summary));
   const idx = JSON.parse(localStorage.getItem('mlbpro-idx') || '[]');
   if (!idx.includes(date)) { idx.unshift(date); localStorage.setItem('mlbpro-idx', JSON.stringify(idx.slice(0,90))); }

@@ -1119,14 +1119,7 @@ function renderWeightsChart() {
   if (!ctx) return;
   if (weightsChart) { weightsChart.destroy(); weightsChart = null; }
   const dark = window.matchMedia('(prefers-color-scheme:dark)').matches;
-  const labels = ['Pitcher
-local','Pitcher
-visit.','Ofensiva
-local','Ofensiva
-visit.','Bullpen
-local','Bullpen
-visit.','Racha','Campo
-local'];
+  const labels = ['Pitcher\nlocal','Pitcher\nvisit.','Ofensiva\nlocal','Ofensiva\nvisit.','Bullpen\nlocal','Bullpen\nvisit.','Racha','Campo\nlocal'];
   const values = [MODEL_WEIGHTS.w_hp,MODEL_WEIGHTS.w_ap,MODEL_WEIGHTS.w_ho,MODEL_WEIGHTS.w_ao,MODEL_WEIGHTS.w_hb,MODEL_WEIGHTS.w_ab,MODEL_WEIGHTS.w_str,MODEL_WEIGHTS.w_hfa];
   const colors = values.map(v => v > 0 ? '#1D9E75' : '#c0392b');
   weightsChart = new Chart(ctx, {type:'bar',data:{labels,datasets:[{data:values,backgroundColor:colors,borderRadius:4}]},options:{responsive:true,plugins:{legend:{display:false},tooltip:{callbacks:{label:v=>`Peso: ${v.raw.toFixed(3)}`}}},scales:{y:{ticks:{font:{size:9}},grid:{color:dark?'rgba(255,255,255,.07)':'rgba(0,0,0,.06)'},title:{display:true,text:'Peso en el modelo',font:{size:9}}},x:{ticks:{font:{size:8}},grid:{display:false}}}}});

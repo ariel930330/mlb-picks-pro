@@ -408,6 +408,483 @@ input[type=range]{width:100%;accent-color:var(--gold)}
 const ST={108:{n:'Angel Stadium',lat:33.8003,lon:-117.8827,pf:.99,roof:'open'},109:{n:'Chase Field',lat:33.4455,lon:-112.0667,pf:.98,roof:'retractable'},110:{n:'Camden Yards',lat:39.2838,lon:-76.6218,pf:1.03,roof:'open'},111:{n:'Fenway Park',lat:42.3467,lon:-71.0972,pf:1.06,roof:'open'},112:{n:'Wrigley Field',lat:41.9484,lon:-87.6553,pf:1.04,roof:'open'},113:{n:'GABP',lat:39.0979,lon:-84.5082,pf:1.08,roof:'open'},114:{n:'Progressive Field',lat:41.4962,lon:-81.6852,pf:.97,roof:'open'},115:{n:'Coors Field',lat:39.7559,lon:-104.9942,pf:1.24,roof:'open'},116:{n:'Comerica Park',lat:42.339,lon:-83.0485,pf:.95,roof:'open'},117:{n:'Minute Maid Park',lat:29.7572,lon:-95.3555,pf:1.00,roof:'retractable'},118:{n:'Kauffman Stadium',lat:39.0514,lon:-94.4803,pf:.96,roof:'open'},119:{n:'Dodger Stadium',lat:34.0739,lon:-118.24,pf:.96,roof:'open'},120:{n:'Nationals Park',lat:38.873,lon:-77.0074,pf:1.00,roof:'open'},121:{n:'Citi Field',lat:40.7571,lon:-73.8458,pf:.97,roof:'open'},133:{n:'Oakland Coliseum',lat:37.7516,lon:-122.2005,pf:.93,roof:'open'},134:{n:'PNC Park',lat:40.4469,lon:-80.0057,pf:.97,roof:'open'},135:{n:'Petco Park',lat:32.7076,lon:-117.157,pf:.93,roof:'open'},136:{n:'T-Mobile Park',lat:47.5914,lon:-122.3325,pf:.94,roof:'retractable'},137:{n:'Oracle Park',lat:37.7786,lon:-122.3893,pf:.93,roof:'open'},138:{n:'Busch Stadium',lat:38.6226,lon:-90.1928,pf:.99,roof:'open'},139:{n:'Tropicana Field',lat:27.7683,lon:-82.6534,pf:.96,roof:'dome'},140:{n:'Globe Life Field',lat:32.7473,lon:-97.0822,pf:1.01,roof:'retractable'},141:{n:'Rogers Centre',lat:43.6414,lon:-79.3894,pf:1.03,roof:'dome'},142:{n:'Target Field',lat:44.9817,lon:-93.2786,pf:1.01,roof:'open'},143:{n:'Citizens Bank Park',lat:39.9061,lon:-75.1665,pf:1.04,roof:'open'},144:{n:'Truist Park',lat:33.8908,lon:-84.4681,pf:1.02,roof:'open'},145:{n:'Guaranteed Rate',lat:41.8299,lon:-87.6338,pf:1.01,roof:'open'},146:{n:'loanDepot Park',lat:25.7781,lon:-80.2196,pf:.92,roof:'retractable'},147:{n:'Yankee Stadium',lat:40.8296,lon:-73.9262,pf:1.02,roof:'open'},158:{n:'Am. Family Field',lat:43.028,lon:-87.9712,pf:1.02,roof:'retractable'}};
 let API_KEY='',allGames=[],allPicks=[],allOddsLines=[];
 
+// ── Adaptive Weight System (SGD Logistic Regression) ─────────────────────────
+const DEFAULT_WEIGHTS = {
+  w_hp:    1.05,   // home pitcher quality
+  w_ap:   -1.05,   // away pitcher quality (negative = hurts home)
+  w_ho:    0.70,   // home offense
+  w_ao:   -0.70,   // away offense
+  w_hb:    0.45,   // home bullpen
+  w_ab:   -0.45,   // away bullpen
+  w_str:   0.35,   // streak differential
+  w_hfa:   0.18,   // home field advantage
+  w_pf:    0.30,   // park factor effect
+  w_wind:  0.20,   // wind modifier effect
+};
+let MODEL_WEIGHTS = {...DEFAULT_WEIGHTS};
+let trainIter = 0;
+const LR = 0.01; // learning rate
+
+function loadWeights() {
+  try {
+    const saved = JSON.parse(localStorage.getItem('mlbpro-weights') || 'null');
+    if (saved && saved.w_hp !== undefined) { MODEL_WEIGHTS = saved; }
+    trainIter = parseInt(localStorage.getItem('mlbpro-train-iter') || '0');
+  } catch {}
+}
+
+function saveWeights() {
+  localStorage.setItem('mlbpro-weights', JSON.stringify(MODEL_WEIGHTS));
+  localStorage.setItem('mlbpro-train-iter', String(trainIter));
+}
+
+function resetWeights() {
+  MODEL_WEIGHTS = {...DEFAULT_WEIGHTS};
+  trainIter = 0;
+  saveWeights();
+  loadModelTab();
+  alert('✅ Pesos reseteados a valores por defecto');
+}
+
+function trainOnResult(features, actual) {
+  // actual = 1 (home won) or 0 (away won)
+  const logit = computeLogit(features);
+  const pred  = 1 / (1 + Math.exp(-logit));
+  const err   = actual - pred;
+  // SGD update: w += lr * err * feature
+  MODEL_WEIGHTS.w_hp   += LR * err * features.hps;
+  MODEL_WEIGHTS.w_ap   += LR * err * features.aps;
+  MODEL_WEIGHTS.w_ho   += LR * err * features.hos;
+  MODEL_WEIGHTS.w_ao   += LR * err * features.aos;
+  MODEL_WEIGHTS.w_hb   += LR * err * features.hbs;
+  MODEL_WEIGHTS.w_ab   += LR * err * features.abs;
+  MODEL_WEIGHTS.w_str  += LR * err * features.str;
+  MODEL_WEIGHTS.w_hfa  += LR * err * 1;
+  trainIter++;
+  saveWeights();
+  return Math.log(pred + 1e-9) * actual + Math.log(1 - pred + 1e-9) * (1 - actual);
+}
+
+function computeLogit(f) {
+  return MODEL_WEIGHTS.w_hp  * f.hps
+       + MODEL_WEIGHTS.w_ap  * f.aps
+       + MODEL_WEIGHTS.w_ho  * f.hos
+       + MODEL_WEIGHTS.w_ao  * f.aos
+       + MODEL_WEIGHTS.w_hb  * f.hbs
+       + MODEL_WEIGHTS.w_ab  * f.abs
+       + MODEL_WEIGHTS.w_str * f.str
+       + MODEL_WEIGHTS.w_hfa;
+}
+
+function trainFromHistory() {
+  const idx = JSON.parse(localStorage.getItem('mlbpro-idx') || '[]');
+  let totalLoss = 0, count = 0;
+  idx.forEach(d => {
+    const rows = JSON.parse(localStorage.getItem('mlbpro-' + d) || 'null');
+    if (!rows) return;
+    rows.forEach(r => {
+      if (!r.result || !r.features) return;
+      const actual = r.fav === r.home ? (r.result === 'win' ? 1 : 0) : (r.result === 'win' ? 0 : 1);
+      const loss = trainOnResult(r.features, actual);
+      totalLoss += loss; count++;
+    });
+  });
+  return count > 0 ? -(totalLoss / count) : null;
+}
+
+function computeGame(g,apSt,hpSt,aSt,hSt,aR,hR,wx,stad,injuries,matchups,confirmedLineup,aBullpen,hBullpen,apRest,hpRest,aSplits,hSplits,apHand,hpHand) {
+  const apk9=sf(apSt.strikeoutsPer9Inn,8),hpk9=sf(hpSt.strikeoutsPer9Inn,8);
+  const apera=sf(apSt.era),hpera=sf(hpSt.era);
+  // Calculate real FIP: ((13×HR) + (3×(BB+HBP)) - (2×K)) / IP + 3.10
+  const cFIP = 3.10; // MLB league constant 2024-25
+  function calcFIP(st, eraFallback) {
+    const hr  = sf(st.homeRuns,      0);
+    const bb  = sf(st.baseOnBalls,   0);
+    const hbp = sf(st.hitByPitch,    0);
+    const k   = sf(st.strikeOuts,    0);
+    const ip  = sf(st.inningsPitched, 0);
+    // Convert IP from MLB format (e.g. 6.2 = 6 full + 2 outs = 6.667)
+    const fullInnings = Math.floor(ip);
+    const partialOuts = Math.round((ip - fullInnings) * 10);
+    const ipDecimal   = fullInnings + partialOuts / 3;
+    if (ipDecimal < 5) return eraFallback; // not enough innings → use ERA
+    const fip = ((13 * hr) + (3 * (bb + hbp)) - (2 * k)) / ipDecimal + cFIP;
+    return +Math.max(1.0, Math.min(8.0, fip)).toFixed(2); // clamp outliers
+  }
+  const apfip = calcFIP(apSt, apera);
+  const hpfip = calcFIP(hpSt, hpera);
+  const apwhip=sf(apSt.whip,1.3),hpwhip=sf(hpSt.whip,1.3),apbb9=sf(apSt.walksPer9Inn,3.2),hpbb9=sf(hpSt.walksPer9Inn,3.2);
+  const apGS=Math.max(1,sf(apSt.gamesStarted,1)),hpGS=Math.max(1,sf(hpSt.gamesStarted,1));
+  const apExpIP=Math.min(6.5,Math.max(4,sf(apSt.inningsPitched,0)/apGS||5.5));
+  const hpExpIP=Math.min(6.5,Math.max(4,sf(hpSt.inningsPitched,0)/hpGS||5.5));
+
+  // Base offensive stats
+  let aOPS=sf(aSt.hitting?.ops,.72),hOPS=sf(hSt.hitting?.ops,.72);
+  const aBA=sf(aSt.hitting?.avg,.25),hBA=sf(hSt.hitting?.avg,.25);
+  const aSLG=sf(aSt.hitting?.slg,.38),hSLG=sf(hSt.hitting?.slg,.38);
+  const aBpE=sf(aSt.pitching?.era,4),hBpE=sf(hSt.pitching?.era,4);
+
+  // ── Injury adjustment ─────────────────────────────────────────────────────
+  const aInjuries = (injuries?.away || []).filter(p => !['P','RP','SP'].includes(p.pos));
+  const hInjuries = (injuries?.home || []).filter(p => !['P','RP','SP'].includes(p.pos));
+  const injuryPenalty = inj => inj.length >= 3 ? 0.04 : inj.length >= 1 ? 0.02 : 0;
+  aOPS -= injuryPenalty(aInjuries) * 0.5;  // injured lineup → lower OPS proxy
+  hOPS -= injuryPenalty(hInjuries) * 0.5;
+
+  // ── Batting splits vs pitcher hand (RHP/LHP) ─────────────────────────────
+  // Blend season OPS (60%) with vs-hand OPS (40%) when available
+  if (aSplits?.vsHand?.ops && aSplits.vsHand.pa >= 30) {
+    aOPS = aOPS * 0.60 + aSplits.vsHand.ops * 0.40;
+  }
+  if (hSplits?.vsHand?.ops && hSplits.vsHand.pa >= 30) {
+    hOPS = hOPS * 0.60 + hSplits.vsHand.ops * 0.40;
+  }
+  // L30 trend adjustment (15% weight if team is hot/cold recently)
+  if (aSplits?.l30?.ops) {
+    const l30Delta = aSplits.l30.ops - aOPS;
+    aOPS += l30Delta * 0.15; // nudge toward recent form
+  }
+  if (hSplits?.l30?.ops) {
+    const l30Delta = hSplits.l30.ops - hOPS;
+    hOPS += l30Delta * 0.15;
+  }
+  // wOBA-based pick confidence boost: if wOBA vs hand > .320 = strong matchup
+  const aWobaEdge = (aSplits?.vsHand?.woba || 0) > 0.320 ? 0.03 : 0;
+  const hWobaEdge = (hSplits?.vsHand?.woba || 0) > 0.320 ? 0.03 : 0;
+
+  // ── BvP matchup adjustment ────────────────────────────────────────────────
+  // If batter vs pitcher matchup data available, blend with season OPS
+  const awayBvP = matchups?.awayBattersVsHomePitcher;   // away batters vs home SP
+  const homeBvP = matchups?.homeBattersVsAwayPitcher;   // home batters vs away SP
+  if (awayBvP && awayBvP.sampleSize >= 2) {
+    aOPS = aOPS * 0.65 + awayBvP.avgOPS * 0.35;  // blend season + matchup
+  }
+  if (homeBvP && homeBvP.sampleSize >= 2) {
+    hOPS = hOPS * 0.65 + homeBvP.avgOPS * 0.35;
+  }
+
+  // ── Confirmed lineup boost ────────────────────────────────────────────────
+  const lineupConf = confirmedLineup?.home?.confirmed || confirmedLineup?.away?.confirmed;
+
+  const aWL=aR.filter(r=>r.isWin).length/Math.max(1,aR.length);
+  const hWL=hR.filter(r=>r.isWin).length/Math.max(1,hR.length);
+  const pf=stad?.pf||1,wmod=wx?.wmod||1,altB=1+Math.max(0,(stad?.alt||0)-1000)/10000*.15;
+  const tmp=wx?.tf<50?.92:wx?.tf>85?1.04:1.0;
+
+  // ── Pitcher rest adjustment ───────────────────────────────────────────────
+  const apRestPenalty = apRest?.fatiguePenalty || 0;
+  const hpRestPenalty = hpRest?.fatiguePenalty || 0;
+
+  // ── Pitcher scores (with rest penalty) ───────────────────────────────────
+  const aps=cl(.35*(1-(apfip-2)/4)+.25*(1-(apera-2)/4)+.20*((apk9-5)/5)+.20*(1-(apbb9-1.5)/3.5) - apRestPenalty);
+  const hps=cl(.35*(1-(hpfip-2)/4)+.25*(1-(hpera-2)/4)+.20*((hpk9-5)/5)+.20*(1-(hpbb9-1.5)/3.5) - hpRestPenalty);
+  const hos=cl((hOPS-.65)/.2);
+  const aos=cl((aOPS-.65)/.2);
+  // Apply fatigue penalty to bullpen ERA equivalent
+  const hBullpenPenalty = hBullpen?.fatiguePenalty || 0;
+  const aBullpenPenalty = aBullpen?.fatiguePenalty || 0;
+  const hbs=cl((hBpE-2.5)/-3.5+.5 - hBullpenPenalty);
+  const abs2=cl((aBpE-2.5)/-3.5+.5 - aBullpenPenalty);
+  const str=hWL-aWL;
+
+  // ── Model logit using trained weights ─────────────────────────────────────
+  const features = {hps,aps,hos,aos,hbs,abs:abs2,str};
+  const logit = computeLogit(features);
+  const hwp=sig(logit), awp=1-hwp;
+
+  // ── Expected runs (park/weather/altitude aware) ────────────────────────────
+  const lg=4.4;
+  const hExp=lg*(1+(.5-hps)*.85)*(1+(aos-.5)*.55)*pf*wmod*altB*tmp;
+  const aExp=lg*(1+(.5-aps)*.85)*(1+(hos-.5)*.55)*pf*wmod*altB*tmp;
+  const total=+(hExp+aExp).toFixed(1);
+  const sigma=Math.sqrt(hExp+aExp)*.9;
+  const favHome=hwp>=awp;
+  const rlProb=favHome?normCDF((hExp-aExp-1.5)/sigma):normCDF((aExp-hExp-1.5)/sigma);
+  const totalLine=+(Math.round(total*2)/2-.5).toFixed(1);
+  const totalEdge=total-totalLine;
+  const f5logit=logit*1.15-.07;
+  const f5hwp=sig(f5logit),f5awp=1-f5hwp;
+  const f5total=+(total*.545).toFixed(1);
+  const f5line=+(Math.round(f5total*2)/2-.5).toFixed(1);
+  const apKExp=+(apk9/9*apExpIP).toFixed(1),hpKExp=+(hpk9/9*hpExpIP).toFixed(1);
+  const apKLine=Math.floor(apKExp)+.5,hpKLine=Math.floor(hpKExp)+.5;
+  const hLineTot=+(Math.round(hExp*2)/2-.5).toFixed(1),aLineTot=+(Math.round(aExp*2)/2-.5).toFixed(1);
+  const hHitP=1-Math.pow(1-hBA,4.2),aHitP=1-Math.pow(1-aBA,4.2);
+  const hTBExp=+(hSLG*3.7).toFixed(1),aTBExp=+(aSLG*3.7).toFixed(1);
+  const away=g.teams?.away?.team?.abbreviation,home=g.teams?.home?.team?.abbreviation;
+
+  // ── Generate candidate picks (sorted by prob) ─────────────────────────────
+  const rawPicks=[];
+  if(hwp>.52) rawPicks.push({cat:'Money Line',main:`${home} ML ${p2ml(hwp)}`,sub:`Modelo: ${pct(hwp)} · ${lineupConf?'✓ Lineup confirmado':'Lineup estimado'}`,prob:hwp,edge:+(hwp-.52).toFixed(3)});
+  else rawPicks.push({cat:'Money Line',main:`${away} ML ${p2ml(awp)}`,sub:`Modelo: ${pct(awp)} · ${lineupConf?'✓ Lineup confirmado':'Lineup estimado'}`,prob:awp,edge:+(awp-.52).toFixed(3)});
+  // Adjust team totals using wOBA matchup edge
+  const hExpAdj = hExp * (1 + hWobaEdge);
+  const aExpAdj = aExp * (1 + aWobaEdge);
+  const totalAdj = +(hExpAdj + aExpAdj).toFixed(1);
+  rawPicks.push({cat:'Total del partido',main:`${totalEdge>0?'OVER':'UNDER'} ${totalLine} runs`,sub:`Proyección: ${total} runs | PF ${pf}${awayBvP?' | BvP datos incluidos':''}`,prob:totalEdge>0?cl(.50+totalEdge*.08):cl(.50+Math.abs(totalEdge)*.08),edge:+Math.abs(totalEdge*.07).toFixed(3)});
+  rawPicks.push({cat:'Run Line (-1.5)',main:`${favHome?home:away} -1.5`,sub:`${pct(rlProb)} prob ganar por 2+`,prob:rlProb,edge:+(rlProb-.52).toFixed(3)});
+  const f5fav=f5hwp>=f5awp?home:away,f5favWP=Math.max(f5hwp,f5awp);
+  rawPicks.push({cat:'Primeras 5 Innings',main:`${f5fav} F5 ${p2ml(f5favWP)}`,sub:`${pct(f5favWP)} en F5 | Pitcher: ${f5hwp>=f5awp?g.teams?.home?.probablePitcher?.fullName||home:g.teams?.away?.probablePitcher?.fullName||away}`,prob:f5favWP,edge:+(f5favWP-.52).toFixed(3)});
+  const f5tE=f5total-f5line;
+  rawPicks.push({cat:'Total F5',main:`${f5tE>0?'OVER':'UNDER'} ${f5line} (F5)`,sub:`Proyección F5: ${f5total} carreras`,prob:cl(.50+Math.abs(f5tE)*.09),edge:+Math.abs(f5tE*.08).toFixed(3)});
+  const bestK=apKExp-apKLine>=hpKExp-hpKLine?{name:g.teams?.away?.probablePitcher?.fullName||away,kExp:apKExp,kLine:apKLine,kEdge:+(apKExp-apKLine).toFixed(2)}:{name:g.teams?.home?.probablePitcher?.fullName||home,kExp:hpKExp,kLine:hpKLine,kEdge:+(hpKExp-hpKLine).toFixed(2)};
+  rawPicks.push({cat:'Ks Pitcher',main:`${bestK.name.split(' ').slice(-1)[0]} ${bestK.kEdge>=0?'OVER':'UNDER'} ${bestK.kLine}K`,sub:`Proyección: ${bestK.kExp}K`,prob:cl(.50+Math.abs(bestK.kEdge)*.09),edge:+Math.abs(bestK.kEdge*.08).toFixed(3)});
+  const hTE=hExp-hLineTot;
+  rawPicks.push({cat:`Total ${home}`,main:`${home} ${hTE>0?'OVER':'UNDER'} ${hLineTot}`,sub:`Proyección: ${hExp.toFixed(1)} carreras`,prob:cl(.50+Math.abs(hTE)*.09),edge:+Math.abs(hTE*.08).toFixed(3)});
+
+  // wOBA matchup pick — when offense has strong vs-hand advantage
+  if (aSplits?.vsHand?.woba > 0.340 && aSplits.vsHand.pa >= 40) {
+    rawPicks.push({
+      cat: `Ofensiva ${away} vs ${apHand==='L'?'zurdo':'derecho'}`,
+      main: `${away} OVER ${aLineTot} runs (wOBA matchup)`,
+      sub: `wOBA ${away} vs ${apHand==='L'?'LHP':'RHP'}: ${aSplits.vsHand.woba} · K% ${aSplits.vsHand.kpct}% · ${aSplits.vsHand.pa} PA`,
+      prob: cl(0.50 + (aSplits.vsHand.woba - 0.310) * 0.5),
+      edge: +((aSplits.vsHand.woba - 0.310) * 0.4).toFixed(3),
+    });
+  }
+  if (hSplits?.vsHand?.woba > 0.340 && hSplits.vsHand.pa >= 40) {
+    rawPicks.push({
+      cat: `Ofensiva ${home} vs ${hpHand==='L'?'zurdo':'derecho'}`,
+      main: `${home} OVER ${hLineTot} runs (wOBA matchup)`,
+      sub: `wOBA ${home} vs ${hpHand==='L'?'LHP':'RHP'}: ${hSplits.vsHand.woba} · K% ${hSplits.vsHand.kpct}% · ${hSplits.vsHand.pa} PA`,
+      prob: cl(0.50 + (hSplits.vsHand.woba - 0.310) * 0.5),
+      edge: +((hSplits.vsHand.woba - 0.310) * 0.4).toFixed(3),
+    });
+  }
+  // If team struggles vs this hand (wOBA < .290), boost the pitcher's ML
+  if (aSplits?.vsHand?.woba < 0.290 && aSplits.vsHand.pa >= 40) {
+    rawPicks.push({
+      cat: `Ventaja ${home} pitcher`,
+      main: `${home} ML (lineup ${away} débil vs ${apHand==='L'?'LHP':'RHP'})`,
+      sub: `wOBA ${away} vs ${apHand==='L'?'LHP':'RHP'}: ${aSplits.vsHand.woba} · K% ${aSplits.vsHand.kpct}%`,
+      prob: cl(hwp + 0.04),
+      edge: 0.04,
+    });
+  }
+
+  // If BvP data available, add a batter vs pitcher pick
+  if(awayBvP && awayBvP.avgOPS > .800 && awayBvP.sampleSize >= 3) {
+    rawPicks.push({cat:'BvP — Ofensiva visitante',main:`${away} OVER ${aLineTot} (BvP)`,sub:`OPS histórico ${away} vs ${g.teams?.home?.probablePitcher?.fullName?.split(' ').slice(-1)[0]}: ${awayBvP.avgOPS.toFixed(3)} (${awayBvP.sampleSize} muestras)`,prob:cl(.50+((awayBvP.avgOPS-.720)/.15)*0.10),edge:0.04});
+  }
+  if(homeBvP && homeBvP.avgOPS > .800 && homeBvP.sampleSize >= 3) {
+    rawPicks.push({cat:'BvP — Ofensiva local',main:`${home} OVER ${hLineTot} (BvP)`,sub:`OPS histórico ${home} vs ${g.teams?.away?.probablePitcher?.fullName?.split(' ').slice(-1)[0]}: ${homeBvP.avgOPS.toFixed(3)} (${homeBvP.sampleSize} muestras)`,prob:cl(.50+((homeBvP.avgOPS-.720)/.15)*0.10),edge:0.04});
+  }
+
+  rawPicks.sort((a,b)=>b.prob-a.prob);
+  const top3=rawPicks.slice(0,3).map(p=>({...p,conf:p.prob>=.58?'High':p.prob>=.53?'Medium':'Low'}));
+
+  const gStatus = g.status?.abstractGameState || 'Preview';
+  return{
+    away,home,awayFull:g.teams?.away?.team?.name,homeFull:g.teams?.home?.team?.name,
+    venue:stad?.n||g.venue?.name,time:fmtTime(g.gameDate),gamePk:g.gamePk,
+    status:gStatus,gameStarted:gStatus==='Live'||gStatus==='Final',
+    awayWP:+awp.toFixed(4),homeWP:+hwp.toFixed(4),awayML:p2ml(awp),homeML:p2ml(hwp),
+    total,totalLine,hExp:+hExp.toFixed(2),aExp:+aExp.toFixed(2),hLineTot,aLineTot,
+    rlProb:+rlProb.toFixed(4),rlFavHome:favHome,
+    f5:{hwp:+f5hwp.toFixed(4),awp:+f5awp.toFixed(4),total:f5total,line:f5line},
+    pitchers:{
+      away:{name:g.teams?.away?.probablePitcher?.fullName||'TBD',era:+apera.toFixed(2),fip:+apfip.toFixed(2),whip:+apwhip.toFixed(2),k9:+apk9.toFixed(1),bb9:+apbb9.toFixed(1),expIP:+apExpIP.toFixed(1),kExp:apKExp,kLine:apKLine,kEdge:+(apKExp-apKLine).toFixed(2)},
+      home:{name:g.teams?.home?.probablePitcher?.fullName||'TBD',era:+hpera.toFixed(2),fip:+hpfip.toFixed(2),whip:+hpwhip.toFixed(2),k9:+hpk9.toFixed(1),bb9:+hpbb9.toFixed(1),expIP:+hpExpIP.toFixed(1),kExp:hpKExp,kLine:hpKLine,kEdge:+(hpKExp-hpKLine).toFixed(2)}
+    },
+    batters:{aBA:+aBA.toFixed(3),hBA:+hBA.toFixed(3),aSLG:+aSLG.toFixed(3),hSLG:+hSLG.toFixed(3),aHitP:+aHitP.toFixed(3),hHitP:+hHitP.toFixed(3),aTBExp,hTBExp,aTBLine:aSLG>.45?2.5:1.5,hTBLine:hSLG>.45?2.5:1.5,aOPS:+aOPS.toFixed(3),hOPS:+hOPS.toFixed(3)},
+    weather:wx,pf,
+    injuries:{away:aInjuries,home:hInjuries},
+    matchups:{awayBvP,homeBvP},
+    splits:{away:aSplits,home:hSplits},
+    pitcherHand:{away:apHand,home:hpHand},
+    confirmedLineup,lineupConf,
+    features,   // stored for training
+    picks:top3,allPicks:rawPicks,
+    bullpen:{ away: aBullpen, home: hBullpen },
+    starterRest:{ away: apRest, home: hpRest },
+    homeId:g.teams?.home?.team?.id,awayId:g.teams?.away?.team?.id
+  };
+}
+
+
+function confClass(c){return c==='High'?'badge-high conf-high':c==='Medium'?'badge-med conf-med':'badge-low conf-low';}
+function confLabel(c){return c==='High'?'ALTA':c==='Medium'?'MEDIA':'BAJA';}
+function confBarClass(c){return c==='High'?'conf-high':c==='Medium'?'conf-med':'conf-low';}
+
+function renderPicksArea(games){
+  const date  = document.getElementById('date-pick')?.value || '';
+  const saved = JSON.parse(localStorage.getItem('mlbpro-' + date) || '[]');
+
+  // Merge each game with its locked picks (if saved before game started)
+  const mergedGames = games.map(g => {
+    const sv = saved.find(s => s.away === g.away && s.home === g.home);
+    if (sv?.locked && sv?.allPicks?.length && !g.gameStarted) {
+      return { ...g,
+        picks:   sv.allPicks,
+        homeWP:  sv.homeWP,  awayWP:  sv.awayWP,
+        homeML:  sv.homeML,  awayML:  sv.awayML,
+        isLocked: true,      savedAt:  sv.savedAt };
+    }
+    return { ...g, isLocked: false };
+  });
+
+  const _pa = document.getElementById('picks-area');
+  if (!_pa) return;
+  _pa.innerHTML = '<div class="games-list">' + mergedGames.map(g => {
+    const awayPct=Math.round(g.awayWP*100),homePct=Math.round(g.homeWP*100);
+    return`<div class="gcard">
+      <div class="gc-head">
+        <span><i class="ti ti-ball-baseball" style="font-size:10px;margin-right:4px"></i><strong>${g.away} @ ${g.home}</strong></span>
+        <div style="display:flex;gap:5px;align-items:center">
+          ${g.isLocked ? '<span style="font-size:9px;padding:2px 6px;border-radius:3px;background:var(--bbg);color:var(--btx);display:flex;align-items:center;gap:3px"><i class="ti ti-lock" style="font-size:9px"></i>Pick original</span>' : ''}
+          <span class="gc-venue">${g.time} · ${g.venue}</span>
+        </div>
+      </div>
+      <div class="gc-matchup">
+        <div class="gc-team"><div class="gc-abbr">${g.away}</div><div class="gc-pct" style="color:#378ADD">${awayPct}%</div><div class="gc-ml">${g.awayML}</div></div>
+        <div class="gc-divider">@</div>
+        <div class="gc-team home"><div class="gc-abbr">${g.home}</div><div class="gc-pct" style="color:var(--green)">${homePct}%</div><div class="gc-ml">${g.homeML}</div></div>
+      </div>
+      <div class="gc-bar"><div class="gc-bar-a" style="width:${awayPct}%"></div><div class="gc-bar-h" style="width:${homePct}%"></div></div>
+      <div class="picks-list">
+        ${(g.picks||[]).map(p=>`
+        <div class="pick-row">
+          <div class="pick-conf-bar ${p.conf==='High'?'conf-high':p.conf==='Medium'?'conf-med':'conf-low'}"></div>
+          <div class="pick-badge ${p.conf==='High'?'badge-high conf-high':p.conf==='Medium'?'badge-med conf-med':'badge-low conf-low'}">
+            <div class="pick-badge-label">${p.conf==='High'?'ALTA':p.conf==='Medium'?'MEDIA':'BAJA'}</div>
+            <div class="pick-badge-val">${p.conf==='High'?'🟢':p.conf==='Medium'?'🟡':'🔴'}</div>
+          </div>
+          <div class="pick-content">
+            <div class="pick-cat">${p.cat}</div>
+            <div class="pick-main">${p.main}</div>
+            <div class="pick-sub">${p.sub||''}</div>
+          </div>
+          <div class="pick-right">
+            <div class="pick-prob" style="color:${p.conf==='High'?'var(--green)':p.conf==='Medium'?'var(--amber)':'var(--red)'}">${Math.round((p.prob||0)*100)}%</div>
+            <div class="pick-edge">edge +${((p.edge||0)*100).toFixed(1)}%</div>
+          </div>
+        </div>`).join('')}
+      </div>
+      <div class="gc-weather"><i class="ti ti-cloud" style="font-size:10px"></i>${g.weather?.tf||'—'}°F · ${g.weather?.cond||''} · ${g.weather?.wm||0}mph ${g.weather?.wd||''} (${g.weather?.wn||'—'}) · PF ${g.pf||'—'}</div>
+    </div>`;
+  }).join('') + '</div>' +
+  '<div class="src"><i class="ti ti-lock" style="font-size:10px;vertical-align:-1px"></i> Picks bloqueados al guardar · Solo cambian si el partido ya inició · MLB Stats API</div>';
+}
+
+
+function renderParlays(parlays,games){
+  const highPicks=games.flatMap(g=>g.allPicks.filter(p=>p.conf==='High').map(p=>({...p,matchup:`${g.away} @ ${g.home}`})));
+  if(!parlays.length){document.getElementById('parlay-area').innerHTML='<div class="ebox">No hay suficientes picks de Alta Confianza para armar parlays hoy.<br><span style="font-size:11px">Se necesitan ≥2 picks con probabilidad ≥58%.</span></div>';return;}
+  document.getElementById('parlay-area').innerHTML=`
+    <div style="margin-bottom:1rem;padding:.6rem .9rem;background:var(--gbg);border:1px solid var(--gborder);border-radius:var(--rs);font-size:12px;color:var(--gtx)"><i class="ti ti-shield-check" style="vertical-align:-2px;margin-right:4px"></i><strong>Solo picks de Alta Confianza (≥58%)</strong> · Todos los picks son verdes</div>
+    `+parlays.map((p,idx)=>{
+    const impliedOdds=+(1/p.cp).toFixed(2);
+    const americanOdds=impliedOdds>=2?`+${Math.round((impliedOdds-1)*100)}`:String(Math.round(-100/(impliedOdds-1)));
+    const payout100=Math.round((impliedOdds-1)*100);
+    return`<div class="parlay-card">
+      <div class="parlay-head">
+        <div class="parlay-title"><i class="ti ti-link" style="vertical-align:-2px;margin-right:4px"></i>Parlay ${idx+1} · ${p.type}</div>
+        <div class="parlay-odds">${americanOdds}</div>
+      </div>
+      <div class="parlay-body">
+        ${p.legs.map((leg,li)=>`<div class="parlay-leg">
+          <div class="parlay-leg-num">${li+1}</div>
+          <div class="parlay-leg-info">
+            <div class="parlay-leg-pick">${leg.main}</div>
+            <div class="parlay-leg-game">${leg.matchup} · ${leg.cat}</div>
+          </div>
+          <div class="parlay-leg-prob">${pct(leg.prob)}</div>
+        </div>`).join('')}
+      </div>
+      <div class="parlay-foot">
+        <span class="parlay-pct">Prob. combinada: ${pct(p.cp)} · Cuota: ${impliedOdds}x</span>
+        <span class="parlay-payout">$100 → $${payout100+100} (gana $${payout100})</span>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function renderPitchers(games){
+  const pitchers=games.flatMap(g=>[
+    {...g.pitchers.away,team:g.away,opp:g.home,oppOPS:g.batters.aOPS,matchup:`${g.away} @ ${g.home}`,time:g.time,
+     daysRest:g.starterRest?.away?.daysRest, lastPitchCount:g.starterRest?.away?.pitchCount,
+     fatigued:g.starterRest?.away?.fatigued,
+     bullpenFresh:g.bullpen?.away?.bullpenFresh, bullpenFatigued:g.bullpen?.away?.fatiguedCount},
+    {...g.pitchers.home,team:g.home,opp:g.away,oppOPS:g.batters.hOPS,matchup:`${g.away} @ ${g.home}`,time:g.time,
+     daysRest:g.starterRest?.home?.daysRest, lastPitchCount:g.starterRest?.home?.pitchCount,
+     fatigued:g.starterRest?.home?.fatigued,
+     bullpenFresh:g.bullpen?.home?.bullpenFresh, bullpenFatigued:g.bullpen?.home?.fatiguedCount}
+  ]).filter(p=>p.name!=='TBD').sort((a,b)=>b.k9-a.k9);
+  document.getElementById('pitcher-area').innerHTML=pitchers.map(p=>{
+    const kRec=p.kEdge>.3?'OVER':p.kEdge<-.3?'UNDER':'NEUTRAL';
+    const kCls=p.kEdge>.3?'rec-over':p.kEdge<-.3?'rec-under':'rec-neu';
+    return`<div class="pitch-card">
+      <div class="pitch-head">
+        <div><div class="pitch-name">${p.name}</div><div class="pitch-meta">${p.team} vs ${p.opp} · ${p.time} · OPS rival: ${p.oppOPS}</div></div>
+      </div>
+      <div class="pitch-stats">
+        <div class="pstat"><div class="pstat-l">ERA</div><div class="pstat-v">${p.era}</div></div>
+        <div class="pstat"><div class="pstat-l">FIP</div><div class="pstat-v">${p.fip}</div></div>
+        <div class="pstat"><div class="pstat-l">K/9</div><div class="pstat-v" style="color:var(--green)">${p.k9}</div></div>
+        <div class="pstat"><div class="pstat-l">BB/9</div><div class="pstat-v">${p.bb9}</div></div>
+        <div class="pstat"><div class="pstat-l">IP/sal.</div><div class="pstat-v">${p.expIP}</div></div>
+      </div>
+      <div class="pitch-prop">
+        <div class="pp-label">Prop Ks — Proyección: <strong>${p.kExp}K</strong> · Línea aprox: ${p.kLine}</div>
+        <div class="pp-val" style="color:${p.kEdge>0?'var(--green)':'var(--red)'}">${kRec} ${p.kLine}</div>
+        <div class="pp-rec ${kCls}">${Math.abs(p.kEdge)>.3?'★ '+kRec:'NEUTRAL'}</div>
+      </div>
+    </div>`;
+  }).join('')+'<div class="src">K/9 × IP esperados = proyección Ks · Datos de temporada actual</div>';}
+
+function renderBatters(games){
+  // Build individual player rows from topBatters
+  const rows=[];
+  games.forEach(g=>{
+    const addPlayers=(players,team,oppPitcher,matchup,time,side)=>{
+      players.forEach(p=>{
+        if(!p.ba||p.ba===0)return;
+        const hitP=1-Math.pow(1-p.ba,4.2);
+        const tbExp=+(p.slg*3.7).toFixed(1);
+        const tbLine=p.slg>.45?2.5:1.5;
+        rows.push({name:p.name,pos:p.pos,team,ba:p.ba,slg:p.slg,ops:p.ops,obp:p.obp||0,
+          woba:p.woba||0, kpct:p.kpct||0, bbk:p.bbk||0,
+          vsHand:p.vsHand||null,
+          hr:p.hr,rbi:p.rbi||0,hitP,tbExp,tbLine,oppPitcher,matchup,time,side});
+      });
+    };
+    if(g.topBatters?.away?.length) addPlayers(g.topBatters.away,g.away,g.pitchers.home.name,`${g.away} @ ${g.home}`,g.time,'away');
+    else rows.push({name:'Sin datos',pos:'—',team:g.away,ba:g.batters.aBA,slg:g.batters.aSLG,ops:g.batters.aOPS,obp:0,hr:0,rbi:0,hitP:g.batters.aHitP,tbExp:g.batters.aTBExp,tbLine:g.batters.aTBLine,oppPitcher:g.pitchers.home.name,matchup:`${g.away} @ ${g.home}`,time:g.time,side:'away'});
+    if(g.topBatters?.home?.length) addPlayers(g.topBatters.home,g.home,g.pitchers.away.name,`${g.away} @ ${g.home}`,g.time,'home');
+    else rows.push({name:'Sin datos',pos:'—',team:g.home,ba:g.batters.hBA,slg:g.batters.hSLG,ops:g.batters.hOPS,obp:0,hr:0,rbi:0,hitP:g.batters.hHitP,tbExp:g.batters.hTBExp,tbLine:g.batters.hTBLine,oppPitcher:g.pitchers.away.name,matchup:`${g.away} @ ${g.home}`,time:g.time,side:'home'});
+  });
+  rows.sort((a,b)=>b.hitP-a.hitP);
+  document.getElementById('batter-area').innerHTML=`
+    <div style="margin-bottom:.75rem;font-size:12px;color:var(--text2)">Top bateadores del día ordenados por P(Hit). Datos individuales de temporada actual via MLB Stats API.</div>
+    <div style="background:var(--bg2);border-radius:var(--rs);overflow:hidden">
+    <table class="bat-table"><thead><tr>
+      <th>Jugador</th><th>Equipo</th><th>vs Pitcher</th><th>BA</th><th>OBP</th><th>SLG</th><th>OPS</th><th>wOBA</th><th>K%</th><th>BB/K</th><th>vs Mano</th><th>HR</th><th>P(Hit)</th><th>TB Exp.</th>
+    </tr></thead><tbody>
+    ${rows.map((r,i)=>{
+      const hpCls=r.hitP>.74?'hp-h':r.hitP>.68?'hp-m':'hp-l';
+      const tbRec=r.tbExp>r.tbLine+.25?'★ OVER '+r.tbLine:r.tbExp<r.tbLine-.25?'UNDER '+r.tbLine:'—';
+      const tbColor=r.tbExp>r.tbLine?'var(--green)':'var(--text3)';
+      return `<tr style="${i%2===0?'':'background:var(--bg)'}">
+        <td><strong>${r.name}</strong><div style="font-size:9px;color:var(--text3)">${r.pos} · ${r.matchup}</div></td>
+        <td><span style="font-size:11px;font-weight:700;padding:1px 6px;border-radius:4px;background:var(--bg3)">${r.team}</span></td>
+        <td style="font-size:10px;color:var(--text2)">${r.oppPitcher?.split(' ').slice(-1)[0]||'TBD'}</td>
+        <td style="font-weight:700">${r.ba?.toFixed(3)||'—'}</td>
+        <td>${r.obp?.toFixed(3)||'—'}</td>
+        <td>${r.slg?.toFixed(3)||'—'}</td>
+        <td>${r.ops?.toFixed(3)||'—'}</td>
+        <td style="color:var(--amber);font-weight:600">${r.hr||0}</td>
+        <td style="color:var(--text2)">${r.rbi||0}</td>
+        <td><span class="hp-pill ${hpCls}">${pct(r.hitP)}</span></td>
+        <td style="font-weight:700;color:var(--green)">${r.tbExp||'—'}</td>
+        <td style="font-size:11px;font-weight:700;color:${tbColor}">${tbRec}</td>
+      </tr>`;
+    }).join('')}
+    </tbody></table></div>
+    <div class="src">P(Hit) = 1-(1-BA)^4.2 · TB = SLG×3.7 · Fuente: MLB Stats API temporada actual</div>`;
+}
+
+
+
 // Safe DOM helpers — never throw if element doesn't exist
 function setHTML(id, html) { const el=document.getElementById(id); if(el) el.innerHTML=html; }
 function setText(id, txt)  { const el=document.getElementById(id); if(el) el.textContent=txt; }
@@ -1175,481 +1652,6 @@ async function getMatchupScores(lineupIds, pitcherId, yr) {
 async function getWeather(lat,lon,roof){if(roof==='dome')return{tf:72,wm:0,wd:'—',cond:'Domo',wn:'irrelevante',wmod:1.0};try{const j=await fetch(`https://wttr.in/${lat},${lon}?format=j1`).then(r=>r.json());const c=j.current_condition?.[0]||{};const wm=parseFloat(c.windspeedMiles||5),wdg=parseFloat(c.winddirDegree||180);const dirs=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];const diff=Math.abs(wdg-225)%360,al=Math.cos((diff>180?360-diff:diff)*Math.PI/180);const wn=al>.3&&wm>7?'sale-bateadores':al<-.3&&wm>7?'entra-pitchers':'cruzado';return{tf:parseFloat(c.temp_F||70),wm,wd:dirs[Math.round(wdg/22.5)%16],cond:c.weatherDesc?.[0]?.value||'',wn,wmod:1+(al*Math.min(wm/20,1)*0.08)};}catch{return{tf:70,wm:5,wd:'S',cond:'—',wn:'neutro',wmod:1.0};}}
 
 // ── Compute ───────────────────────────────────────────────────────────────────
-// ── Adaptive Weight System (SGD Logistic Regression) ─────────────────────────
-const DEFAULT_WEIGHTS = {
-  w_hp:    1.05,   // home pitcher quality
-  w_ap:   -1.05,   // away pitcher quality (negative = hurts home)
-  w_ho:    0.70,   // home offense
-  w_ao:   -0.70,   // away offense
-  w_hb:    0.45,   // home bullpen
-  w_ab:   -0.45,   // away bullpen
-  w_str:   0.35,   // streak differential
-  w_hfa:   0.18,   // home field advantage
-  w_pf:    0.30,   // park factor effect
-  w_wind:  0.20,   // wind modifier effect
-};
-let MODEL_WEIGHTS = {...DEFAULT_WEIGHTS};
-let trainIter = 0;
-const LR = 0.01; // learning rate
-
-function loadWeights() {
-  try {
-    const saved = JSON.parse(localStorage.getItem('mlbpro-weights') || 'null');
-    if (saved && saved.w_hp !== undefined) { MODEL_WEIGHTS = saved; }
-    trainIter = parseInt(localStorage.getItem('mlbpro-train-iter') || '0');
-  } catch {}
-}
-
-function saveWeights() {
-  localStorage.setItem('mlbpro-weights', JSON.stringify(MODEL_WEIGHTS));
-  localStorage.setItem('mlbpro-train-iter', String(trainIter));
-}
-
-function resetWeights() {
-  MODEL_WEIGHTS = {...DEFAULT_WEIGHTS};
-  trainIter = 0;
-  saveWeights();
-  loadModelTab();
-  alert('✅ Pesos reseteados a valores por defecto');
-}
-
-function trainOnResult(features, actual) {
-  // actual = 1 (home won) or 0 (away won)
-  const logit = computeLogit(features);
-  const pred  = 1 / (1 + Math.exp(-logit));
-  const err   = actual - pred;
-  // SGD update: w += lr * err * feature
-  MODEL_WEIGHTS.w_hp   += LR * err * features.hps;
-  MODEL_WEIGHTS.w_ap   += LR * err * features.aps;
-  MODEL_WEIGHTS.w_ho   += LR * err * features.hos;
-  MODEL_WEIGHTS.w_ao   += LR * err * features.aos;
-  MODEL_WEIGHTS.w_hb   += LR * err * features.hbs;
-  MODEL_WEIGHTS.w_ab   += LR * err * features.abs;
-  MODEL_WEIGHTS.w_str  += LR * err * features.str;
-  MODEL_WEIGHTS.w_hfa  += LR * err * 1;
-  trainIter++;
-  saveWeights();
-  return Math.log(pred + 1e-9) * actual + Math.log(1 - pred + 1e-9) * (1 - actual);
-}
-
-function computeLogit(f) {
-  return MODEL_WEIGHTS.w_hp  * f.hps
-       + MODEL_WEIGHTS.w_ap  * f.aps
-       + MODEL_WEIGHTS.w_ho  * f.hos
-       + MODEL_WEIGHTS.w_ao  * f.aos
-       + MODEL_WEIGHTS.w_hb  * f.hbs
-       + MODEL_WEIGHTS.w_ab  * f.abs
-       + MODEL_WEIGHTS.w_str * f.str
-       + MODEL_WEIGHTS.w_hfa;
-}
-
-function trainFromHistory() {
-  const idx = JSON.parse(localStorage.getItem('mlbpro-idx') || '[]');
-  let totalLoss = 0, count = 0;
-  idx.forEach(d => {
-    const rows = JSON.parse(localStorage.getItem('mlbpro-' + d) || 'null');
-    if (!rows) return;
-    rows.forEach(r => {
-      if (!r.result || !r.features) return;
-      const actual = r.fav === r.home ? (r.result === 'win' ? 1 : 0) : (r.result === 'win' ? 0 : 1);
-      const loss = trainOnResult(r.features, actual);
-      totalLoss += loss; count++;
-    });
-  });
-  return count > 0 ? -(totalLoss / count) : null;
-}
-
-function computeGame(g,apSt,hpSt,aSt,hSt,aR,hR,wx,stad,injuries,matchups,confirmedLineup,aBullpen,hBullpen,apRest,hpRest,aSplits,hSplits,apHand,hpHand) {
-  const apk9=sf(apSt.strikeoutsPer9Inn,8),hpk9=sf(hpSt.strikeoutsPer9Inn,8);
-  const apera=sf(apSt.era),hpera=sf(hpSt.era);
-  // Calculate real FIP: ((13×HR) + (3×(BB+HBP)) - (2×K)) / IP + 3.10
-  const cFIP = 3.10; // MLB league constant 2024-25
-  function calcFIP(st, eraFallback) {
-    const hr  = sf(st.homeRuns,      0);
-    const bb  = sf(st.baseOnBalls,   0);
-    const hbp = sf(st.hitByPitch,    0);
-    const k   = sf(st.strikeOuts,    0);
-    const ip  = sf(st.inningsPitched, 0);
-    // Convert IP from MLB format (e.g. 6.2 = 6 full + 2 outs = 6.667)
-    const fullInnings = Math.floor(ip);
-    const partialOuts = Math.round((ip - fullInnings) * 10);
-    const ipDecimal   = fullInnings + partialOuts / 3;
-    if (ipDecimal < 5) return eraFallback; // not enough innings → use ERA
-    const fip = ((13 * hr) + (3 * (bb + hbp)) - (2 * k)) / ipDecimal + cFIP;
-    return +Math.max(1.0, Math.min(8.0, fip)).toFixed(2); // clamp outliers
-  }
-  const apfip = calcFIP(apSt, apera);
-  const hpfip = calcFIP(hpSt, hpera);
-  const apwhip=sf(apSt.whip,1.3),hpwhip=sf(hpSt.whip,1.3),apbb9=sf(apSt.walksPer9Inn,3.2),hpbb9=sf(hpSt.walksPer9Inn,3.2);
-  const apGS=Math.max(1,sf(apSt.gamesStarted,1)),hpGS=Math.max(1,sf(hpSt.gamesStarted,1));
-  const apExpIP=Math.min(6.5,Math.max(4,sf(apSt.inningsPitched,0)/apGS||5.5));
-  const hpExpIP=Math.min(6.5,Math.max(4,sf(hpSt.inningsPitched,0)/hpGS||5.5));
-
-  // Base offensive stats
-  let aOPS=sf(aSt.hitting?.ops,.72),hOPS=sf(hSt.hitting?.ops,.72);
-  const aBA=sf(aSt.hitting?.avg,.25),hBA=sf(hSt.hitting?.avg,.25);
-  const aSLG=sf(aSt.hitting?.slg,.38),hSLG=sf(hSt.hitting?.slg,.38);
-  const aBpE=sf(aSt.pitching?.era,4),hBpE=sf(hSt.pitching?.era,4);
-
-  // ── Injury adjustment ─────────────────────────────────────────────────────
-  const aInjuries = (injuries?.away || []).filter(p => !['P','RP','SP'].includes(p.pos));
-  const hInjuries = (injuries?.home || []).filter(p => !['P','RP','SP'].includes(p.pos));
-  const injuryPenalty = inj => inj.length >= 3 ? 0.04 : inj.length >= 1 ? 0.02 : 0;
-  aOPS -= injuryPenalty(aInjuries) * 0.5;  // injured lineup → lower OPS proxy
-  hOPS -= injuryPenalty(hInjuries) * 0.5;
-
-  // ── Batting splits vs pitcher hand (RHP/LHP) ─────────────────────────────
-  // Blend season OPS (60%) with vs-hand OPS (40%) when available
-  if (aSplits?.vsHand?.ops && aSplits.vsHand.pa >= 30) {
-    aOPS = aOPS * 0.60 + aSplits.vsHand.ops * 0.40;
-  }
-  if (hSplits?.vsHand?.ops && hSplits.vsHand.pa >= 30) {
-    hOPS = hOPS * 0.60 + hSplits.vsHand.ops * 0.40;
-  }
-  // L30 trend adjustment (15% weight if team is hot/cold recently)
-  if (aSplits?.l30?.ops) {
-    const l30Delta = aSplits.l30.ops - aOPS;
-    aOPS += l30Delta * 0.15; // nudge toward recent form
-  }
-  if (hSplits?.l30?.ops) {
-    const l30Delta = hSplits.l30.ops - hOPS;
-    hOPS += l30Delta * 0.15;
-  }
-  // wOBA-based pick confidence boost: if wOBA vs hand > .320 = strong matchup
-  const aWobaEdge = (aSplits?.vsHand?.woba || 0) > 0.320 ? 0.03 : 0;
-  const hWobaEdge = (hSplits?.vsHand?.woba || 0) > 0.320 ? 0.03 : 0;
-
-  // ── BvP matchup adjustment ────────────────────────────────────────────────
-  // If batter vs pitcher matchup data available, blend with season OPS
-  const awayBvP = matchups?.awayBattersVsHomePitcher;   // away batters vs home SP
-  const homeBvP = matchups?.homeBattersVsAwayPitcher;   // home batters vs away SP
-  if (awayBvP && awayBvP.sampleSize >= 2) {
-    aOPS = aOPS * 0.65 + awayBvP.avgOPS * 0.35;  // blend season + matchup
-  }
-  if (homeBvP && homeBvP.sampleSize >= 2) {
-    hOPS = hOPS * 0.65 + homeBvP.avgOPS * 0.35;
-  }
-
-  // ── Confirmed lineup boost ────────────────────────────────────────────────
-  const lineupConf = confirmedLineup?.home?.confirmed || confirmedLineup?.away?.confirmed;
-
-  const aWL=aR.filter(r=>r.isWin).length/Math.max(1,aR.length);
-  const hWL=hR.filter(r=>r.isWin).length/Math.max(1,hR.length);
-  const pf=stad?.pf||1,wmod=wx?.wmod||1,altB=1+Math.max(0,(stad?.alt||0)-1000)/10000*.15;
-  const tmp=wx?.tf<50?.92:wx?.tf>85?1.04:1.0;
-
-  // ── Pitcher rest adjustment ───────────────────────────────────────────────
-  const apRestPenalty = apRest?.fatiguePenalty || 0;
-  const hpRestPenalty = hpRest?.fatiguePenalty || 0;
-
-  // ── Pitcher scores (with rest penalty) ───────────────────────────────────
-  const aps=cl(.35*(1-(apfip-2)/4)+.25*(1-(apera-2)/4)+.20*((apk9-5)/5)+.20*(1-(apbb9-1.5)/3.5) - apRestPenalty);
-  const hps=cl(.35*(1-(hpfip-2)/4)+.25*(1-(hpera-2)/4)+.20*((hpk9-5)/5)+.20*(1-(hpbb9-1.5)/3.5) - hpRestPenalty);
-  const hos=cl((hOPS-.65)/.2);
-  const aos=cl((aOPS-.65)/.2);
-  // Apply fatigue penalty to bullpen ERA equivalent
-  const hBullpenPenalty = hBullpen?.fatiguePenalty || 0;
-  const aBullpenPenalty = aBullpen?.fatiguePenalty || 0;
-  const hbs=cl((hBpE-2.5)/-3.5+.5 - hBullpenPenalty);
-  const abs2=cl((aBpE-2.5)/-3.5+.5 - aBullpenPenalty);
-  const str=hWL-aWL;
-
-  // ── Model logit using trained weights ─────────────────────────────────────
-  const features = {hps,aps,hos,aos,hbs,abs:abs2,str};
-  const logit = computeLogit(features);
-  const hwp=sig(logit), awp=1-hwp;
-
-  // ── Expected runs (park/weather/altitude aware) ────────────────────────────
-  const lg=4.4;
-  const hExp=lg*(1+(.5-hps)*.85)*(1+(aos-.5)*.55)*pf*wmod*altB*tmp;
-  const aExp=lg*(1+(.5-aps)*.85)*(1+(hos-.5)*.55)*pf*wmod*altB*tmp;
-  const total=+(hExp+aExp).toFixed(1);
-  const sigma=Math.sqrt(hExp+aExp)*.9;
-  const favHome=hwp>=awp;
-  const rlProb=favHome?normCDF((hExp-aExp-1.5)/sigma):normCDF((aExp-hExp-1.5)/sigma);
-  const totalLine=+(Math.round(total*2)/2-.5).toFixed(1);
-  const totalEdge=total-totalLine;
-  const f5logit=logit*1.15-.07;
-  const f5hwp=sig(f5logit),f5awp=1-f5hwp;
-  const f5total=+(total*.545).toFixed(1);
-  const f5line=+(Math.round(f5total*2)/2-.5).toFixed(1);
-  const apKExp=+(apk9/9*apExpIP).toFixed(1),hpKExp=+(hpk9/9*hpExpIP).toFixed(1);
-  const apKLine=Math.floor(apKExp)+.5,hpKLine=Math.floor(hpKExp)+.5;
-  const hLineTot=+(Math.round(hExp*2)/2-.5).toFixed(1),aLineTot=+(Math.round(aExp*2)/2-.5).toFixed(1);
-  const hHitP=1-Math.pow(1-hBA,4.2),aHitP=1-Math.pow(1-aBA,4.2);
-  const hTBExp=+(hSLG*3.7).toFixed(1),aTBExp=+(aSLG*3.7).toFixed(1);
-  const away=g.teams?.away?.team?.abbreviation,home=g.teams?.home?.team?.abbreviation;
-
-  // ── Generate candidate picks (sorted by prob) ─────────────────────────────
-  const rawPicks=[];
-  if(hwp>.52) rawPicks.push({cat:'Money Line',main:`${home} ML ${p2ml(hwp)}`,sub:`Modelo: ${pct(hwp)} · ${lineupConf?'✓ Lineup confirmado':'Lineup estimado'}`,prob:hwp,edge:+(hwp-.52).toFixed(3)});
-  else rawPicks.push({cat:'Money Line',main:`${away} ML ${p2ml(awp)}`,sub:`Modelo: ${pct(awp)} · ${lineupConf?'✓ Lineup confirmado':'Lineup estimado'}`,prob:awp,edge:+(awp-.52).toFixed(3)});
-  // Adjust team totals using wOBA matchup edge
-  const hExpAdj = hExp * (1 + hWobaEdge);
-  const aExpAdj = aExp * (1 + aWobaEdge);
-  const totalAdj = +(hExpAdj + aExpAdj).toFixed(1);
-  rawPicks.push({cat:'Total del partido',main:`${totalEdge>0?'OVER':'UNDER'} ${totalLine} runs`,sub:`Proyección: ${total} runs | PF ${pf}${awayBvP?' | BvP datos incluidos':''}`,prob:totalEdge>0?cl(.50+totalEdge*.08):cl(.50+Math.abs(totalEdge)*.08),edge:+Math.abs(totalEdge*.07).toFixed(3)});
-  rawPicks.push({cat:'Run Line (-1.5)',main:`${favHome?home:away} -1.5`,sub:`${pct(rlProb)} prob ganar por 2+`,prob:rlProb,edge:+(rlProb-.52).toFixed(3)});
-  const f5fav=f5hwp>=f5awp?home:away,f5favWP=Math.max(f5hwp,f5awp);
-  rawPicks.push({cat:'Primeras 5 Innings',main:`${f5fav} F5 ${p2ml(f5favWP)}`,sub:`${pct(f5favWP)} en F5 | Pitcher: ${f5hwp>=f5awp?g.teams?.home?.probablePitcher?.fullName||home:g.teams?.away?.probablePitcher?.fullName||away}`,prob:f5favWP,edge:+(f5favWP-.52).toFixed(3)});
-  const f5tE=f5total-f5line;
-  rawPicks.push({cat:'Total F5',main:`${f5tE>0?'OVER':'UNDER'} ${f5line} (F5)`,sub:`Proyección F5: ${f5total} carreras`,prob:cl(.50+Math.abs(f5tE)*.09),edge:+Math.abs(f5tE*.08).toFixed(3)});
-  const bestK=apKExp-apKLine>=hpKExp-hpKLine?{name:g.teams?.away?.probablePitcher?.fullName||away,kExp:apKExp,kLine:apKLine,kEdge:+(apKExp-apKLine).toFixed(2)}:{name:g.teams?.home?.probablePitcher?.fullName||home,kExp:hpKExp,kLine:hpKLine,kEdge:+(hpKExp-hpKLine).toFixed(2)};
-  rawPicks.push({cat:'Ks Pitcher',main:`${bestK.name.split(' ').slice(-1)[0]} ${bestK.kEdge>=0?'OVER':'UNDER'} ${bestK.kLine}K`,sub:`Proyección: ${bestK.kExp}K`,prob:cl(.50+Math.abs(bestK.kEdge)*.09),edge:+Math.abs(bestK.kEdge*.08).toFixed(3)});
-  const hTE=hExp-hLineTot;
-  rawPicks.push({cat:`Total ${home}`,main:`${home} ${hTE>0?'OVER':'UNDER'} ${hLineTot}`,sub:`Proyección: ${hExp.toFixed(1)} carreras`,prob:cl(.50+Math.abs(hTE)*.09),edge:+Math.abs(hTE*.08).toFixed(3)});
-
-  // wOBA matchup pick — when offense has strong vs-hand advantage
-  if (aSplits?.vsHand?.woba > 0.340 && aSplits.vsHand.pa >= 40) {
-    rawPicks.push({
-      cat: `Ofensiva ${away} vs ${apHand==='L'?'zurdo':'derecho'}`,
-      main: `${away} OVER ${aLineTot} runs (wOBA matchup)`,
-      sub: `wOBA ${away} vs ${apHand==='L'?'LHP':'RHP'}: ${aSplits.vsHand.woba} · K% ${aSplits.vsHand.kpct}% · ${aSplits.vsHand.pa} PA`,
-      prob: cl(0.50 + (aSplits.vsHand.woba - 0.310) * 0.5),
-      edge: +((aSplits.vsHand.woba - 0.310) * 0.4).toFixed(3),
-    });
-  }
-  if (hSplits?.vsHand?.woba > 0.340 && hSplits.vsHand.pa >= 40) {
-    rawPicks.push({
-      cat: `Ofensiva ${home} vs ${hpHand==='L'?'zurdo':'derecho'}`,
-      main: `${home} OVER ${hLineTot} runs (wOBA matchup)`,
-      sub: `wOBA ${home} vs ${hpHand==='L'?'LHP':'RHP'}: ${hSplits.vsHand.woba} · K% ${hSplits.vsHand.kpct}% · ${hSplits.vsHand.pa} PA`,
-      prob: cl(0.50 + (hSplits.vsHand.woba - 0.310) * 0.5),
-      edge: +((hSplits.vsHand.woba - 0.310) * 0.4).toFixed(3),
-    });
-  }
-  // If team struggles vs this hand (wOBA < .290), boost the pitcher's ML
-  if (aSplits?.vsHand?.woba < 0.290 && aSplits.vsHand.pa >= 40) {
-    rawPicks.push({
-      cat: `Ventaja ${home} pitcher`,
-      main: `${home} ML (lineup ${away} débil vs ${apHand==='L'?'LHP':'RHP'})`,
-      sub: `wOBA ${away} vs ${apHand==='L'?'LHP':'RHP'}: ${aSplits.vsHand.woba} · K% ${aSplits.vsHand.kpct}%`,
-      prob: cl(hwp + 0.04),
-      edge: 0.04,
-    });
-  }
-
-  // If BvP data available, add a batter vs pitcher pick
-  if(awayBvP && awayBvP.avgOPS > .800 && awayBvP.sampleSize >= 3) {
-    rawPicks.push({cat:'BvP — Ofensiva visitante',main:`${away} OVER ${aLineTot} (BvP)`,sub:`OPS histórico ${away} vs ${g.teams?.home?.probablePitcher?.fullName?.split(' ').slice(-1)[0]}: ${awayBvP.avgOPS.toFixed(3)} (${awayBvP.sampleSize} muestras)`,prob:cl(.50+((awayBvP.avgOPS-.720)/.15)*0.10),edge:0.04});
-  }
-  if(homeBvP && homeBvP.avgOPS > .800 && homeBvP.sampleSize >= 3) {
-    rawPicks.push({cat:'BvP — Ofensiva local',main:`${home} OVER ${hLineTot} (BvP)`,sub:`OPS histórico ${home} vs ${g.teams?.away?.probablePitcher?.fullName?.split(' ').slice(-1)[0]}: ${homeBvP.avgOPS.toFixed(3)} (${homeBvP.sampleSize} muestras)`,prob:cl(.50+((homeBvP.avgOPS-.720)/.15)*0.10),edge:0.04});
-  }
-
-  rawPicks.sort((a,b)=>b.prob-a.prob);
-  const top3=rawPicks.slice(0,3).map(p=>({...p,conf:p.prob>=.58?'High':p.prob>=.53?'Medium':'Low'}));
-
-  const gStatus = g.status?.abstractGameState || 'Preview';
-  return{
-    away,home,awayFull:g.teams?.away?.team?.name,homeFull:g.teams?.home?.team?.name,
-    venue:stad?.n||g.venue?.name,time:fmtTime(g.gameDate),gamePk:g.gamePk,
-    status:gStatus,gameStarted:gStatus==='Live'||gStatus==='Final',
-    awayWP:+awp.toFixed(4),homeWP:+hwp.toFixed(4),awayML:p2ml(awp),homeML:p2ml(hwp),
-    total,totalLine,hExp:+hExp.toFixed(2),aExp:+aExp.toFixed(2),hLineTot,aLineTot,
-    rlProb:+rlProb.toFixed(4),rlFavHome:favHome,
-    f5:{hwp:+f5hwp.toFixed(4),awp:+f5awp.toFixed(4),total:f5total,line:f5line},
-    pitchers:{
-      away:{name:g.teams?.away?.probablePitcher?.fullName||'TBD',era:+apera.toFixed(2),fip:+apfip.toFixed(2),whip:+apwhip.toFixed(2),k9:+apk9.toFixed(1),bb9:+apbb9.toFixed(1),expIP:+apExpIP.toFixed(1),kExp:apKExp,kLine:apKLine,kEdge:+(apKExp-apKLine).toFixed(2)},
-      home:{name:g.teams?.home?.probablePitcher?.fullName||'TBD',era:+hpera.toFixed(2),fip:+hpfip.toFixed(2),whip:+hpwhip.toFixed(2),k9:+hpk9.toFixed(1),bb9:+hpbb9.toFixed(1),expIP:+hpExpIP.toFixed(1),kExp:hpKExp,kLine:hpKLine,kEdge:+(hpKExp-hpKLine).toFixed(2)}
-    },
-    batters:{aBA:+aBA.toFixed(3),hBA:+hBA.toFixed(3),aSLG:+aSLG.toFixed(3),hSLG:+hSLG.toFixed(3),aHitP:+aHitP.toFixed(3),hHitP:+hHitP.toFixed(3),aTBExp,hTBExp,aTBLine:aSLG>.45?2.5:1.5,hTBLine:hSLG>.45?2.5:1.5,aOPS:+aOPS.toFixed(3),hOPS:+hOPS.toFixed(3)},
-    weather:wx,pf,
-    injuries:{away:aInjuries,home:hInjuries},
-    matchups:{awayBvP,homeBvP},
-    splits:{away:aSplits,home:hSplits},
-    pitcherHand:{away:apHand,home:hpHand},
-    confirmedLineup,lineupConf,
-    features,   // stored for training
-    picks:top3,allPicks:rawPicks,
-    bullpen:{ away: aBullpen, home: hBullpen },
-    starterRest:{ away: apRest, home: hpRest },
-    homeId:g.teams?.home?.team?.id,awayId:g.teams?.away?.team?.id
-  };
-}
-
-
-function confClass(c){return c==='High'?'badge-high conf-high':c==='Medium'?'badge-med conf-med':'badge-low conf-low';}
-function confLabel(c){return c==='High'?'ALTA':c==='Medium'?'MEDIA':'BAJA';}
-function confBarClass(c){return c==='High'?'conf-high':c==='Medium'?'conf-med':'conf-low';}
-
-function renderPicksArea(games){
-  const date  = document.getElementById('date-pick')?.value || '';
-  const saved = JSON.parse(localStorage.getItem('mlbpro-' + date) || '[]');
-
-  // Merge each game with its locked picks (if saved before game started)
-  const mergedGames = games.map(g => {
-    const sv = saved.find(s => s.away === g.away && s.home === g.home);
-    if (sv?.locked && sv?.allPicks?.length && !g.gameStarted) {
-      return { ...g,
-        picks:   sv.allPicks,
-        homeWP:  sv.homeWP,  awayWP:  sv.awayWP,
-        homeML:  sv.homeML,  awayML:  sv.awayML,
-        isLocked: true,      savedAt:  sv.savedAt };
-    }
-    return { ...g, isLocked: false };
-  });
-
-  const _pa = document.getElementById('picks-area');
-  if (!_pa) return;
-  _pa.innerHTML = '<div class="games-list">' + mergedGames.map(g => {
-    const awayPct=Math.round(g.awayWP*100),homePct=Math.round(g.homeWP*100);
-    return`<div class="gcard">
-      <div class="gc-head">
-        <span><i class="ti ti-ball-baseball" style="font-size:10px;margin-right:4px"></i><strong>${g.away} @ ${g.home}</strong></span>
-        <div style="display:flex;gap:5px;align-items:center">
-          ${g.isLocked ? '<span style="font-size:9px;padding:2px 6px;border-radius:3px;background:var(--bbg);color:var(--btx);display:flex;align-items:center;gap:3px"><i class="ti ti-lock" style="font-size:9px"></i>Pick original</span>' : ''}
-          <span class="gc-venue">${g.time} · ${g.venue}</span>
-        </div>
-      </div>
-      <div class="gc-matchup">
-        <div class="gc-team"><div class="gc-abbr">${g.away}</div><div class="gc-pct" style="color:#378ADD">${awayPct}%</div><div class="gc-ml">${g.awayML}</div></div>
-        <div class="gc-divider">@</div>
-        <div class="gc-team home"><div class="gc-abbr">${g.home}</div><div class="gc-pct" style="color:var(--green)">${homePct}%</div><div class="gc-ml">${g.homeML}</div></div>
-      </div>
-      <div class="gc-bar"><div class="gc-bar-a" style="width:${awayPct}%"></div><div class="gc-bar-h" style="width:${homePct}%"></div></div>
-      <div class="picks-list">
-        ${(g.picks||[]).map(p=>`
-        <div class="pick-row">
-          <div class="pick-conf-bar ${p.conf==='High'?'conf-high':p.conf==='Medium'?'conf-med':'conf-low'}"></div>
-          <div class="pick-badge ${p.conf==='High'?'badge-high conf-high':p.conf==='Medium'?'badge-med conf-med':'badge-low conf-low'}">
-            <div class="pick-badge-label">${p.conf==='High'?'ALTA':p.conf==='Medium'?'MEDIA':'BAJA'}</div>
-            <div class="pick-badge-val">${p.conf==='High'?'🟢':p.conf==='Medium'?'🟡':'🔴'}</div>
-          </div>
-          <div class="pick-content">
-            <div class="pick-cat">${p.cat}</div>
-            <div class="pick-main">${p.main}</div>
-            <div class="pick-sub">${p.sub||''}</div>
-          </div>
-          <div class="pick-right">
-            <div class="pick-prob" style="color:${p.conf==='High'?'var(--green)':p.conf==='Medium'?'var(--amber)':'var(--red)'}">${Math.round((p.prob||0)*100)}%</div>
-            <div class="pick-edge">edge +${((p.edge||0)*100).toFixed(1)}%</div>
-          </div>
-        </div>`).join('')}
-      </div>
-      <div class="gc-weather"><i class="ti ti-cloud" style="font-size:10px"></i>${g.weather?.tf||'—'}°F · ${g.weather?.cond||''} · ${g.weather?.wm||0}mph ${g.weather?.wd||''} (${g.weather?.wn||'—'}) · PF ${g.pf||'—'}</div>
-    </div>`;
-  }).join('') + '</div>' +
-  '<div class="src"><i class="ti ti-lock" style="font-size:10px;vertical-align:-1px"></i> Picks bloqueados al guardar · Solo cambian si el partido ya inició · MLB Stats API</div>';
-}
-
-
-function renderParlays(parlays,games){
-  const highPicks=games.flatMap(g=>g.allPicks.filter(p=>p.conf==='High').map(p=>({...p,matchup:`${g.away} @ ${g.home}`})));
-  if(!parlays.length){document.getElementById('parlay-area').innerHTML='<div class="ebox">No hay suficientes picks de Alta Confianza para armar parlays hoy.<br><span style="font-size:11px">Se necesitan ≥2 picks con probabilidad ≥58%.</span></div>';return;}
-  document.getElementById('parlay-area').innerHTML=`
-    <div style="margin-bottom:1rem;padding:.6rem .9rem;background:var(--gbg);border:1px solid var(--gborder);border-radius:var(--rs);font-size:12px;color:var(--gtx)"><i class="ti ti-shield-check" style="vertical-align:-2px;margin-right:4px"></i><strong>Solo picks de Alta Confianza (≥58%)</strong> · Todos los picks son verdes</div>
-    `+parlays.map((p,idx)=>{
-    const impliedOdds=+(1/p.cp).toFixed(2);
-    const americanOdds=impliedOdds>=2?`+${Math.round((impliedOdds-1)*100)}`:String(Math.round(-100/(impliedOdds-1)));
-    const payout100=Math.round((impliedOdds-1)*100);
-    return`<div class="parlay-card">
-      <div class="parlay-head">
-        <div class="parlay-title"><i class="ti ti-link" style="vertical-align:-2px;margin-right:4px"></i>Parlay ${idx+1} · ${p.type}</div>
-        <div class="parlay-odds">${americanOdds}</div>
-      </div>
-      <div class="parlay-body">
-        ${p.legs.map((leg,li)=>`<div class="parlay-leg">
-          <div class="parlay-leg-num">${li+1}</div>
-          <div class="parlay-leg-info">
-            <div class="parlay-leg-pick">${leg.main}</div>
-            <div class="parlay-leg-game">${leg.matchup} · ${leg.cat}</div>
-          </div>
-          <div class="parlay-leg-prob">${pct(leg.prob)}</div>
-        </div>`).join('')}
-      </div>
-      <div class="parlay-foot">
-        <span class="parlay-pct">Prob. combinada: ${pct(p.cp)} · Cuota: ${impliedOdds}x</span>
-        <span class="parlay-payout">$100 → $${payout100+100} (gana $${payout100})</span>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-function renderPitchers(games){
-  const pitchers=games.flatMap(g=>[
-    {...g.pitchers.away,team:g.away,opp:g.home,oppOPS:g.batters.aOPS,matchup:`${g.away} @ ${g.home}`,time:g.time,
-     daysRest:g.starterRest?.away?.daysRest, lastPitchCount:g.starterRest?.away?.pitchCount,
-     fatigued:g.starterRest?.away?.fatigued,
-     bullpenFresh:g.bullpen?.away?.bullpenFresh, bullpenFatigued:g.bullpen?.away?.fatiguedCount},
-    {...g.pitchers.home,team:g.home,opp:g.away,oppOPS:g.batters.hOPS,matchup:`${g.away} @ ${g.home}`,time:g.time,
-     daysRest:g.starterRest?.home?.daysRest, lastPitchCount:g.starterRest?.home?.pitchCount,
-     fatigued:g.starterRest?.home?.fatigued,
-     bullpenFresh:g.bullpen?.home?.bullpenFresh, bullpenFatigued:g.bullpen?.home?.fatiguedCount}
-  ]).filter(p=>p.name!=='TBD').sort((a,b)=>b.k9-a.k9);
-  document.getElementById('pitcher-area').innerHTML=pitchers.map(p=>{
-    const kRec=p.kEdge>.3?'OVER':p.kEdge<-.3?'UNDER':'NEUTRAL';
-    const kCls=p.kEdge>.3?'rec-over':p.kEdge<-.3?'rec-under':'rec-neu';
-    return`<div class="pitch-card">
-      <div class="pitch-head">
-        <div><div class="pitch-name">${p.name}</div><div class="pitch-meta">${p.team} vs ${p.opp} · ${p.time} · OPS rival: ${p.oppOPS}</div></div>
-      </div>
-      <div class="pitch-stats">
-        <div class="pstat"><div class="pstat-l">ERA</div><div class="pstat-v">${p.era}</div></div>
-        <div class="pstat"><div class="pstat-l">FIP</div><div class="pstat-v">${p.fip}</div></div>
-        <div class="pstat"><div class="pstat-l">K/9</div><div class="pstat-v" style="color:var(--green)">${p.k9}</div></div>
-        <div class="pstat"><div class="pstat-l">BB/9</div><div class="pstat-v">${p.bb9}</div></div>
-        <div class="pstat"><div class="pstat-l">IP/sal.</div><div class="pstat-v">${p.expIP}</div></div>
-      </div>
-      <div class="pitch-prop">
-        <div class="pp-label">Prop Ks — Proyección: <strong>${p.kExp}K</strong> · Línea aprox: ${p.kLine}</div>
-        <div class="pp-val" style="color:${p.kEdge>0?'var(--green)':'var(--red)'}">${kRec} ${p.kLine}</div>
-        <div class="pp-rec ${kCls}">${Math.abs(p.kEdge)>.3?'★ '+kRec:'NEUTRAL'}</div>
-      </div>
-    </div>`;
-  }).join('')+'<div class="src">K/9 × IP esperados = proyección Ks · Datos de temporada actual</div>';}
-
-function renderBatters(games){
-  // Build individual player rows from topBatters
-  const rows=[];
-  games.forEach(g=>{
-    const addPlayers=(players,team,oppPitcher,matchup,time,side)=>{
-      players.forEach(p=>{
-        if(!p.ba||p.ba===0)return;
-        const hitP=1-Math.pow(1-p.ba,4.2);
-        const tbExp=+(p.slg*3.7).toFixed(1);
-        const tbLine=p.slg>.45?2.5:1.5;
-        rows.push({name:p.name,pos:p.pos,team,ba:p.ba,slg:p.slg,ops:p.ops,obp:p.obp||0,
-          woba:p.woba||0, kpct:p.kpct||0, bbk:p.bbk||0,
-          vsHand:p.vsHand||null,
-          hr:p.hr,rbi:p.rbi||0,hitP,tbExp,tbLine,oppPitcher,matchup,time,side});
-      });
-    };
-    if(g.topBatters?.away?.length) addPlayers(g.topBatters.away,g.away,g.pitchers.home.name,`${g.away} @ ${g.home}`,g.time,'away');
-    else rows.push({name:'Sin datos',pos:'—',team:g.away,ba:g.batters.aBA,slg:g.batters.aSLG,ops:g.batters.aOPS,obp:0,hr:0,rbi:0,hitP:g.batters.aHitP,tbExp:g.batters.aTBExp,tbLine:g.batters.aTBLine,oppPitcher:g.pitchers.home.name,matchup:`${g.away} @ ${g.home}`,time:g.time,side:'away'});
-    if(g.topBatters?.home?.length) addPlayers(g.topBatters.home,g.home,g.pitchers.away.name,`${g.away} @ ${g.home}`,g.time,'home');
-    else rows.push({name:'Sin datos',pos:'—',team:g.home,ba:g.batters.hBA,slg:g.batters.hSLG,ops:g.batters.hOPS,obp:0,hr:0,rbi:0,hitP:g.batters.hHitP,tbExp:g.batters.hTBExp,tbLine:g.batters.hTBLine,oppPitcher:g.pitchers.away.name,matchup:`${g.away} @ ${g.home}`,time:g.time,side:'home'});
-  });
-  rows.sort((a,b)=>b.hitP-a.hitP);
-  document.getElementById('batter-area').innerHTML=`
-    <div style="margin-bottom:.75rem;font-size:12px;color:var(--text2)">Top bateadores del día ordenados por P(Hit). Datos individuales de temporada actual via MLB Stats API.</div>
-    <div style="background:var(--bg2);border-radius:var(--rs);overflow:hidden">
-    <table class="bat-table"><thead><tr>
-      <th>Jugador</th><th>Equipo</th><th>vs Pitcher</th><th>BA</th><th>OBP</th><th>SLG</th><th>OPS</th><th>wOBA</th><th>K%</th><th>BB/K</th><th>vs Mano</th><th>HR</th><th>P(Hit)</th><th>TB Exp.</th>
-    </tr></thead><tbody>
-    ${rows.map((r,i)=>{
-      const hpCls=r.hitP>.74?'hp-h':r.hitP>.68?'hp-m':'hp-l';
-      const tbRec=r.tbExp>r.tbLine+.25?'★ OVER '+r.tbLine:r.tbExp<r.tbLine-.25?'UNDER '+r.tbLine:'—';
-      const tbColor=r.tbExp>r.tbLine?'var(--green)':'var(--text3)';
-      return `<tr style="${i%2===0?'':'background:var(--bg)'}">
-        <td><strong>${r.name}</strong><div style="font-size:9px;color:var(--text3)">${r.pos} · ${r.matchup}</div></td>
-        <td><span style="font-size:11px;font-weight:700;padding:1px 6px;border-radius:4px;background:var(--bg3)">${r.team}</span></td>
-        <td style="font-size:10px;color:var(--text2)">${r.oppPitcher?.split(' ').slice(-1)[0]||'TBD'}</td>
-        <td style="font-weight:700">${r.ba?.toFixed(3)||'—'}</td>
-        <td>${r.obp?.toFixed(3)||'—'}</td>
-        <td>${r.slg?.toFixed(3)||'—'}</td>
-        <td>${r.ops?.toFixed(3)||'—'}</td>
-        <td style="color:var(--amber);font-weight:600">${r.hr||0}</td>
-        <td style="color:var(--text2)">${r.rbi||0}</td>
-        <td><span class="hp-pill ${hpCls}">${pct(r.hitP)}</span></td>
-        <td style="font-weight:700;color:var(--green)">${r.tbExp||'—'}</td>
-        <td style="font-size:11px;font-weight:700;color:${tbColor}">${tbRec}</td>
-      </tr>`;
-    }).join('')}
-    </tbody></table></div>
-    <div class="src">P(Hit) = 1-(1-BA)^4.2 · TB = SLG×3.7 · Fuente: MLB Stats API temporada actual</div>`;
-}
-
 
 // ── Main analysis runner ──────────────────────────────────────────────────────
 async function runAll(){

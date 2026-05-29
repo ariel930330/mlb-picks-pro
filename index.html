@@ -775,21 +775,18 @@ function launchApp() {
 }
 
 // Auto-login on load if session exists
-;(function(){
+// Auto-login runs after full DOM + script initialization
+document.addEventListener('DOMContentLoaded', function(){
   const savedGas = localStorage.getItem('gas-url');
   const session  = localStorage.getItem('mlbpro-session');
   const gemKey   = localStorage.getItem('mlbpro-gemini');
-  if(savedGas){const el=document.getElementById('gas-url-input');if(el)el.value=savedGas;}
+  const gasEl    = document.getElementById('gas-url-input');
+  if(savedGas && gasEl) gasEl.value = savedGas;
   if(session && savedGas){
-    if(gemKey) API_KEY=gemKey;
-    // Wait for DOM to be ready
-    if(document.readyState==='loading'){
-      document.addEventListener('DOMContentLoaded', launchApp);
-    } else {
-      launchApp();
-    }
+    if(gemKey){ API_KEY = gemKey; }
+    launchApp();
   }
-})();
+});
 
 // Keep startApp as alias for backward compat
 function startApp(){ launchApp(); }

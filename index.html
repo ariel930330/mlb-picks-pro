@@ -551,7 +551,11 @@ function restoreExtraTabs(date) {
               <div class="pstat"><div class="pstat-l">BB/9</div><div class="pstat-v">${p.bb9}</div></div>
               <div class="pstat"><div class="pstat-l">IP/sal.</div><div class="pstat-v">${p.expIP}</div></div>
             </div>
-            <div class="pitch-prop">
+            ${p.bullpenFatigued !== undefined ? `<div style="font-size:10px;padding:5px 8px;margin:0 0 6px;border-radius:4px;background:${p.bullpenFatigued>=3?'var(--rbg)':p.bullpenFatigued>=1?'var(--abg)':'var(--gbg)'};color:${p.bullpenFatigued>=3?'var(--rtx)':p.bullpenFatigued>=1?'var(--atx)':'var(--gtx)'}">
+        <i class="ti ti-users" style="font-size:10px"></i>
+        Bullpen: ${p.bullpenFatigued===0?'Descansado':'${p.bullpenFatigued} relevista(s) con poco descanso'}
+      </div>` : ''}
+      <div class="pitch-prop">
               <div class="pp-label">Prop Ks — Proyección: <strong>${p.kExp}K</strong> · Línea: ${p.kLine}</div>
               <div class="pp-val" style="color:${p.kEdge>0?'var(--green)':'var(--red)'}">${kRec} ${p.kLine}</div>
               <div class="pp-rec ${kCls}">${Math.abs(p.kEdge)>.3?'★ '+kRec:'NEUTRAL'}</div>
@@ -801,6 +805,65 @@ async function getConfirmedLineup(gamePk) {
   } catch { return { away:{confirmed:false,playerIds:[],players:[]}, home:{confirmed:false,playerIds:[],players:[]} }; }
 }
 
+async function getBullpenStatus(teamId, gamePk) {
+  try {
+    const yr = new Date().getFullYear();
+    const today = new Date().toISOString().slice(0,10);
+    // Get recent pitcher game logs for this team
+    const d = await mlb(`/teams/${teamId}/game/log/stats?stats=gameLog&group=pitching&season=${yr}&limit=15&sportId=1`);
+    const splits = (d.stats||[]).flatMap(g=>g.splits||[])
+      .filter(s => s.date && s.date.slice(0,10) < today)
+      .sort((a,b) => b.date.localeCompare(a.date));
+
+    // Build rest map: pitcher id → days since last appearance
+    const restMap = {};
+    splits.forEach(s => {
+      const pid = s.player?.id;
+      if (!pid || restMap[pid] !== undefined) return;
+      const daysRest = Math.floor((new Date(today) - new Date(s.date.slice(0,10))) / 86400000);
+      restMap[pid] = { daysRest, pitchCount: parseInt(s.stat?.numberOfPitches||0) };
+    });
+
+    const relievers = Object.values(restMap);
+    const fatigued  = relievers.filter(p => p.daysRest === 0 || p.pitchCount > 25);
+    const avgRest   = relievers.length ? relievers.reduce((s,p)=>s+p.daysRest,0)/relievers.length : 3;
+
+    return {
+      restMap,
+      fatiguedCount:  fatigued.length,
+      avgRest:        +avgRest.toFixed(1),
+      bullpenFresh:   fatigued.length === 0 && avgRest >= 2,
+      fatiguePenalty: fatigued.length >= 3 ? 0.6 : fatigued.length >= 1 ? 0.3 : 0,
+    };
+  } catch(e) {
+    return { restMap:{}, fatiguedCount:0, avgRest:3, bullpenFresh:true, fatiguePenalty:0 };
+  }
+}
+
+async function getStarterRestDays(pitcherId, gameDate) {
+  if (!pitcherId) return { daysRest:5, pitchCount:0, fatigued:false, fatiguePenalty:0 };
+  try {
+    const yr = new Date().getFullYear();
+    const d = await mlb(`/people/${pitcherId}/stats?stats=gameLog&group=pitching&season=${yr}&sportId=1`);
+    const games = (d.stats||[]).flatMap(g=>g.splits||[])
+      .filter(s => s.date && s.date.slice(0,10) < gameDate)
+      .sort((a,b) => b.date.localeCompare(a.date));
+    if (!games.length) return { daysRest:5, pitchCount:0, fatigued:false, fatiguePenalty:0 };
+    const last     = games[0];
+    const daysRest = Math.floor((new Date(gameDate)-new Date(last.date.slice(0,10)))/86400000);
+    const pitchCount = parseInt(last.stat?.numberOfPitches||0);
+    return {
+      daysRest, pitchCount,
+      lastDate:      last.date.slice(0,10),
+      fatigued:      daysRest < 4 || pitchCount > 100,
+      fatiguePenalty: daysRest < 4 ? 0.15 : daysRest < 5 ? 0.05 : 0,
+    };
+  } catch(e) {
+    return { daysRest:5, pitchCount:0, fatigued:false, fatiguePenalty:0 };
+  }
+}
+
+
 async function getMatchupScores(lineupIds, pitcherId, yr) {
   // Returns average BvP OPS for the lineup vs this pitcher
   if (!pitcherId || !lineupIds?.length) return null;
@@ -903,7 +966,7 @@ function trainFromHistory() {
   return count > 0 ? -(totalLoss / count) : null;
 }
 
-function computeGame(g,apSt,hpSt,aSt,hSt,aR,hR,wx,stad,injuries,matchups,confirmedLineup) {
+function computeGame(g,apSt,hpSt,aSt,hSt,aR,hR,wx,stad,injuries,matchups,confirmedLineup,aBullpen,hBullpen,apRest,hpRest) {
   const apk9=sf(apSt.strikeoutsPer9Inn,8),hpk9=sf(hpSt.strikeoutsPer9Inn,8);
   const apera=sf(apSt.era),hpera=sf(hpSt.era);
   // Calculate real FIP: ((13×HR) + (3×(BB+HBP)) - (2×K)) / IP + 3.10
@@ -961,13 +1024,20 @@ function computeGame(g,apSt,hpSt,aSt,hSt,aR,hR,wx,stad,injuries,matchups,confirm
   const pf=stad?.pf||1,wmod=wx?.wmod||1,altB=1+Math.max(0,(stad?.alt||0)-1000)/10000*.15;
   const tmp=wx?.tf<50?.92:wx?.tf>85?1.04:1.0;
 
-  // ── Pitcher scores ────────────────────────────────────────────────────────
-  const aps=cl(.35*(1-(apfip-2)/4)+.25*(1-(apera-2)/4)+.20*((apk9-5)/5)+.20*(1-(apbb9-1.5)/3.5));
-  const hps=cl(.35*(1-(hpfip-2)/4)+.25*(1-(hpera-2)/4)+.20*((hpk9-5)/5)+.20*(1-(hpbb9-1.5)/3.5));
+  // ── Pitcher rest adjustment ───────────────────────────────────────────────
+  const apRestPenalty = apRest?.fatiguePenalty || 0;
+  const hpRestPenalty = hpRest?.fatiguePenalty || 0;
+
+  // ── Pitcher scores (with rest penalty) ───────────────────────────────────
+  const aps=cl(.35*(1-(apfip-2)/4)+.25*(1-(apera-2)/4)+.20*((apk9-5)/5)+.20*(1-(apbb9-1.5)/3.5) - apRestPenalty);
+  const hps=cl(.35*(1-(hpfip-2)/4)+.25*(1-(hpera-2)/4)+.20*((hpk9-5)/5)+.20*(1-(hpbb9-1.5)/3.5) - hpRestPenalty);
   const hos=cl((hOPS-.65)/.2);
   const aos=cl((aOPS-.65)/.2);
-  const hbs=cl((hBpE-2.5)/-3.5+.5);
-  const abs2=cl((aBpE-2.5)/-3.5+.5);
+  // Apply fatigue penalty to bullpen ERA equivalent
+  const hBullpenPenalty = hBullpen?.fatiguePenalty || 0;
+  const aBullpenPenalty = aBullpen?.fatiguePenalty || 0;
+  const hbs=cl((hBpE-2.5)/-3.5+.5 - hBullpenPenalty);
+  const abs2=cl((aBpE-2.5)/-3.5+.5 - aBullpenPenalty);
   const str=hWL-aWL;
 
   // ── Model logit using trained weights ─────────────────────────────────────
@@ -1042,6 +1112,8 @@ function computeGame(g,apSt,hpSt,aSt,hSt,aR,hR,wx,stad,injuries,matchups,confirm
     confirmedLineup,lineupConf,
     features,   // stored for training
     picks:top3,allPicks:rawPicks,
+    bullpen:{ away: aBullpen, home: hBullpen },
+    starterRest:{ away: apRest, home: hpRest },
     homeId:g.teams?.home?.team?.id,awayId:g.teams?.away?.team?.id
   };
 }
@@ -1145,7 +1217,16 @@ function renderParlays(parlays,games){
 }
 
 function renderPitchers(games){
-  const pitchers=games.flatMap(g=>[{...g.pitchers.away,team:g.away,opp:g.home,oppOPS:g.batters.aOPS,matchup:`${g.away} @ ${g.home}`,time:g.time},{...g.pitchers.home,team:g.home,opp:g.away,oppOPS:g.batters.hOPS,matchup:`${g.away} @ ${g.home}`,time:g.time}]).filter(p=>p.name!=='TBD').sort((a,b)=>b.k9-a.k9);
+  const pitchers=games.flatMap(g=>[
+    {...g.pitchers.away,team:g.away,opp:g.home,oppOPS:g.batters.aOPS,matchup:`${g.away} @ ${g.home}`,time:g.time,
+     daysRest:g.starterRest?.away?.daysRest, lastPitchCount:g.starterRest?.away?.pitchCount,
+     fatigued:g.starterRest?.away?.fatigued,
+     bullpenFresh:g.bullpen?.away?.bullpenFresh, bullpenFatigued:g.bullpen?.away?.fatiguedCount},
+    {...g.pitchers.home,team:g.home,opp:g.away,oppOPS:g.batters.hOPS,matchup:`${g.away} @ ${g.home}`,time:g.time,
+     daysRest:g.starterRest?.home?.daysRest, lastPitchCount:g.starterRest?.home?.pitchCount,
+     fatigued:g.starterRest?.home?.fatigued,
+     bullpenFresh:g.bullpen?.home?.bullpenFresh, bullpenFatigued:g.bullpen?.home?.fatiguedCount}
+  ]).filter(p=>p.name!=='TBD').sort((a,b)=>b.k9-a.k9);
   document.getElementById('pitcher-area').innerHTML=pitchers.map(p=>{
     const kRec=p.kEdge>.3?'OVER':p.kEdge<-.3?'UNDER':'NEUTRAL';
     const kCls=p.kEdge>.3?'rec-over':p.kEdge<-.3?'rec-under':'rec-neu';
@@ -1245,14 +1326,20 @@ async function runAll(){
       const hpId = g.teams?.home?.probablePitcher?.id, apId = g.teams?.away?.probablePitcher?.id;
       const stad = ST[hId] || {};
       // Fetch all data in parallel per game
-      const [apSt,hpSt,aSt,hSt,aR,hR,wx,aBatters,hBatters,aInjuries,hInjuries,lineup] = await Promise.all([
+      const gameDate = g.gameDate?.slice(0,10) || date;
+      const [apSt,hpSt,aSt,hSt,aR,hR,wx,aBatters,hBatters,aInjuries,hInjuries,lineup,
+             aBullpen,hBullpen,apRest,hpRest] = await Promise.all([
         getPSt(apId,yr), getPSt(hpId,yr),
         getTSt(aId,yr),  getTSt(hId,yr),
         getWL(aId,yr),   getWL(hId,yr),
         getWeather(stad.lat||35, stad.lon||-90, stad.roof||'open'),
         getTopBatters(aId,yr), getTopBatters(hId,yr),
         getInjuryList(aId),    getInjuryList(hId),
-        getConfirmedLineup(g.gamePk)
+        getConfirmedLineup(g.gamePk),
+        getBullpenStatus(aId, g.gamePk),
+        getBullpenStatus(hId, g.gamePk),
+        getStarterRestDays(apId, gameDate),
+        getStarterRestDays(hpId, gameDate),
       ]);
       // BvP matchups (uses confirmed lineup player IDs when available)
       const [awayBvP, homeBvP] = await Promise.all([
@@ -1261,7 +1348,7 @@ async function runAll(){
       ]);
       const matchups  = { awayBattersVsHomePitcher: awayBvP, homeBattersVsAwayPitcher: homeBvP };
       const injuries  = { away: aInjuries, home: hInjuries };
-      const gd = computeGame(g, apSt, hpSt, aSt, hSt, aR, hR, wx, stad, injuries, matchups, lineup);
+      const gd = computeGame(g, apSt, hpSt, aSt, hSt, aR, hR, wx, stad, injuries, matchups, lineup, aBullpen, hBullpen, apRest, hpRest);
       gd.topBatters = { away: aBatters, home: hBatters };
       games.push(gd);
     }

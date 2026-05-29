@@ -182,25 +182,44 @@ input[type=range]{width:100%;accent-color:var(--gold)}
       <div class="sic"><i class="ti ti-trophy"></i></div>
       <div><div class="st">MLB Picks Pro</div><div class="ss">ML · Spreads · Totales · Ks · Parlays · F5</div></div>
     </div>
-    <div class="ssteps">
-      <strong>Key opcional para análisis extra:</strong><br>
-      1. <a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a><br>
-      2. Inicia sesión con Google → <strong>Create API Key</strong><br>
-      3. Pega aquí (o déjalo vacío)
+    <div style="display:flex;gap:0;margin-bottom:1.2rem;border:1px solid var(--b2);border-radius:var(--rs);overflow:hidden">
+      <button id="tab-login" onclick="showAuthTab('login')" style="flex:1;padding:8px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;border:none;background:var(--gold);color:#fff">Iniciar sesión</button>
+      <button id="tab-register" onclick="showAuthTab('register')" style="flex:1;padding:8px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;border:none;background:var(--bg3);color:var(--text2)">Crear cuenta</button>
     </div>
-    <div class="slbl">API Key de Google Gemini <span style="font-weight:400;color:var(--text3)">(opcional)</span></div>
-    <input type="password" class="sinp" id="api-key-input" placeholder="AIza... (opcional)" autocomplete="off">
-    <div class="shint">Los picks funcionan 100% sin key · Datos reales de MLB Stats API</div>
-    <div style="margin-top:1rem;border-top:1px solid var(--b);padding-top:1rem">
-      <div class="slbl">🔗 URL de tu Google Apps Script <span style="font-weight:400;color:var(--text3)">(para guardar datos en la nube — gratis)</span></div>
-      <input type="text" class="sinp" id="gas-url-input" placeholder="https://script.google.com/macros/s/XXXX/exec" autocomplete="off" style="font-size:11px">
-      <div class="shint">Tus datos se guardan automáticamente en tu Google Sheet · Sin botones · Accesible desde cualquier dispositivo · <strong>Ver instrucciones abajo</strong></div>
+    <div style="margin-bottom:1rem;padding:.75rem;background:var(--bg3);border-radius:var(--rs);font-size:11px;color:var(--text2)">
+      <i class="ti ti-info-circle" style="vertical-align:-2px;margin-right:4px"></i>
+      Necesitas tu Google Apps Script URL para guardar datos en la nube.
+      <a href="https://script.google.com" target="_blank" style="color:var(--blue);font-weight:600;margin-left:4px">Ir a script.google.com →</a>
     </div>
-    <div style="margin-top:.75rem;border-top:1px solid var(--b);padding-top:.75rem">
-      <div class="slbl">The Odds API Key <span style="font-weight:400;color:var(--text3)">(opcional — cuotas reales)</span></div>
-      <input type="password" class="sinp" id="odds-key-input" placeholder="gratis en the-odds-api.com" autocomplete="off">
+    <div style="margin-bottom:1rem">
+      <div class="slbl">URL de Google Apps Script <span style="color:var(--red)">*</span></div>
+      <input type="text" class="sinp" id="gas-url-input" placeholder="https://script.google.com/macros/s/XXXX/exec" autocomplete="off">
     </div>
-    <div class="serr" id="setup-err">Key inválida — debe empezar con AIza</div>
+    <div id="form-login">
+      <div class="slbl">Usuario</div>
+      <input type="text" class="sinp" id="login-user" placeholder="tu usuario" autocomplete="username" style="margin-bottom:.75rem">
+      <div class="slbl">Contraseña</div>
+      <input type="password" class="sinp" id="login-pass" placeholder="••••••••" autocomplete="current-password" style="margin-bottom:1rem">
+      <div id="login-err" style="display:none;color:var(--red);font-size:12px;margin-bottom:.75rem;padding:.5rem .75rem;background:var(--rbg);border-radius:var(--rs)"></div>
+      <button class="sbtn" id="login-btn" onclick="doLogin()"><i class="ti ti-login"></i> Entrar</button>
+    </div>
+    <div id="form-register" style="display:none">
+      <div class="slbl">Nombre</div>
+      <input type="text" class="sinp" id="reg-name" placeholder="Ariel" style="margin-bottom:.75rem">
+      <div class="slbl">Usuario</div>
+      <input type="text" class="sinp" id="reg-user" placeholder="ariel930330" autocomplete="username" style="margin-bottom:.75rem">
+      <div class="slbl">Contraseña</div>
+      <input type="password" class="sinp" id="reg-pass" placeholder="mínimo 6 caracteres" autocomplete="new-password" style="margin-bottom:.75rem">
+      <div class="slbl">Gemini API Key <span style="font-weight:400;color:var(--text3)">(opcional)</span></div>
+      <input type="password" class="sinp" id="reg-gem" placeholder="AIza..." style="margin-bottom:.75rem">
+      <div class="slbl">The Odds API Key <span style="font-weight:400;color:var(--text3)">(opcional)</span></div>
+      <input type="password" class="sinp" id="reg-odds" placeholder="gratis en the-odds-api.com" style="margin-bottom:1rem">
+      <div id="reg-err" style="display:none;color:var(--red);font-size:12px;margin-bottom:.75rem;padding:.5rem .75rem;background:var(--rbg);border-radius:var(--rs)"></div>
+      <button class="sbtn" id="reg-btn" onclick="doRegister()"><i class="ti ti-user-plus"></i> Crear cuenta</button>
+    </div>
+    <div id="setup-err" style="display:none"></div>
+  </div>
+</div>
     <details style="margin-top:.85rem;font-size:11px;color:var(--text2)">
       <summary style="cursor:pointer;font-weight:600;color:var(--text)">📋 Cómo configurar Google Sheets (5 min, solo una vez)</summary>
       <ol style="padding:.75rem 1rem;line-height:2.2;background:var(--bg3);border-radius:var(--rs);margin-top:.5rem">
@@ -213,7 +232,7 @@ input[type=range]{width:100%;accent-color:var(--gold)}
         <li>Pega esa URL en el campo de arriba → ¡Listo!</li>
       </ol>
     </details>
-    <button class="sbtn" onclick="startApp()"><i class="ti ti-trophy"></i>Entrar a MLB Picks Pro</button>
+    <button class="sbtn" onclick="launchApp()"><i class="ti ti-trophy"></i>Entrar a MLB Picks Pro</button>
   </div>
 </div>
 
@@ -227,7 +246,8 @@ input[type=range]{width:100%;accent-color:var(--gold)}
     <div class="hr2">
       <span class="hdate" id="hdr-date">—</span>
       <span id="cloud-status" style="font-size:10px;padding:2px 8px;border-radius:4px;background:var(--bg3);color:var(--text3)"><i class="ti ti-cloud-off" style="font-size:10px"></i> Local</span>
-      <button class="hkbtn" onclick="changeKey()"><i class="ti ti-key" style="font-size:11px"></i></button>
+      <span id="hdr-user" style="font-size:11px;color:var(--text2);margin-right:6px;font-weight:600"></span>
+      <button class="hkbtn" onclick="doLogout()" title="Cerrar sesión"><i class="ti ti-logout" style="font-size:11px"></i></button>
     </div>
   </div>
 
@@ -588,7 +608,7 @@ function restoreExtraTabs(date) {
         });
         rows.sort((a,b) => b.hitP - a.hitP);
         batterArea.innerHTML = `<div style="background:var(--bg2);border-radius:var(--rs);overflow:hidden"><table class="bat-table"><thead><tr>
-          <th>Jugador</th><th>Equipo</th><th>vs Pitcher</th><th>BA</th><th>OBP</th><th>SLG</th><th>OPS</th><th>HR</th><th>RBI</th><th>P(Hit)</th><th>TB Exp.</th><th>Rec. TB</th>
+          <th>Jugador</th><th>Equipo</th><th>vs Pitcher</th><th>BA</th><th>OBP</th><th>SLG</th><th>OPS</th><th>wOBA</th><th>K%</th><th>BB/K</th><th>vs Mano</th><th>HR</th><th>P(Hit)</th><th>TB Exp.</th>
         </tr></thead><tbody>${rows.map((r,i) => {
           const hpCls = r.hitP>.74?'hp-h':r.hitP>.68?'hp-m':'hp-l';
           const tbRec = r.tbExp>r.tbLine+.25?'★ OVER '+r.tbLine:r.tbExp<r.tbLine-.25?'UNDER '+r.tbLine:'—';
@@ -612,6 +632,167 @@ function restoreExtraTabs(date) {
     }
   } catch(e) { console.warn('restoreExtraTabs error:', e); }
 }
+
+
+function onDateChange(date) {
+  // When user changes the date, check if we have cached picks for that date
+  const cached = JSON.parse(localStorage.getItem('mlbpro-' + date) || '[]');
+  if (cached.length) {
+    // Show cached picks instantly
+    const games = cached.map(c => ({
+      away: c.away, home: c.home,
+      awayWP: c.awayWP || (c.fav === c.away ? c.favP : 1 - c.favP) || 0.5,
+      homeWP: c.homeWP || (c.fav === c.home ? c.favP : 1 - c.favP) || 0.5,
+      awayML: c.awayML || '—', homeML: c.homeML || '—',
+      venue: c.venue || '', time: '—',
+      picks: c.allPicks || (c.topPick ? [{cat:'Mejor pick',main:c.topPick,prob:c.topPickProb||0.55,edge:0,conf:c.conf||'Medium',sub:''}] : []),
+      allPicks: c.allPicks || [],
+      weather: {tf:'—',cond:'',wm:0,wd:'',wn:'—'}, pf:'—',
+      gameStarted: false, isLocked: true, savedAt: c.savedAt || '',
+    }));
+    const sr = document.getElementById('srow');
+    if (sr) sr.style.display = 'grid';
+    setText('sm-g', cached.length);
+    setText('sm-h', cached.filter(c => c.conf === 'High').length);
+    setText('sm-m', cached.filter(c => c.conf === 'Medium').length);
+    setText('sm-ov', '—');
+    setText('sm-p', '—');
+    renderPicksFromCache(games, date);
+    restoreExtraTabs(date);
+  } else {
+    // No cache for this date — clear display and prompt to analyze
+    const _pa = document.getElementById('picks-area');
+    if (_pa) _pa.innerHTML = '<div class="ebox"><i class="ti ti-search" style="font-size:32px;opacity:.2;display:block;margin:0 auto 10px"></i>No hay picks guardados para esta fecha.<br>Presiona <strong>Analizar partidos</strong> para generar predicciones.</div>';
+    const sr = document.getElementById('srow');
+    if (sr) sr.style.display = 'none';
+  }
+}
+
+
+// ── Auth ──────────────────────────────────────────────────────────────────────
+function showAuthTab(tab) {
+  const isLogin = tab === 'login';
+  document.getElementById('form-login').style.display    = isLogin ? 'block' : 'none';
+  document.getElementById('form-register').style.display = isLogin ? 'none' : 'block';
+  document.getElementById('tab-login').style.cssText    = `flex:1;padding:8px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;border:none;background:${isLogin?'var(--gold)':'var(--bg3)'};color:${isLogin?'#fff':'var(--text2)'}`;
+  document.getElementById('tab-register').style.cssText = `flex:1;padding:8px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;border:none;background:${isLogin?'var(--bg3)':'var(--gold)'};color:${isLogin?'var(--text2)':'#fff'}`;
+}
+
+async function doLogin() {
+  const gasUrl = (document.getElementById('gas-url-input')?.value||'').trim();
+  const user   = (document.getElementById('login-user')?.value||'').trim();
+  const pass   = document.getElementById('login-pass')?.value||'';
+  const errEl  = document.getElementById('login-err');
+  const btn    = document.getElementById('login-btn');
+  if (errEl) errEl.style.display = 'none';
+  if (!gasUrl) { if(errEl){errEl.textContent='Ingresa la URL de Google Apps Script';errEl.style.display='block';} return; }
+  if (!user||!pass) { if(errEl){errEl.textContent='Ingresa usuario y contraseña';errEl.style.display='block';} return; }
+  if (btn) { btn.disabled=true; btn.innerHTML='<i class="ti ti-loader-2" style="animation:spin .7s linear infinite"></i> Entrando...'; }
+  try {
+    localStorage.setItem('gas-url', gasUrl);
+    const qs  = new URLSearchParams({ action:'login', username:user, password:pass });
+    const res = await fetch(`${gasUrl}?${qs}`);
+    const d   = await res.json();
+    if (!d.ok) {
+      if(errEl){errEl.textContent=d.error||'Error al iniciar sesión';errEl.style.display='block';}
+      if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-login"></i> Entrar';}
+      return;
+    }
+    localStorage.setItem('mlbpro-session', d.sessionId);
+    localStorage.setItem('mlbpro-username', d.username);
+    localStorage.setItem('mlbpro-display', d.displayName);
+    if (d.geminiKey) { localStorage.setItem('mlbpro-gemini', d.geminiKey); API_KEY=d.geminiKey; }
+    if (d.oddsKey)   localStorage.setItem('odds-key', d.oddsKey);
+    launchApp();
+  } catch(e) {
+    if(errEl){errEl.textContent='Error de conexión. Verifica la URL del Apps Script.';errEl.style.display='block';}
+    if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-login"></i> Entrar';}
+  }
+}
+
+async function doRegister() {
+  const gasUrl = (document.getElementById('gas-url-input')?.value||'').trim();
+  const name   = (document.getElementById('reg-name')?.value||'').trim();
+  const user   = (document.getElementById('reg-user')?.value||'').trim();
+  const pass   = document.getElementById('reg-pass')?.value||'';
+  const gem    = (document.getElementById('reg-gem')?.value||'').trim();
+  const odds   = (document.getElementById('reg-odds')?.value||'').trim();
+  const errEl  = document.getElementById('reg-err');
+  const btn    = document.getElementById('reg-btn');
+  if(errEl) errEl.style.display='none';
+  if (!gasUrl) { if(errEl){errEl.textContent='Ingresa la URL del Apps Script';errEl.style.display='block';} return; }
+  if (!user||!pass) { if(errEl){errEl.textContent='Usuario y contraseña requeridos';errEl.style.display='block';} return; }
+  if (pass.length<6) { if(errEl){errEl.textContent='Contraseña de al menos 6 caracteres';errEl.style.display='block';} return; }
+  if(btn){btn.disabled=true;btn.innerHTML='<i class="ti ti-loader-2" style="animation:spin .7s linear infinite"></i> Creando...';}
+  try {
+    localStorage.setItem('gas-url', gasUrl);
+    const res = await fetch(gasUrl, { method:'POST', body:JSON.stringify({ action:'register', username:user, password:pass, displayName:name||user }) });
+    const d = await res.json();
+    if (!d.ok) {
+      if(errEl){errEl.textContent=d.error||'Error al crear cuenta';errEl.style.display='block';}
+      if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-user-plus"></i> Crear cuenta';}
+      return;
+    }
+    if (gem||odds) {
+      await fetch(gasUrl,{method:'POST',body:JSON.stringify({action:'saveKeys',sessionId:d.sessionId,geminiKey:gem,gasUrl:'',oddsKey:odds})});
+    }
+    localStorage.setItem('mlbpro-session', d.sessionId);
+    localStorage.setItem('mlbpro-username', d.username);
+    localStorage.setItem('mlbpro-display', d.displayName);
+    if(gem){localStorage.setItem('mlbpro-gemini',gem);API_KEY=gem;}
+    if(odds)localStorage.setItem('odds-key',odds);
+    launchApp();
+  } catch(e) {
+    if(errEl){errEl.textContent='Error de conexión.';errEl.style.display='block';}
+    if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-user-plus"></i> Crear cuenta';}
+  }
+}
+
+function doLogout() {
+  if(!confirm('¿Cerrar sesión?')) return;
+  localStorage.removeItem('mlbpro-session');
+  localStorage.removeItem('mlbpro-username');
+  localStorage.removeItem('mlbpro-display');
+  document.getElementById('app').style.display='none';
+  document.getElementById('setup').style.display='flex';
+}
+
+function launchApp() {
+  document.getElementById('setup').style.display='none';
+  document.getElementById('app').style.display='block';
+  const t=new Date();
+  const dp=document.getElementById('date-pick');
+  const hd=document.getElementById('hdr-date');
+  if(dp) dp.value=t.toISOString().slice(0,10);
+  if(hd) hd.textContent=t.toLocaleDateString('es-MX',{weekday:'short',month:'short',day:'numeric'});
+  const display=localStorage.getItem('mlbpro-display')||localStorage.getItem('mlbpro-username')||'';
+  const hdUser=document.getElementById('hdr-user');
+  if(hdUser&&display) hdUser.textContent=display;
+  try{loadWeights();}catch(e){}
+  try{loadHistory();}catch(e){}
+  try{restorePicksFromCache();}catch(e){}
+  setTimeout(()=>{try{initDB();}catch(e){}},300);
+}
+
+// Auto-login on load if session exists
+;(function(){
+  const savedGas = localStorage.getItem('gas-url');
+  const session  = localStorage.getItem('mlbpro-session');
+  const gemKey   = localStorage.getItem('mlbpro-gemini');
+  if(savedGas){const el=document.getElementById('gas-url-input');if(el)el.value=savedGas;}
+  if(session && savedGas){
+    if(gemKey) API_KEY=gemKey;
+    // Wait for DOM to be ready
+    if(document.readyState==='loading'){
+      document.addEventListener('DOMContentLoaded', launchApp);
+    } else {
+      launchApp();
+    }
+  }
+})();
+
+// Keep startApp as alias for backward compat
+function startApp(){ launchApp(); }
 
 
 function onDateChange(date) {
@@ -728,6 +909,121 @@ async function getTopBatters(teamId, yr) {
   } catch(e) { return []; }
 }
 
+
+
+async function getBatterSplits(teamId, yr, pitcherHand) {
+  // Get team batting stats vs RHP or LHP + last 30 days
+  try {
+    const split = pitcherHand === 'L' ? 'vl' : 'vr';
+    const [vsHand, l30] = await Promise.all([
+      mlb(`/teams/${teamId}/stats?stats=statSplits&group=hitting&season=${yr}&sitCodes=${split}&sportId=1`),
+      mlb(`/teams/${teamId}/stats?stats=lastXGames&group=hitting&season=${yr}&limit=30&sportId=1`),
+    ]);
+    const vsSt  = (vsHand.stats||[]).flatMap(g=>g.splits||[])[0]?.stat || {};
+    const l30St = (l30.stats||[]).flatMap(g=>g.splits||[])[0]?.stat || {};
+
+    const calcWOBA = st => {
+      const bb=sf(st.baseOnBalls,0), hbp=sf(st.hitByPitch,0),
+            h=sf(st.hits,0), d=sf(st.doubles,0), t=sf(st.triples,0),
+            hr=sf(st.homeRuns,0), pa=sf(st.plateAppearances,1);
+      return +((bb*.69+hbp*.72+(h-d-t-hr)*.88+d*1.21+t*1.57+hr*2.10)/pa).toFixed(3);
+    };
+    const calcKpct = st => {
+      const k=sf(st.strikeOuts,0), pa=sf(st.plateAppearances,1);
+      return +(k/pa*100).toFixed(1);
+    };
+    const calcBBK = st => {
+      const bb=sf(st.baseOnBalls,0), k=sf(st.strikeOuts,1);
+      return +(bb/k).toFixed(2);
+    };
+
+    return {
+      vsHand: {
+        avg:  parseFloat(vsSt.avg||0),
+        obp:  parseFloat(vsSt.obp||0),
+        slg:  parseFloat(vsSt.slg||0),
+        ops:  parseFloat(vsSt.ops||0),
+        woba: calcWOBA(vsSt),
+        kpct: calcKpct(vsSt),
+        bbk:  calcBBK(vsSt),
+        pa:   parseInt(vsSt.plateAppearances||0),
+      },
+      l30: {
+        avg:  parseFloat(l30St.avg||0),
+        obp:  parseFloat(l30St.obp||0),
+        slg:  parseFloat(l30St.slg||0),
+        ops:  parseFloat(l30St.ops||0),
+        woba: calcWOBA(l30St),
+        kpct: calcKpct(l30St),
+        bbk:  calcBBK(l30St),
+      },
+      pitcherHand,
+    };
+  } catch(e) { return null; }
+}
+
+async function getTopBattersWithSplits(teamId, yr, pitcherHand) {
+  // Individual batter stats + splits vs this pitcher's hand + L30
+  try {
+    const split = pitcherHand === 'L' ? 'vl' : 'vr';
+    const d = await mlb(`/stats?stats=season&group=hitting&season=${yr}&teamId=${teamId}&playerPool=All&limit=20&sortStat=onBasePlusSlugging&order=desc`);
+    const splits = (d.stats||[]).flatMap(g=>g.splits||[]);
+    const players = splits.map(s => {
+      const st = s.stat||{}, p = s.player||{};
+      const pos = s.position?.abbreviation||'?';
+      const pa = parseInt(st.plateAppearances||0);
+      const k  = parseInt(st.strikeOuts||0);
+      const bb = parseInt(st.baseOnBalls||0);
+      const h  = parseInt(st.hits||0);
+      const d2 = parseInt(st.doubles||0);
+      const t  = parseInt(st.triples||0);
+      const hr = parseInt(st.homeRuns||0);
+      const woba = pa>0?+((bb*.69+(h-d2-t-hr)*.88+d2*1.21+t*1.57+hr*2.10)/pa).toFixed(3):0;
+      return {
+        id:   p.id,
+        name: p.fullName||'?',
+        pos,
+        ba:   parseFloat(st.avg||0),
+        obp:  parseFloat(st.obp||0),
+        slg:  parseFloat(st.slg||0),
+        ops:  parseFloat(st.ops||0),
+        hr:   hr, rbi: parseInt(st.rbi||0),
+        ab:   parseInt(st.atBats||0),
+        kpct: pa>0?+(k/pa*100).toFixed(1):0,
+        bbk:  k>0?+(bb/k).toFixed(2):0,
+        woba,
+      };
+    }).filter(p => p.ab>=20 && !['P','SP','RP','TWP'].includes(p.pos))
+      .sort((a,b)=>b.ops-a.ops).slice(0,9);
+
+    // Fetch vs-hand splits for top 5 (to avoid too many API calls)
+    await Promise.allSettled(players.slice(0,5).map(async p => {
+      try {
+        const sd = await mlb(`/people/${p.id}/stats?stats=statSplits&group=hitting&season=${yr}&sitCodes=${split}&sportId=1`);
+        const ss = (sd.stats||[]).flatMap(g=>g.splits||[])[0]?.stat||{};
+        if (parseInt(ss.plateAppearances||0) >= 10) {
+          p.vsHand = {
+            avg:  parseFloat(ss.avg||0),
+            ops:  parseFloat(ss.ops||0),
+            woba: ss.plateAppearances>0?(()=>{
+              const bb2=parseInt(ss.baseOnBalls||0),h2=parseInt(ss.hits||0),
+                    d2=parseInt(ss.doubles||0),t2=parseInt(ss.triples||0),
+                    hr2=parseInt(ss.homeRuns||0),pa2=parseInt(ss.plateAppearances||1);
+              return +((bb2*.69+(h2-d2-t2-hr2)*.88+d2*1.21+t2*1.57+hr2*2.10)/pa2).toFixed(3);
+            })():0,
+            pa: parseInt(ss.plateAppearances||0),
+          };
+        }
+      } catch(e){}
+    }));
+    return players;
+  } catch(e) { return []; }
+}
+
+function getPitcherHand(pitcherSt) {
+  // MLB Stats API returns pitchHand in people endpoint
+  return pitcherSt?.pitchHand?.code || 'R'; // default R if unknown
+}
 
 
 async function getInjuryList(teamId) {
@@ -966,7 +1262,7 @@ function trainFromHistory() {
   return count > 0 ? -(totalLoss / count) : null;
 }
 
-function computeGame(g,apSt,hpSt,aSt,hSt,aR,hR,wx,stad,injuries,matchups,confirmedLineup,aBullpen,hBullpen,apRest,hpRest) {
+function computeGame(g,apSt,hpSt,aSt,hSt,aR,hR,wx,stad,injuries,matchups,confirmedLineup,aBullpen,hBullpen,apRest,hpRest,aSplits,hSplits,apHand,hpHand) {
   const apk9=sf(apSt.strikeoutsPer9Inn,8),hpk9=sf(hpSt.strikeoutsPer9Inn,8);
   const apera=sf(apSt.era),hpera=sf(hpSt.era);
   // Calculate real FIP: ((13×HR) + (3×(BB+HBP)) - (2×K)) / IP + 3.10
@@ -1004,6 +1300,27 @@ function computeGame(g,apSt,hpSt,aSt,hSt,aR,hR,wx,stad,injuries,matchups,confirm
   const injuryPenalty = inj => inj.length >= 3 ? 0.04 : inj.length >= 1 ? 0.02 : 0;
   aOPS -= injuryPenalty(aInjuries) * 0.5;  // injured lineup → lower OPS proxy
   hOPS -= injuryPenalty(hInjuries) * 0.5;
+
+  // ── Batting splits vs pitcher hand (RHP/LHP) ─────────────────────────────
+  // Blend season OPS (60%) with vs-hand OPS (40%) when available
+  if (aSplits?.vsHand?.ops && aSplits.vsHand.pa >= 30) {
+    aOPS = aOPS * 0.60 + aSplits.vsHand.ops * 0.40;
+  }
+  if (hSplits?.vsHand?.ops && hSplits.vsHand.pa >= 30) {
+    hOPS = hOPS * 0.60 + hSplits.vsHand.ops * 0.40;
+  }
+  // L30 trend adjustment (15% weight if team is hot/cold recently)
+  if (aSplits?.l30?.ops) {
+    const l30Delta = aSplits.l30.ops - aOPS;
+    aOPS += l30Delta * 0.15; // nudge toward recent form
+  }
+  if (hSplits?.l30?.ops) {
+    const l30Delta = hSplits.l30.ops - hOPS;
+    hOPS += l30Delta * 0.15;
+  }
+  // wOBA-based pick confidence boost: if wOBA vs hand > .320 = strong matchup
+  const aWobaEdge = (aSplits?.vsHand?.woba || 0) > 0.320 ? 0.03 : 0;
+  const hWobaEdge = (hSplits?.vsHand?.woba || 0) > 0.320 ? 0.03 : 0;
 
   // ── BvP matchup adjustment ────────────────────────────────────────────────
   // If batter vs pitcher matchup data available, blend with season OPS
@@ -1070,6 +1387,10 @@ function computeGame(g,apSt,hpSt,aSt,hSt,aR,hR,wx,stad,injuries,matchups,confirm
   const rawPicks=[];
   if(hwp>.52) rawPicks.push({cat:'Money Line',main:`${home} ML ${p2ml(hwp)}`,sub:`Modelo: ${pct(hwp)} · ${lineupConf?'✓ Lineup confirmado':'Lineup estimado'}`,prob:hwp,edge:+(hwp-.52).toFixed(3)});
   else rawPicks.push({cat:'Money Line',main:`${away} ML ${p2ml(awp)}`,sub:`Modelo: ${pct(awp)} · ${lineupConf?'✓ Lineup confirmado':'Lineup estimado'}`,prob:awp,edge:+(awp-.52).toFixed(3)});
+  // Adjust team totals using wOBA matchup edge
+  const hExpAdj = hExp * (1 + hWobaEdge);
+  const aExpAdj = aExp * (1 + aWobaEdge);
+  const totalAdj = +(hExpAdj + aExpAdj).toFixed(1);
   rawPicks.push({cat:'Total del partido',main:`${totalEdge>0?'OVER':'UNDER'} ${totalLine} runs`,sub:`Proyección: ${total} runs | PF ${pf}${awayBvP?' | BvP datos incluidos':''}`,prob:totalEdge>0?cl(.50+totalEdge*.08):cl(.50+Math.abs(totalEdge)*.08),edge:+Math.abs(totalEdge*.07).toFixed(3)});
   rawPicks.push({cat:'Run Line (-1.5)',main:`${favHome?home:away} -1.5`,sub:`${pct(rlProb)} prob ganar por 2+`,prob:rlProb,edge:+(rlProb-.52).toFixed(3)});
   const f5fav=f5hwp>=f5awp?home:away,f5favWP=Math.max(f5hwp,f5awp);
@@ -1080,6 +1401,36 @@ function computeGame(g,apSt,hpSt,aSt,hSt,aR,hR,wx,stad,injuries,matchups,confirm
   rawPicks.push({cat:'Ks Pitcher',main:`${bestK.name.split(' ').slice(-1)[0]} ${bestK.kEdge>=0?'OVER':'UNDER'} ${bestK.kLine}K`,sub:`Proyección: ${bestK.kExp}K`,prob:cl(.50+Math.abs(bestK.kEdge)*.09),edge:+Math.abs(bestK.kEdge*.08).toFixed(3)});
   const hTE=hExp-hLineTot;
   rawPicks.push({cat:`Total ${home}`,main:`${home} ${hTE>0?'OVER':'UNDER'} ${hLineTot}`,sub:`Proyección: ${hExp.toFixed(1)} carreras`,prob:cl(.50+Math.abs(hTE)*.09),edge:+Math.abs(hTE*.08).toFixed(3)});
+
+  // wOBA matchup pick — when offense has strong vs-hand advantage
+  if (aSplits?.vsHand?.woba > 0.340 && aSplits.vsHand.pa >= 40) {
+    rawPicks.push({
+      cat: `Ofensiva ${away} vs ${apHand==='L'?'zurdo':'derecho'}`,
+      main: `${away} OVER ${aLineTot} runs (wOBA matchup)`,
+      sub: `wOBA ${away} vs ${apHand==='L'?'LHP':'RHP'}: ${aSplits.vsHand.woba} · K% ${aSplits.vsHand.kpct}% · ${aSplits.vsHand.pa} PA`,
+      prob: cl(0.50 + (aSplits.vsHand.woba - 0.310) * 0.5),
+      edge: +((aSplits.vsHand.woba - 0.310) * 0.4).toFixed(3),
+    });
+  }
+  if (hSplits?.vsHand?.woba > 0.340 && hSplits.vsHand.pa >= 40) {
+    rawPicks.push({
+      cat: `Ofensiva ${home} vs ${hpHand==='L'?'zurdo':'derecho'}`,
+      main: `${home} OVER ${hLineTot} runs (wOBA matchup)`,
+      sub: `wOBA ${home} vs ${hpHand==='L'?'LHP':'RHP'}: ${hSplits.vsHand.woba} · K% ${hSplits.vsHand.kpct}% · ${hSplits.vsHand.pa} PA`,
+      prob: cl(0.50 + (hSplits.vsHand.woba - 0.310) * 0.5),
+      edge: +((hSplits.vsHand.woba - 0.310) * 0.4).toFixed(3),
+    });
+  }
+  // If team struggles vs this hand (wOBA < .290), boost the pitcher's ML
+  if (aSplits?.vsHand?.woba < 0.290 && aSplits.vsHand.pa >= 40) {
+    rawPicks.push({
+      cat: `Ventaja ${home} pitcher`,
+      main: `${home} ML (lineup ${away} débil vs ${apHand==='L'?'LHP':'RHP'})`,
+      sub: `wOBA ${away} vs ${apHand==='L'?'LHP':'RHP'}: ${aSplits.vsHand.woba} · K% ${aSplits.vsHand.kpct}%`,
+      prob: cl(hwp + 0.04),
+      edge: 0.04,
+    });
+  }
 
   // If BvP data available, add a batter vs pitcher pick
   if(awayBvP && awayBvP.avgOPS > .800 && awayBvP.sampleSize >= 3) {
@@ -1109,6 +1460,8 @@ function computeGame(g,apSt,hpSt,aSt,hSt,aR,hR,wx,stad,injuries,matchups,confirm
     weather:wx,pf,
     injuries:{away:aInjuries,home:hInjuries},
     matchups:{awayBvP,homeBvP},
+    splits:{away:aSplits,home:hSplits},
+    pitcherHand:{away:apHand,home:hpHand},
     confirmedLineup,lineupConf,
     features,   // stored for training
     picks:top3,allPicks:rawPicks,
@@ -1259,7 +1612,10 @@ function renderBatters(games){
         const hitP=1-Math.pow(1-p.ba,4.2);
         const tbExp=+(p.slg*3.7).toFixed(1);
         const tbLine=p.slg>.45?2.5:1.5;
-        rows.push({name:p.name,pos:p.pos,team,ba:p.ba,slg:p.slg,ops:p.ops,obp:p.obp||0,hr:p.hr,rbi:p.rbi||0,hitP,tbExp,tbLine,oppPitcher,matchup,time,side});
+        rows.push({name:p.name,pos:p.pos,team,ba:p.ba,slg:p.slg,ops:p.ops,obp:p.obp||0,
+          woba:p.woba||0, kpct:p.kpct||0, bbk:p.bbk||0,
+          vsHand:p.vsHand||null,
+          hr:p.hr,rbi:p.rbi||0,hitP,tbExp,tbLine,oppPitcher,matchup,time,side});
       });
     };
     if(g.topBatters?.away?.length) addPlayers(g.topBatters.away,g.away,g.pitchers.home.name,`${g.away} @ ${g.home}`,g.time,'away');
@@ -1272,7 +1628,7 @@ function renderBatters(games){
     <div style="margin-bottom:.75rem;font-size:12px;color:var(--text2)">Top bateadores del día ordenados por P(Hit). Datos individuales de temporada actual via MLB Stats API.</div>
     <div style="background:var(--bg2);border-radius:var(--rs);overflow:hidden">
     <table class="bat-table"><thead><tr>
-      <th>Jugador</th><th>Equipo</th><th>vs Pitcher</th><th>BA</th><th>OBP</th><th>SLG</th><th>OPS</th><th>HR</th><th>RBI</th><th>P(Hit)</th><th>TB Exp.</th><th>Rec. TB</th>
+      <th>Jugador</th><th>Equipo</th><th>vs Pitcher</th><th>BA</th><th>OBP</th><th>SLG</th><th>OPS</th><th>wOBA</th><th>K%</th><th>BB/K</th><th>vs Mano</th><th>HR</th><th>P(Hit)</th><th>TB Exp.</th>
     </tr></thead><tbody>
     ${rows.map((r,i)=>{
       const hpCls=r.hitP>.74?'hp-h':r.hitP>.68?'hp-m':'hp-l';
@@ -1327,19 +1683,29 @@ async function runAll(){
       const stad = ST[hId] || {};
       // Fetch all data in parallel per game
       const gameDate = g.gameDate?.slice(0,10) || date;
-      const [apSt,hpSt,aSt,hSt,aR,hR,wx,aBatters,hBatters,aInjuries,hInjuries,lineup,
-             aBullpen,hBullpen,apRest,hpRest] = await Promise.all([
+      const [apSt,hpSt,aSt,hSt,aR,hR,wx,aInjuries,hInjuries,lineup,
+             aBullpen,hBullpen,apRest,hpRest,apPerson,hpPerson] = await Promise.all([
         getPSt(apId,yr), getPSt(hpId,yr),
         getTSt(aId,yr),  getTSt(hId,yr),
         getWL(aId,yr),   getWL(hId,yr),
         getWeather(stad.lat||35, stad.lon||-90, stad.roof||'open'),
-        getTopBatters(aId,yr), getTopBatters(hId,yr),
         getInjuryList(aId),    getInjuryList(hId),
         getConfirmedLineup(g.gamePk),
         getBullpenStatus(aId, g.gamePk),
         getBullpenStatus(hId, g.gamePk),
         getStarterRestDays(apId, gameDate),
         getStarterRestDays(hpId, gameDate),
+        apId ? mlb(`/people/${apId}`).catch(()=>({})) : Promise.resolve({}),
+        hpId ? mlb(`/people/${hpId}`).catch(()=>({})) : Promise.resolve({}),
+      ]);
+      // Get pitcher hand then fetch batter splits accordingly
+      const apHand = apPerson.people?.[0]?.pitchHand?.code || 'R';
+      const hpHand = hpPerson.people?.[0]?.pitchHand?.code || 'R';
+      const [aBatters, hBatters, aSplits, hSplits] = await Promise.all([
+        getTopBattersWithSplits(aId, yr, hpHand),
+        getTopBattersWithSplits(hId, yr, apHand),
+        getBatterSplits(aId, yr, hpHand),
+        getBatterSplits(hId, yr, apHand),
       ]);
       // BvP matchups (uses confirmed lineup player IDs when available)
       const [awayBvP, homeBvP] = await Promise.all([
@@ -1348,8 +1714,10 @@ async function runAll(){
       ]);
       const matchups  = { awayBattersVsHomePitcher: awayBvP, homeBattersVsAwayPitcher: homeBvP };
       const injuries  = { away: aInjuries, home: hInjuries };
-      const gd = computeGame(g, apSt, hpSt, aSt, hSt, aR, hR, wx, stad, injuries, matchups, lineup, aBullpen, hBullpen, apRest, hpRest);
+      const gd = computeGame(g, apSt, hpSt, aSt, hSt, aR, hR, wx, stad, injuries, matchups, lineup, aBullpen, hBullpen, apRest, hpRest, aSplits, hSplits, apHand, hpHand);
       gd.topBatters = { away: aBatters, home: hBatters };
+      gd.splits     = { away: aSplits, home: hSplits };
+      gd.pitcherHand = { away: apHand, home: hpHand };
       games.push(gd);
     }
     allGames = games;

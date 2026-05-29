@@ -182,42 +182,42 @@ input[type=range]{width:100%;accent-color:var(--gold)}
       <div class="sic"><i class="ti ti-trophy"></i></div>
       <div><div class="st">MLB Picks Pro</div><div class="ss">ML · Spreads · Totales · Ks · Parlays · F5</div></div>
     </div>
-    <div style="display:flex;gap:0;margin-bottom:1.2rem;border:1px solid var(--b2);border-radius:var(--rs);overflow:hidden">
-      <button id="tab-login" onclick="showAuthTab('login')" style="flex:1;padding:8px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;border:none;background:var(--gold);color:#fff">Iniciar sesión</button>
-      <button id="tab-register" onclick="showAuthTab('register')" style="flex:1;padding:8px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;border:none;background:var(--bg3);color:var(--text2)">Crear cuenta</button>
+    <div class="sinfo">
+      <div class="sinfo-title"><i class="ti ti-key" style="vertical-align:-2px;margin-right:5px"></i>Key opcional para análisis extra:</div>
+      <ol class="sinfo-list">
+        <li><a href="https://aistudio.google.com/apikey" target="_blank">aistudio.google.com/apikey</a></li>
+        <li>Inicia sesión con Google → <strong>Create API Key</strong></li>
+        <li>Pega aquí (o déjalo vacío)</li>
+      </ol>
     </div>
-    <div style="margin-bottom:1rem;padding:.75rem;background:var(--bg3);border-radius:var(--rs);font-size:11px;color:var(--text2)">
-      <i class="ti ti-info-circle" style="vertical-align:-2px;margin-right:4px"></i>
-      Necesitas tu Google Apps Script URL para guardar datos en la nube.
-      <a href="https://script.google.com" target="_blank" style="color:var(--blue);font-weight:600;margin-left:4px">Ir a script.google.com →</a>
+    <div class="slbl">API Key de Google Gemini <span style="font-weight:400;color:var(--text3)">(opcional)</span></div>
+    <input type="password" class="sinp" id="api-key-input" placeholder="AIza... (o déjalo vacío para usar solo MLB Stats API)" autocomplete="off">
+    <div class="shint">Los picks funcionan 100% sin key · Datos reales de MLB Stats API</div>
+    <div style="margin-top:1rem;border-top:1px solid var(--b);padding-top:1rem">
+      <div class="slbl">🔗 URL de tu Google Apps Script <span style="font-weight:400;color:var(--text3)">(para guardar datos en la nube — gratis)</span></div>
+      <input type="text" class="sinp" id="gas-url-input" placeholder="https://script.google.com/macros/s/XXXX/exec" autocomplete="off" style="font-size:11px">
+      <div class="shint">Tus datos se guardan automáticamente en tu Google Sheet · Accesible desde cualquier dispositivo</div>
     </div>
-    <div style="margin-bottom:1rem">
-      <div class="slbl">URL de Google Apps Script <span style="color:var(--red)">*</span></div>
-      <input type="text" class="sinp" id="gas-url-input" placeholder="https://script.google.com/macros/s/XXXX/exec" autocomplete="off">
+    <div style="margin-top:.75rem;border-top:1px solid var(--b);padding-top:.75rem">
+      <div class="slbl">The Odds API Key <span style="font-weight:400;color:var(--text3)">(opcional — cuotas reales)</span></div>
+      <input type="password" class="sinp" id="odds-key-input" placeholder="gratis en the-odds-api.com" autocomplete="off">
     </div>
-    <div id="form-login">
-      <div class="slbl">Usuario</div>
-      <input type="text" class="sinp" id="login-user" placeholder="tu usuario" autocomplete="username" style="margin-bottom:.75rem">
-      <div class="slbl">Contraseña</div>
-      <input type="password" class="sinp" id="login-pass" placeholder="••••••••" autocomplete="current-password" style="margin-bottom:1rem">
-      <div id="login-err" style="display:none;color:var(--red);font-size:12px;margin-bottom:.75rem;padding:.5rem .75rem;background:var(--rbg);border-radius:var(--rs)"></div>
-      <button class="sbtn" id="login-btn" onclick="doLogin()"><i class="ti ti-login"></i> Entrar</button>
-    </div>
-    <div id="form-register" style="display:none">
-      <div class="slbl">Nombre</div>
-      <input type="text" class="sinp" id="reg-name" placeholder="Ariel" style="margin-bottom:.75rem">
-      <div class="slbl">Usuario</div>
-      <input type="text" class="sinp" id="reg-user" placeholder="ariel930330" autocomplete="username" style="margin-bottom:.75rem">
-      <div class="slbl">Contraseña</div>
-      <input type="password" class="sinp" id="reg-pass" placeholder="mínimo 6 caracteres" autocomplete="new-password" style="margin-bottom:.75rem">
-      <div class="slbl">Gemini API Key <span style="font-weight:400;color:var(--text3)">(opcional)</span></div>
-      <input type="password" class="sinp" id="reg-gem" placeholder="AIza..." style="margin-bottom:.75rem">
-      <div class="slbl">The Odds API Key <span style="font-weight:400;color:var(--text3)">(opcional)</span></div>
-      <input type="password" class="sinp" id="reg-odds" placeholder="gratis en the-odds-api.com" style="margin-bottom:1rem">
-      <div id="reg-err" style="display:none;color:var(--red);font-size:12px;margin-bottom:.75rem;padding:.5rem .75rem;background:var(--rbg);border-radius:var(--rs)"></div>
-      <button class="sbtn" id="reg-btn" onclick="doRegister()"><i class="ti ti-user-plus"></i> Crear cuenta</button>
-    </div>
+    <details style="margin-top:.85rem;font-size:11px;color:var(--text2)">
+      <summary style="cursor:pointer;font-weight:600;color:var(--text)">📋 Cómo configurar Google Sheets (5 min, solo una vez)</summary>
+      <ol style="padding:.75rem 1rem;line-height:2.2;background:var(--bg3);border-radius:var(--rs);margin-top:.5rem">
+        <li>Ve a <a href="https://script.google.com" target="_blank" style="color:var(--blue);font-weight:600">script.google.com</a> con tu cuenta de Google</li>
+        <li>Clic en <strong>Nuevo proyecto</strong></li>
+        <li>Borra el código y pega el contenido de <code>google-apps-script.js</code></li>
+        <li>Clic en <strong>Implementar → Nueva implementación</strong></li>
+        <li>Tipo: <strong>Aplicación web</strong> → Ejecutar como: <strong>Yo</strong> → Acceso: <strong>Cualquier persona</strong></li>
+        <li>Clic en <strong>Implementar</strong> → autoriza los permisos → copia la URL</li>
+        <li>Pega esa URL en el campo de arriba → ¡Listo!</li>
+      </ol>
+    </details>
+    <button class="sbtn" onclick="startApp()"><i class="ti ti-trophy"></i>Entrar a MLB Picks Pro</button>
     <div id="setup-err" style="display:none"></div>
+  </div>
+</div>
   </div>
 </div>
     <details style="margin-top:.85rem;font-size:11px;color:var(--text2)">
@@ -246,8 +246,7 @@ input[type=range]{width:100%;accent-color:var(--gold)}
     <div class="hr2">
       <span class="hdate" id="hdr-date">—</span>
       <span id="cloud-status" style="font-size:10px;padding:2px 8px;border-radius:4px;background:var(--bg3);color:var(--text3)"><i class="ti ti-cloud-off" style="font-size:10px"></i> Local</span>
-      <span id="hdr-user" style="font-size:11px;color:var(--text2);margin-right:6px;font-weight:600"></span>
-      <button class="hkbtn" onclick="doLogout()" title="Cerrar sesión"><i class="ti ti-logout" style="font-size:11px"></i></button>
+      <button class="hkbtn" onclick="changeKey()"><i class="ti ti-key" style="font-size:11px"></i></button>
     </div>
   </div>
 
@@ -1146,127 +1145,61 @@ function onDateChange(date) {
 }
 
 
-// ── Auth ──────────────────────────────────────────────────────────────────────
-function showAuthTab(tab) {
-  const isLogin = tab === 'login';
-  document.getElementById('form-login').style.display    = isLogin ? 'block' : 'none';
-  document.getElementById('form-register').style.display = isLogin ? 'none' : 'block';
-  document.getElementById('tab-login').style.cssText    = `flex:1;padding:8px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;border:none;background:${isLogin?'var(--gold)':'var(--bg3)'};color:${isLogin?'#fff':'var(--text2)'}`;
-  document.getElementById('tab-register').style.cssText = `flex:1;padding:8px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;border:none;background:${isLogin?'var(--bg3)':'var(--gold)'};color:${isLogin?'var(--text2)':'#fff'}`;
-}
 
-async function doLogin() {
-  const gasUrl = (document.getElementById('gas-url-input')?.value||'').trim();
-  const user   = (document.getElementById('login-user')?.value||'').trim();
-  const pass   = document.getElementById('login-pass')?.value||'';
-  const errEl  = document.getElementById('login-err');
-  const btn    = document.getElementById('login-btn');
-  if (errEl) errEl.style.display = 'none';
-  if (!gasUrl) { if(errEl){errEl.textContent='Ingresa la URL de Google Apps Script';errEl.style.display='block';} return; }
-  if (!user||!pass) { if(errEl){errEl.textContent='Ingresa usuario y contraseña';errEl.style.display='block';} return; }
-  if (btn) { btn.disabled=true; btn.innerHTML='<i class="ti ti-loader-2" style="animation:spin .7s linear infinite"></i> Entrando...'; }
+function startApp(){
   try {
-    localStorage.setItem('gas-url', gasUrl);
-    const qs  = new URLSearchParams({ action:'login', username:user, password:pass });
-    const res = await fetch(`${gasUrl}?${qs}`);
-    const d   = await res.json();
-    if (!d.ok) {
-      if(errEl){errEl.textContent=d.error||'Error al iniciar sesión';errEl.style.display='block';}
-      if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-login"></i> Entrar';}
-      return;
-    }
-    localStorage.setItem('mlbpro-session', d.sessionId);
-    localStorage.setItem('mlbpro-username', d.username);
-    localStorage.setItem('mlbpro-display', d.displayName);
-    if (d.geminiKey) { localStorage.setItem('mlbpro-gemini', d.geminiKey); API_KEY=d.geminiKey; }
-    if (d.oddsKey)   localStorage.setItem('odds-key', d.oddsKey);
-    launchApp();
-  } catch(e) {
-    if(errEl){errEl.textContent='Error de conexión. Verifica la URL del Apps Script.';errEl.style.display='block';}
-    if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-login"></i> Entrar';}
+    const k = (document.getElementById('api-key-input')?.value||'').trim();
+    const gasUrl  = (document.getElementById('gas-url-input')?.value||'').trim();
+    const oddsKey = (document.getElementById('odds-key-input')?.value||'').trim();
+    if(k)       { API_KEY=k; localStorage.setItem('mlbpro-gemini',k); }
+    if(gasUrl)  localStorage.setItem('gas-url', gasUrl);
+    if(oddsKey) localStorage.setItem('odds-key', oddsKey);
+    document.getElementById('setup').style.display='none';
+    document.getElementById('app').style.display='block';
+    const t=new Date();
+    const dp=document.getElementById('date-pick');
+    const hd=document.getElementById('hdr-date');
+    if(dp) dp.value=t.toISOString().slice(0,10);
+    if(hd) hd.textContent=t.toLocaleDateString('es-MX',{weekday:'short',month:'short',day:'numeric'});
+    try{loadWeights();}catch(e){}
+    try{loadHistory();}catch(e){}
+    try{restorePicksFromCache();}catch(e){}
+    setTimeout(()=>{try{initDB();}catch(e){}},300);
+  } catch(err) {
+    document.getElementById('setup').style.display='none';
+    document.getElementById('app').style.display='block';
   }
 }
 
-async function doRegister() {
-  const gasUrl = (document.getElementById('gas-url-input')?.value||'').trim();
-  const name   = (document.getElementById('reg-name')?.value||'').trim();
-  const user   = (document.getElementById('reg-user')?.value||'').trim();
-  const pass   = document.getElementById('reg-pass')?.value||'';
-  const gem    = (document.getElementById('reg-gem')?.value||'').trim();
-  const odds   = (document.getElementById('reg-odds')?.value||'').trim();
-  const errEl  = document.getElementById('reg-err');
-  const btn    = document.getElementById('reg-btn');
-  if(errEl) errEl.style.display='none';
-  if (!gasUrl) { if(errEl){errEl.textContent='Ingresa la URL del Apps Script';errEl.style.display='block';} return; }
-  if (!user||!pass) { if(errEl){errEl.textContent='Usuario y contraseña requeridos';errEl.style.display='block';} return; }
-  if (pass.length<6) { if(errEl){errEl.textContent='Contraseña de al menos 6 caracteres';errEl.style.display='block';} return; }
-  if(btn){btn.disabled=true;btn.innerHTML='<i class="ti ti-loader-2" style="animation:spin .7s linear infinite"></i> Creando...';}
-  try {
-    localStorage.setItem('gas-url', gasUrl);
-    const res = await fetch(gasUrl, { method:'POST', body:JSON.stringify({ action:'register', username:user, password:pass, displayName:name||user }) });
-    const d = await res.json();
-    if (!d.ok) {
-      if(errEl){errEl.textContent=d.error||'Error al crear cuenta';errEl.style.display='block';}
-      if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-user-plus"></i> Crear cuenta';}
-      return;
-    }
-    if (gem||odds) {
-      await fetch(gasUrl,{method:'POST',body:JSON.stringify({action:'saveKeys',sessionId:d.sessionId,geminiKey:gem,gasUrl:'',oddsKey:odds})});
-    }
-    localStorage.setItem('mlbpro-session', d.sessionId);
-    localStorage.setItem('mlbpro-username', d.username);
-    localStorage.setItem('mlbpro-display', d.displayName);
-    if(gem){localStorage.setItem('mlbpro-gemini',gem);API_KEY=gem;}
-    if(odds)localStorage.setItem('odds-key',odds);
-    launchApp();
-  } catch(e) {
-    if(errEl){errEl.textContent='Error de conexión.';errEl.style.display='block';}
-    if(btn){btn.disabled=false;btn.innerHTML='<i class="ti ti-user-plus"></i> Crear cuenta';}
-  }
-}
-
-function doLogout() {
-  if(!confirm('¿Cerrar sesión?')) return;
-  localStorage.removeItem('mlbpro-session');
-  localStorage.removeItem('mlbpro-username');
-  localStorage.removeItem('mlbpro-display');
-  document.getElementById('app').style.display='none';
-  document.getElementById('setup').style.display='flex';
-}
-
-function launchApp() {
-  document.getElementById('setup').style.display='none';
-  document.getElementById('app').style.display='block';
-  const t=new Date();
-  const dp=document.getElementById('date-pick');
-  const hd=document.getElementById('hdr-date');
-  if(dp) dp.value=t.toISOString().slice(0,10);
-  if(hd) hd.textContent=t.toLocaleDateString('es-MX',{weekday:'short',month:'short',day:'numeric'});
-  const display=localStorage.getItem('mlbpro-display')||localStorage.getItem('mlbpro-username')||'';
-  const hdUser=document.getElementById('hdr-user');
-  if(hdUser&&display) hdUser.textContent=display;
-  try{loadWeights();}catch(e){}
-  try{loadHistory();}catch(e){}
-  try{restorePicksFromCache();}catch(e){}
-  setTimeout(()=>{try{initDB();}catch(e){}},300);
-}
-
-// Auto-login on load if session exists
-// Auto-login runs after full DOM + script initialization
+// Auto-login if already configured
 document.addEventListener('DOMContentLoaded', function(){
-  const savedGas = localStorage.getItem('gas-url');
-  const session  = localStorage.getItem('mlbpro-session');
-  const gemKey   = localStorage.getItem('mlbpro-gemini');
-  const gasEl    = document.getElementById('gas-url-input');
-  if(savedGas && gasEl) gasEl.value = savedGas;
-  if(session && savedGas){
-    if(gemKey){ API_KEY = gemKey; }
-    launchApp();
+  const savedGas  = localStorage.getItem('gas-url');
+  const savedGem  = localStorage.getItem('mlbpro-gemini');
+  const savedOdds = localStorage.getItem('odds-key');
+  const session   = localStorage.getItem('mlbpro-session');
+  const gasEl = document.getElementById('gas-url-input');
+  const gemEl = document.getElementById('api-key-input');
+  const oddsEl= document.getElementById('odds-key-input');
+  if(savedGas  && gasEl)  gasEl.value  = savedGas;
+  if(savedGem  && gemEl)  gemEl.value  = savedGem;
+  if(savedOdds && oddsEl) oddsEl.value = savedOdds;
+  if((savedGem || savedGas || session)) {
+    if(savedGem) API_KEY = savedGem;
+    document.getElementById('setup').style.display='none';
+    document.getElementById('app').style.display='block';
+    const t=new Date();
+    const dp=document.getElementById('date-pick');
+    const hd=document.getElementById('hdr-date');
+    if(dp) dp.value=t.toISOString().slice(0,10);
+    if(hd) hd.textContent=t.toLocaleDateString('es-MX',{weekday:'short',month:'short',day:'numeric'});
+    try{loadWeights();}catch(e){}
+    try{loadHistory();}catch(e){}
+    try{restorePicksFromCache();}catch(e){}
+    setTimeout(()=>{try{initDB();}catch(e){}},300);
   }
 });
 
-// Keep startApp as alias for backward compat
-function startApp(){ launchApp(); }
+function launchApp(){ startApp(); }
 
 
 function onDateChange(date) {

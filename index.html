@@ -218,23 +218,6 @@ input[type=range]{width:100%;accent-color:var(--gold)}
     <div id="setup-err" style="display:none"></div>
   </div>
 </div>
-  </div>
-</div>
-    <details style="margin-top:.85rem;font-size:11px;color:var(--text2)">
-      <summary style="cursor:pointer;font-weight:600;color:var(--text)">📋 Cómo configurar Google Sheets (5 min, solo una vez)</summary>
-      <ol style="padding:.75rem 1rem;line-height:2.2;background:var(--bg3);border-radius:var(--rs);margin-top:.5rem">
-        <li>Ve a <a href="https://script.google.com" target="_blank" style="color:var(--blue);font-weight:600">script.google.com</a> con tu cuenta de Google</li>
-        <li>Clic en <strong>Nuevo proyecto</strong></li>
-        <li>Borra el código y pega el contenido de <code>google-apps-script.js</code></li>
-        <li>Clic en <strong>Implementar → Nueva implementación</strong></li>
-        <li>Tipo: <strong>Aplicación web</strong> → Ejecutar como: <strong>Yo</strong> → Acceso: <strong>Cualquier persona</strong></li>
-        <li>Clic en <strong>Implementar</strong> → autoriza los permisos → copia la URL</li>
-        <li>Pega esa URL en el campo de arriba → ¡Listo!</li>
-      </ol>
-    </details>
-    <button class="sbtn" onclick="launchApp()"><i class="ti ti-trophy"></i>Entrar a MLB Picks Pro</button>
-  </div>
-</div>
 
 <!-- App -->
 <div id="app">
@@ -1202,66 +1185,9 @@ document.addEventListener('DOMContentLoaded', function(){
 function launchApp(){ startApp(); }
 
 
-function onDateChange(date) {
-  // When user changes the date, check if we have cached picks for that date
-  const cached = JSON.parse(localStorage.getItem('mlbpro-' + date) || '[]');
-  if (cached.length) {
-    // Show cached picks instantly
-    const games = cached.map(c => ({
-      away: c.away, home: c.home,
-      awayWP: c.awayWP || (c.fav === c.away ? c.favP : 1 - c.favP) || 0.5,
-      homeWP: c.homeWP || (c.fav === c.home ? c.favP : 1 - c.favP) || 0.5,
-      awayML: c.awayML || '—', homeML: c.homeML || '—',
-      venue: c.venue || '', time: '—',
-      picks: c.allPicks || (c.topPick ? [{cat:'Mejor pick',main:c.topPick,prob:c.topPickProb||0.55,edge:0,conf:c.conf||'Medium',sub:''}] : []),
-      allPicks: c.allPicks || [],
-      weather: {tf:'—',cond:'',wm:0,wd:'',wn:'—'}, pf:'—',
-      gameStarted: false, isLocked: true, savedAt: c.savedAt || '',
-    }));
-    const sr = document.getElementById('srow');
-    if (sr) sr.style.display = 'grid';
-    setText('sm-g', cached.length);
-    setText('sm-h', cached.filter(c => c.conf === 'High').length);
-    setText('sm-m', cached.filter(c => c.conf === 'Medium').length);
-    setText('sm-ov', '—');
-    setText('sm-p', '—');
-    renderPicksFromCache(games, date);
-    restoreExtraTabs(date);
-  } else {
-    // No cache for this date — clear display and prompt to analyze
-    const _pa = document.getElementById('picks-area');
-    if (_pa) _pa.innerHTML = '<div class="ebox"><i class="ti ti-search" style="font-size:32px;opacity:.2;display:block;margin:0 auto 10px"></i>No hay picks guardados para esta fecha.<br>Presiona <strong>Analizar partidos</strong> para generar predicciones.</div>';
-    const sr = document.getElementById('srow');
-    if (sr) sr.style.display = 'none';
-  }
-}
 
 
-function startApp(){
-  try {
-    var k       = (document.getElementById('api-key-input')?.value||'').trim();
-    var gasUrl  = (document.getElementById('gas-url-input')?.value||'').trim();
-    var oddsKey = (document.getElementById('odds-key-input')?.value||'').trim();
-    if(k)       { API_KEY=k; localStorage.setItem('mlbpro-gemini',k); }
-    if(gasUrl)  { localStorage.setItem('gas-url',gasUrl); }
-    if(oddsKey) { localStorage.setItem('odds-key',oddsKey); }
-    document.getElementById('setup').style.display='none';
-    document.getElementById('app').style.display='block';
-    var t=new Date();
-    var dp=document.getElementById('date-pick');
-    var hd=document.getElementById('hdr-date');
-    if(dp) dp.value=t.toISOString().slice(0,10);
-    if(hd) hd.textContent=t.toLocaleDateString('es-MX',{weekday:'short',month:'short',day:'numeric'});
-    try{loadWeights();}catch(e){}
-    try{loadHistory();}catch(e){}
-    try{restorePicksFromCache();}catch(e){console.warn('restore cache:',e);}
-    setTimeout(function(){try{initDB();}catch(e){console.warn('initDB:',e);}},300);
-  } catch(err) {
-    console.error('startApp:',err);
-    document.getElementById('setup').style.display='none';
-    document.getElementById('app').style.display='block';
-  }
-}
+
 document.getElementById('api-key-input').addEventListener('keydown',e=>{if(e.key==='Enter')startApp();});
 function changeKey(){document.getElementById('setup').style.display='flex';document.getElementById('app').style.display='none';}
 function switchTab(i){document.querySelectorAll('.tab').forEach((t,j)=>t.classList.toggle('active',j===i));document.querySelectorAll('.nb').forEach((b,j)=>b.classList.toggle('active',j===i));}

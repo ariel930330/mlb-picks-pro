@@ -407,17 +407,23 @@ let MODEL_WEIGHTS = {...DEFAULT_WEIGHTS};
 let trainIter = 0;
 const LR = 0.01; // learning rate
 
-function loadWeights() {
+async function loadWeights() {
+  // Load weights from Google Sheets
   try {
-    const saved = JSON.parse(localStorage.getItem('mlbpro-weights') || 'null');
-    if (saved && saved.w_hp !== undefined) { MODEL_WEIGHTS = saved; }
-    trainIter = parseInt(localStorage.getItem('mlbpro-train-iter') || '0');
-  } catch {}
+    const sid = getSessionId();
+    if (!sid) return;
+    const res = await cloudGet('getWeights', { session: sid });
+    if (res?.weights?.w_hp !== undefined) {
+      MODEL_WEIGHTS = res.weights;
+      trainIter = res.iter || 0;
+    }
+  } catch(e) { console.warn('loadWeights error:', e); }
 }
 
 function saveWeights() {
-  localStorage.setItem('mlbpro-weights', JSON.stringify(MODEL_WEIGHTS));
-  localStorage.setItem('mlbpro-train-iter', String(trainIter));
+  // Save weights to Google Sheets only
+  const sid = getSessionId();
+  if (sid) cloudSave('saveWeights', { sessionId: sid, weights: MODEL_WEIGHTS, iter: trainIter });
 }
 
 function resetWeights() {
@@ -459,19 +465,8 @@ function computeLogit(f) {
 }
 
 function trainFromHistory() {
-  const idx = JSON.parse(localStorage.getItem('mlbpro-idx') || '[]');
-  let totalLoss = 0, count = 0;
-  idx.forEach(d => {
-    const rows = JSON.parse(localStorage.getItem('mlbpro-' + d) || 'null');
-    if (!rows) return;
-    rows.forEach(r => {
-      if (!r.result || !r.features) return;
-      const actual = r.fav === r.home ? (r.result === 'win' ? 1 : 0) : (r.result === 'win' ? 0 : 1);
-      const loss = trainOnResult(r.features, actual);
-      totalLoss += loss; count++;
-    });
-  });
-  return count > 0 ? -(totalLoss / count) : null;
+  // Training happens via SGD on each markResult — no localStorage batch needed
+  return null;
 }
 
 function computeGame(g,apSt,hpSt,aSt,hSt,aR,hR,wx,stad,injuries,matchups,confirmedLineup,aBullpen,hBullpen,apRest,hpRest,aSplits,hSplits,apHand,hpHand) {
@@ -883,43 +878,10 @@ const normCDF=x=>{const t=1/(1+.3275911*Math.abs(x));const y=1-((.254829592+t*(-
 // ── Setup ─────────────────────────────────────────────────────────────────────
 // ── Restore cached picks on startup ──────────────────────────────────────────
 function restorePicksFromCache() {
-  const date = new Date().toISOString().slice(0, 10);
-  const cached = JSON.parse(localStorage.getItem('mlbpro-' + date) || '[]');
-  if (!cached.length) return; // nothing saved for today
-
-  // Reconstruct game objects from cached data to render
-  const games = cached.map(c => ({
-    away:      c.away,       home:      c.home,
-    awayWP:    c.awayWP || c.favP || 0.5,
-    homeWP:    c.homeWP || (1 - (c.favP || 0.5)),
-    awayML:    c.awayML || '—', homeML: c.homeML || '—',
-    venue:     c.venue || '',   time:   '—',
-    picks:     c.allPicks || (c.topPick ? [{cat:'Mejor pick',main:c.topPick,prob:c.topPickProb||0.55,edge:0,conf:c.conf||'Medium',sub:''}] : []),
-    allPicks:  c.allPicks || [],
-    weather:   { tf: '—', cond: '', wm: 0, wd: '', wn: '—' },
-    pf:        '—',
-    gameStarted: false,
-    isLocked:  c.locked || true,
-    savedAt:   c.savedAt || '',
-  }));
-
-  // Show stats bar
-  const highCount = cached.filter(c => c.conf === 'High').length;
-  const medCount  = cached.filter(c => c.conf === 'Medium').length;
-  const sr = document.getElementById('srow');
-  if (sr) sr.style.display = 'grid';
-  setText('sm-g',  cached.length);
-  setText('sm-h',  highCount);
-  setText('sm-m',  medCount);
-  setText('sm-ov', '—');
-  setText('sm-p',  '—');
-
-  // Render picks from cache
-  renderPicksFromCache(games, date);
-
-  // Restore other tabs from cache
-  restoreExtraTabs(date);
+  // Now loads from cloud via loadFromCloudFirst
+  loadFromCloudFirst();
 }
+
 
 function renderPicksFromCache(games, date) {
   const _pa = document.getElementById('picks-area');
@@ -1119,14 +1081,142 @@ function onDateChange(date) {
     renderPicksFromCache(games, date);
     restoreExtraTabs(date);
   } else {
-    // No cache for this date — clear display and prompt to analyze
+    // No local cache — try fetching from cloud for this date
     const _pa = document.getElementById('picks-area');
-    if (_pa) _pa.innerHTML = '<div class="ebox"><i class="ti ti-search" style="font-size:32px;opacity:.2;display:block;margin:0 auto 10px"></i>No hay picks guardados para esta fecha.<br>Presiona <strong>Analizar partidos</strong> para generar predicciones.</div>';
-    const sr = document.getElementById('srow');
-    if (sr) sr.style.display = 'none';
+    if (_pa) _pa.innerHTML = '<div class="lbox"><div class="spin"></div><div>Buscando en la nube...</div></div>';
+    // Load from cloud for this specific date
+    if (_pa) _pa.innerHTML = '<div class="lbox"><div class="spin"></div><div>Buscando picks del '+date+'...</div></div>';
+    cloudGet('getPredictions', { session: getSessionId() }).then(res => {
+      const dateRows = (res?.rows||[]).filter(r => String(r.game_date).slice(0,10) === date);
+      if (dateRows.length) {
+        const games = dateRows.map(r => ({
+          away: r.away, home: r.home,
+          awayWP: r.away_wp||0.5, homeWP: r.home_wp||0.5,
+          awayML: r.away_ml||'—', homeML: r.home_ml||'—',
+          venue: r.venue||'', time: '—',
+          picks: (() => { try { return JSON.parse(r.all_picks_json||'[]'); } catch { return r.top_pick_main?[{cat:'',main:r.top_pick_main,prob:r.top_pick_prob||0.55,edge:0,conf:r.confidence||'Medium',sub:''}]:[]; }})(),
+          allPicks:[], weather:{tf:'—',cond:'',wm:0,wd:'',wn:'—'}, pf:'—',
+          gameStarted:false, isLocked:true,
+        }));
+        const sr = document.getElementById('srow');
+        if (sr) sr.style.display = 'grid';
+        setText('sm-g', dateRows.length);
+        setText('sm-h', dateRows.filter(r=>r.confidence==='High').length);
+        setText('sm-m', dateRows.filter(r=>r.confidence==='Medium').length);
+        setText('sm-ov','—'); setText('sm-p','—');
+        renderPicksFromCache(games, date);
+      } else {
+        if (_pa) _pa.innerHTML = '<div class="ebox"><i class="ti ti-search" style="font-size:32px;opacity:.2;display:block;margin:0 auto 10px"></i>No hay picks guardados para esta fecha.<br>Presiona <strong>Analizar partidos</strong> para generar predicciones.</div>';
+        const sr = document.getElementById('srow');
+        if (sr) sr.style.display = 'none';
+      }
+    }).catch(() => {
+      if (_pa) _pa.innerHTML = '<div class="ebox">No hay picks para esta fecha.</div>';
+    });
   }
 }
 
+
+
+// ── Cloud-first loader: always fetches from Google Sheets on startup ──────────
+async function loadFromCloudFirst() {
+  const gasUrl = getGasUrl();
+  const badge  = document.getElementById('cloud-status');
+
+  if (badge) {
+    badge.innerHTML = '<i class="ti ti-loader-2" style="font-size:10px;animation:spin .7s linear infinite"></i> Cargando...';
+    badge.style.background = 'var(--bg3)';
+    badge.style.color = 'var(--text2)';
+  }
+
+  const _pa = document.getElementById('picks-area');
+  if (_pa) _pa.innerHTML = '<div class="lbox"><div class="spin"></div><div>Cargando desde Google Sheets...</div><p>Todos tus datos vienen de la nube</p></div>';
+
+  if (gasUrl) {
+    try {
+      // 1. Get or create session + load keys from GAS
+      const session = localStorage.getItem('gas-session') || '';
+      if (session) {
+        // Restore keys from GAS
+        const userRes = await cloudGet('getUser', { session });
+        if (userRes?.ok) {
+          if (userRes.geminiKey) { API_KEY = userRes.geminiKey; }
+          if (userRes.oddsKey)   localStorage.setItem('_tmp_odds', userRes.oddsKey);
+        }
+      }
+
+      // 2. Load model weights from GAS
+      await loadWeights();
+
+      // 3. Sync all predictions from GAS
+
+      // 2. Update cloud badge
+      if (badge) {
+        badge.innerHTML = '<i class="ti ti-cloud" style="font-size:10px"></i> Google Sheets ✓';
+        badge.style.background = 'var(--gbg)';
+        badge.style.color = 'var(--gtx)';
+      }
+    } catch(e) {
+      console.warn('Cloud sync failed:', e);
+      if (badge) {
+        badge.innerHTML = '<i class="ti ti-cloud-off" style="font-size:10px"></i> Sin conexión';
+        badge.style.background = 'var(--rbg)';
+        badge.style.color = 'var(--rtx)';
+      }
+    }
+  } else {
+    if (badge) {
+      badge.innerHTML = '<i class="ti ti-database-off" style="font-size:10px"></i> Solo local';
+      badge.style.background = 'var(--bg3)';
+      badge.style.color = 'var(--text2)';
+    }
+  }
+
+  // 3. Initialize Supabase if configured
+  try { initDB(); } catch(e) {}
+
+  // 4. Load history and picks from whatever we have (cloud or local)
+  try { loadHistory(); } catch(e) {}
+
+  // 5. Load today's picks from cloud
+  const today = new Date().toISOString().slice(0,10);
+  try {
+    const sid = getSessionId();
+    const res = await cloudGet('getPredictions', { session: sid });
+    const todayRows = (res?.rows || []).filter(r => String(r.game_date).slice(0,10) === today);
+    if (todayRows.length) {
+      const games = todayRows.map(r => ({
+        away:    r.away,   home:    r.home,
+        awayWP:  r.away_wp || 0.5,
+        homeWP:  r.home_wp || 0.5,
+        awayML:  r.away_ml || '—',
+        homeML:  r.home_ml || '—',
+        venue:   r.venue  || '',
+        time:    '—',
+        picks:   (() => { try { return JSON.parse(r.all_picks_json||'[]'); } catch { return r.top_pick_main ? [{cat:'',main:r.top_pick_main,prob:r.top_pick_prob||0.55,edge:0,conf:r.confidence||'Medium',sub:''}] : []; }})(),
+        allPicks:[],
+        weather: {tf:'—',cond:'',wm:0,wd:'',wn:'—'},
+        pf:      '—',
+        gameStarted: false,
+        isLocked:    true,
+        savedAt:     r.created_at || '',
+      }));
+      // Show stats
+      const _sr2 = document.getElementById('srow');
+      if (_sr2) _sr2.style.display = 'grid';
+      setText('sm-g', todayRows.length);
+      setText('sm-h', todayRows.filter(r => r.confidence === 'High').length);
+      setText('sm-m', todayRows.filter(r => r.confidence === 'Medium').length);
+      setText('sm-ov', '—');
+      setText('sm-p',  '—');
+      renderPicksFromCache(games, today);
+    } else {
+      if (_pa) _pa.innerHTML = '<div class="ebox"><i class="ti ti-trophy" style="font-size:36px;opacity:.15;display:block;margin:0 auto 10px"></i>Selecciona fecha y presiona <strong>Analizar partidos</strong></div>';
+    }
+  } catch(e) {
+    if (_pa) _pa.innerHTML = '<div class="ebox"><i class="ti ti-trophy" style="font-size:36px;opacity:.15;display:block;margin:0 auto 10px"></i>Selecciona fecha y presiona <strong>Analizar partidos</strong></div>';
+  }
+}
 
 
 function startApp(){
@@ -1134,20 +1224,29 @@ function startApp(){
     const k = (document.getElementById('api-key-input')?.value||'').trim();
     const gasUrl  = (document.getElementById('gas-url-input')?.value||'').trim();
     const oddsKey = (document.getElementById('odds-key-input')?.value||'').trim();
-    if(k)       { API_KEY=k; localStorage.setItem('mlbpro-gemini',k); }
-    if(gasUrl)  localStorage.setItem('gas-url', gasUrl);
-    if(oddsKey) localStorage.setItem('odds-key', oddsKey);
-    document.getElementById('setup').style.display='none';
-    document.getElementById('app').style.display='block';
-    const t=new Date();
-    const dp=document.getElementById('date-pick');
-    const hd=document.getElementById('hdr-date');
-    if(dp) dp.value=t.toISOString().slice(0,10);
-    if(hd) hd.textContent=t.toLocaleDateString('es-MX',{weekday:'short',month:'short',day:'numeric'});
-    try{loadWeights();}catch(e){}
-    try{loadHistory();}catch(e){}
-    try{restorePicksFromCache();}catch(e){}
-    setTimeout(()=>{try{initDB();}catch(e){}},300);
+    if(k)      API_KEY = k;
+    if(gasUrl) localStorage.setItem('gas-url', gasUrl); // only url stays local
+
+    document.getElementById('setup').style.display = 'none';
+    document.getElementById('app').style.display   = 'block';
+    const t  = new Date();
+    const dp = document.getElementById('date-pick');
+    const hd = document.getElementById('hdr-date');
+    if(dp) dp.value = t.toISOString().slice(0,10);
+    if(hd) hd.textContent = t.toLocaleDateString('es-MX',{weekday:'short',month:'short',day:'numeric'});
+
+    // Register/login in GAS and save keys there
+    if(gasUrl) {
+      cloudSave('registerSession', {
+        geminiKey: k,
+        oddsKey: (document.getElementById('odds-key-input')?.value||'').trim(),
+      }).then(res => {
+        if(res?.sessionId) localStorage.setItem('gas-session', res.sessionId);
+        loadFromCloudFirst();
+      }).catch(() => loadFromCloudFirst());
+    } else {
+      loadFromCloudFirst();
+    }
   } catch(err) {
     document.getElementById('setup').style.display='none';
     document.getElementById('app').style.display='block';
@@ -1156,29 +1255,20 @@ function startApp(){
 
 // Auto-login if already configured
 document.addEventListener('DOMContentLoaded', function(){
-  const savedGas  = localStorage.getItem('gas-url');
-  const savedGem  = localStorage.getItem('mlbpro-gemini');
-  const savedOdds = localStorage.getItem('odds-key');
-  const session   = localStorage.getItem('mlbpro-session');
-  const gasEl = document.getElementById('gas-url-input');
-  const gemEl = document.getElementById('api-key-input');
-  const oddsEl= document.getElementById('odds-key-input');
-  if(savedGas  && gasEl)  gasEl.value  = savedGas;
-  if(savedGem  && gemEl)  gemEl.value  = savedGem;
-  if(savedOdds && oddsEl) oddsEl.value = savedOdds;
-  if((savedGem || savedGas || session)) {
-    if(savedGem) API_KEY = savedGem;
-    document.getElementById('setup').style.display='none';
-    document.getElementById('app').style.display='block';
-    const t=new Date();
-    const dp=document.getElementById('date-pick');
-    const hd=document.getElementById('hdr-date');
-    if(dp) dp.value=t.toISOString().slice(0,10);
-    if(hd) hd.textContent=t.toLocaleDateString('es-MX',{weekday:'short',month:'short',day:'numeric'});
-    try{loadWeights();}catch(e){}
-    try{loadHistory();}catch(e){}
-    try{restorePicksFromCache();}catch(e){}
-    setTimeout(()=>{try{initDB();}catch(e){}},300);
+  const savedGas = localStorage.getItem('gas-url');
+  const gasEl    = document.getElementById('gas-url-input');
+  if (savedGas && gasEl) gasEl.value = savedGas;
+
+  // If we have a GAS URL → auto-login and load everything from cloud
+  if (savedGas) {
+    document.getElementById('setup').style.display = 'none';
+    document.getElementById('app').style.display   = 'block';
+    const t  = new Date();
+    const dp = document.getElementById('date-pick');
+    const hd = document.getElementById('hdr-date');
+    if (dp) dp.value = t.toISOString().slice(0,10);
+    if (hd) hd.textContent = t.toLocaleDateString('es-MX',{weekday:'short',month:'short',day:'numeric'});
+    loadFromCloudFirst();
   }
 });
 
@@ -1525,7 +1615,7 @@ async function runAll(){
   try {
     const yr = new Date().getFullYear();
     loadWeights();
-    const oddsKey   = localStorage.getItem('odds-key') || '';
+    const oddsKey   = localStorage.getItem('_tmp_odds') || '';
     const [sched, oddsLines] = await Promise.all([getSched(date), getOddsLines(oddsKey, date)]);
     allOddsLines = oddsLines;
     const active = sched.filter(g => g.status?.abstractGameState !== 'Final');
@@ -1756,67 +1846,22 @@ async function cloudGet(action, params = {}) {
 }
 
 async function syncFromCloud() {
-  // Google Sheets = fuente de verdad
-  // localStorage = caché offline
-  const sid = getSessionId();
+  // Pull all data from Google Sheets — no localStorage involved
+  const sid    = getSessionId();
   const result = await cloudGet('getAll', { session: sid });
-  if (!result) return; // sin internet → usar caché local
+  if (!result) return;
 
-  if (result.predictions?.rows?.length) {
-    const byDate = {};
-    result.predictions.rows.forEach(r => {
-      const d = String(r.game_date).slice(0,10);
-      if (!byDate[d]) byDate[d] = [];
-      byDate[d].push(r);
-    });
-
-    const cloudDates = Object.keys(byDate);
-    // Rebuild index from cloud (source of truth)
-    localStorage.setItem('mlbpro-idx', JSON.stringify(cloudDates.sort().reverse()));
-
-    cloudDates.forEach(d => {
-      const local = JSON.parse(localStorage.getItem('mlbpro-' + d) || '[]');
-
-      const merged = byDate[d].map(cloudRow => {
-        const localRow = local.find(x => x.away === cloudRow.away && x.home === cloudRow.home);
-        return {
-          // Base: cloud data (source of truth for results and basic fields)
-          away:       cloudRow.away,
-          home:       cloudRow.home,
-          fav:        cloudRow.fav,
-          favP:       cloudRow.fav_prob,
-          conf:       cloudRow.confidence,
-          total:      cloudRow.predicted_total,
-          topPick:    cloudRow.top_pick_main,
-          session_id: cloudRow.session_id,
-          // Result: cloud wins (that's the whole point)
-          result:     cloudRow.result || null,
-          // Preserve local-only fields that cloud doesn't store
-          locked:     localRow?.locked     || false,
-          allPicks:   localRow?.allPicks   || [],
-          savedAt:    localRow?.savedAt    || cloudRow.created_at,
-          homeWP:     localRow?.homeWP     || 0,
-          awayWP:     localRow?.awayWP     || 0,
-          homeML:     localRow?.homeML     || '',
-          awayML:     localRow?.awayML     || '',
-          features:   localRow?.features   || null,
-        };
-      });
-
-      localStorage.setItem('mlbpro-' + d, JSON.stringify(merged));
-    });
-  }
-
-  // Model weights: take whichever has MORE training iterations
+  // Sync model weights if cloud has more iterations
   if (result.weights?.weights) {
     const cloudIter = result.weights.iter || 0;
     if (cloudIter >= trainIter) {
       MODEL_WEIGHTS = result.weights.weights;
-      trainIter = cloudIter;
-      saveWeights();
+      trainIter     = cloudIter;
+      saveWeights(); // only saves to localStorage for fast access next time
     }
   }
 }
+
 
 
 // ── Database layer ───────────────────────────────────────────────────────────
@@ -1826,31 +1871,17 @@ let calibChart = null, analCalibChart = null, analConfChart = null;
 
 // Get or create anonymous session ID
 function getSessionId() {
-  let sid = localStorage.getItem('mlbpro-session');
-  if (!sid) { sid = 'sess-' + Date.now() + '-' + Math.random().toString(36).slice(2,8); localStorage.setItem('mlbpro-session', sid); }
-  return sid;
+  // Session is stored in localStorage after fetching from Google Sheets
+  return localStorage.getItem('gas-session') || '';
 }
 
 function connectDB() {
-  const url = document.getElementById('sb-url').value.trim();
-  const key = document.getElementById('sb-key').value.trim();
-  if (!url || !key) { alert('Ingresa URL y Anon Key de Supabase'); return; }
-  try {
-    sbClient = supabase.createClient(url, key);
-    localStorage.setItem('sb-url', url);
-    localStorage.setItem('sb-key', key);
-    updateDBBadge(true);
-    loadHistory();
-    alert('✅ Conectado a Supabase correctamente');
-  } catch(e) { alert('Error conectando: ' + e.message); }
+  alert('Usando Google Sheets como base de datos. Supabase no es necesario.');
 }
 
 function disconnectDB() {
   sbClient = null;
-  localStorage.removeItem('sb-url');
-  localStorage.removeItem('sb-key');
   updateDBBadge(false);
-  loadHistory();
 }
 
 function updateDBBadge(connected) {
@@ -1861,8 +1892,8 @@ function updateDBBadge(connected) {
 }
 
 function initDB() {
-  const url = localStorage.getItem('sb-url');
-  const key = localStorage.getItem('sb-key');
+  const url = null; // Supabase disabled
+  const key = null; // Supabase disabled
   if (url && key) {
     const sbUrlEl = document.getElementById('sb-url');
     const sbKeyEl = document.getElementById('sb-key');
@@ -1883,14 +1914,9 @@ function initDB() {
 }
 
 async function clearAllHistory() {
-  if (!confirm('¿Borrar TODO el historial? Esto elimina datos locales y de Google Sheets. No se puede deshacer.')) return;
-  // Clear localStorage
-  const idx = JSON.parse(localStorage.getItem('mlbpro-idx') || '[]');
-  idx.forEach(d => localStorage.removeItem('mlbpro-' + d));
-  localStorage.removeItem('mlbpro-idx');
-  // Clear Google Sheets via Apps Script
+  if (!confirm('¿Borrar TODO el historial en Google Sheets? No se puede deshacer.')) return;
   await cloudSave('clearHistory', { sessionId: getSessionId() });
-  loadHistory();
+  await loadHistory();
   alert('✅ Historial limpiado.');
 }
 
@@ -1904,106 +1930,57 @@ function setHistView(v) {
 // ── Save predictions ──────────────────────────────────────────────────────────
 async function saveHistory(date, games) {
   const sessionId = getSessionId();
-  // Always save to localStorage as backup
-  const key = 'mlbpro-' + date;
-  const ex = JSON.parse(localStorage.getItem(key) || 'null');
 
-  const summary = games.map(g => {
-    // Check if we already have a saved pick for this game
-    const saved = ex ? ex.find(x => x.away === g.away && x.home === g.home) : null;
+  // Get previously saved picks from cloud (for lock logic)
+  let existing = [];
+  try {
+    const prev = await cloudGet('getPredictions', { session: sessionId, date });
+    existing = (prev?.rows || []).filter(r => String(r.game_date).slice(0,10) === date);
+  } catch(e) {}
+
+  // Build rows — lock picks if already saved and game hasn't started
+  const cloudRows = games.map(g => {
+    const saved      = existing.find(r => r.away === g.away && r.home === g.home);
     const gameStarted = g.status === 'Live' || g.status === 'Final' || g.gameStarted;
+    if (saved && saved.locked && !gameStarted) return null; // skip — already locked
 
-    // If picks already exist AND game hasn't started → keep original picks (LOCKED)
-    if (saved && saved.locked && !gameStarted) {
-      return { ...saved }; // return the original pick unchanged
-    }
-
-    // Otherwise create/update the pick
     return {
-      id:           saved?.id || null,
-      away:         g.away,
-      home:         g.home,
-      fav:          g.homeWP >= g.awayWP ? g.home : g.away,
-      favP:         Math.max(g.homeWP, g.awayWP),
-      conf:         g.picks[0]?.conf || 'Low',
-      total:        g.total,
-      result:       saved?.result || null,       // preserve result if marked
-      topPick:      g.picks[0]?.main || '',
-      topPickProb:  g.picks[0]?.prob || 0,
-      allPicks:     g.picks.map(p => ({cat:p.cat,main:p.main,prob:p.prob,edge:p.edge,conf:p.conf})),
-      homeWP:       g.homeWP,
-      awayWP:       g.awayWP,
-      homeML:       g.homeML,
-      awayML:       g.awayML,
-      venue:        g.venue,
-      session_id:   sessionId,
-      locked:       true,          // lock these picks — won't be overwritten
-      savedAt:      saved?.savedAt || new Date().toISOString(),
+      session_id:      sessionId,
+      game_date:       date,
+      away:            g.away,       home:   g.home,    venue: g.venue || '',
+      fav:             g.homeWP >= g.awayWP ? g.home : g.away,
+      fav_prob:        +Math.max(g.homeWP, g.awayWP).toFixed(4),
+      confidence:      g.picks[0]?.conf || 'Low',
+      predicted_total: g.total || 0,
+      home_wp:         +g.homeWP.toFixed(4),
+      away_wp:         +g.awayWP.toFixed(4),
+      home_ml:         g.homeML || '',
+      away_ml:         g.awayML || '',
+      top_pick_cat:    g.picks[0]?.cat  || '',
+      top_pick_main:   g.picks[0]?.main || '',
+      top_pick_prob:   +(g.picks[0]?.prob  || 0).toFixed(4),
+      top_pick_edge:   +(g.picks[0]?.edge  || 0).toFixed(4),
+      all_picks_json:  JSON.stringify(g.picks.map(p => ({cat:p.cat,main:p.main,prob:p.prob,edge:p.edge,conf:p.conf}))),
+      home_wp_val:     +g.homeWP.toFixed(4),
+      away_wp_val:     +g.awayWP.toFixed(4),
+      locked:          true,
     };
-  });
-  // Also save pitchers and batters for tab restoration
-  const extraKey = 'mlbpro-extra-' + date;
+  }).filter(Boolean);
+
+  if (cloudRows.length) {
+    await cloudSave('savePredictions', { data: cloudRows });
+  }
+
+  // Also save extra tab data (pitchers/batters/parlays) to cloud
   const extraData = {
     pitchers: games.map(g => ({...g.pitchers, away_team: g.away, home_team: g.home, matchup: g.away+'@'+g.home, time: g.time, batters: g.batters})),
     batters:  games.map(g => ({ away: g.away, home: g.home, topBatters: g.topBatters, batters: g.batters, pitchers: g.pitchers, time: g.time })),
     parlays:  buildParlays(games).map(p => ({...p})),
     date,
   };
-  localStorage.setItem(extraKey, JSON.stringify(extraData));
-  localStorage.setItem(key, JSON.stringify(summary));
-  const idx = JSON.parse(localStorage.getItem('mlbpro-idx') || '[]');
-  if (!idx.includes(date)) { idx.unshift(date); localStorage.setItem('mlbpro-idx', JSON.stringify(idx.slice(0,90))); }
-
-  // Auto-sync to Google Sheets (fire and forget — no button needed)
-  const sid2 = getSessionId();
-  const cloudRows = games.map(g => ({
-    session_id:      sid2,
-    game_date:       date,
-    away:            g.away, home: g.home, venue: g.venue||'',
-    fav:             g.homeWP >= g.awayWP ? g.home : g.away,
-    fav_prob:        +Math.max(g.homeWP, g.awayWP).toFixed(4),
-    confidence:      g.picks[0]?.conf || 'Low',
-    predicted_total: g.total || 0,
-    home_wp:         +g.homeWP.toFixed(4), away_wp: +g.awayWP.toFixed(4),
-    home_ml:         g.homeML||'', away_ml: g.awayML||'',
-    top_pick_cat:    g.picks[0]?.cat||'', top_pick_main: g.picks[0]?.main||'',
-    top_pick_prob:   +(g.picks[0]?.prob||0).toFixed(4),
-    top_pick_edge:   +(g.picks[0]?.edge||0).toFixed(4),
-  }));
-  cloudSave('savePredictions', { data: cloudRows });
-
-  // Save to Supabase if connected
-  if (sbClient) {
-    try {
-      const rows = games.map(g => ({
-        session_id: sessionId,
-        game_date: date,
-        away: g.away, home: g.home,
-        venue: g.venue,
-        fav: g.homeWP >= g.awayWP ? g.home : g.away,
-        fav_prob: +Math.max(g.homeWP, g.awayWP).toFixed(4),
-        confidence: g.picks[0]?.conf || 'Low',
-        predicted_total: g.total,
-        home_wp: +g.homeWP.toFixed(4), away_wp: +g.awayWP.toFixed(4),
-        home_ml: g.homeML, away_ml: g.awayML,
-        top_pick_cat: g.picks[0]?.cat || '',
-        top_pick_main: g.picks[0]?.main || '',
-        top_pick_prob: +(g.picks[0]?.prob || 0).toFixed(4),
-        top_pick_edge: +(g.picks[0]?.edge || 0).toFixed(4),
-      }));
-      const { data, error } = await sbClient.from('predictions').insert(rows).select('id,away,home');
-      if (!error && data) {
-        // Update localStorage with Supabase IDs
-        const stored = JSON.parse(localStorage.getItem(key) || '[]');
-        data.forEach(row => {
-          const item = stored.find(s => s.away === row.away && s.home === row.home);
-          if (item) item.id = row.id;
-        });
-        localStorage.setItem(key, JSON.stringify(stored));
-      }
-    } catch(e) { console.warn('Supabase save error:', e); }
-  }
+  await cloudSave('saveExtra', { sessionId, date, data: JSON.stringify(extraData) });
 }
+
 
 // ── Mark result ───────────────────────────────────────────────────────────────
 function confirmMark(date, away, home, result, btn) {
@@ -2024,40 +2001,35 @@ function confirmMark(date, away, home, result, btn) {
 }
 
 async function markResult(date, away, home, result) {
-  // Update localStorage
-  const key = 'mlbpro-' + date;
-  const data = JSON.parse(localStorage.getItem(key) || 'null');
-  if (!data) return;
-  const g = data.find(x => x.away === away && x.home === home);
-  if (g) {
-    g.result = result; // null = unmark, 'win'/'loss' = mark
-    localStorage.setItem(key, JSON.stringify(data));
-    // Update Supabase if we have an ID
-    if (sbClient && g.id) {
-      await sbClient.from('predictions').update({ result }).eq('id', g.id).catch(()=>{});
-    }
-    // Auto-sync to Google Sheets
-    cloudSave('markResult', { sessionId: getSessionId(), gameDate: date, away, home, result: result === null ? '' : result });
-    // Only train if marking (not unmarking)
-    if (result && g.features) {
-      trainOnResult(g.features, g.fav === g.home ? (result==='win'?1:0) : (result==='win'?0:1));
-      cloudSave('saveWeights', { sessionId: getSessionId(), weights: MODEL_WEIGHTS, iter: trainIter });
-    }
+  // Save directly to Google Sheets — no localStorage
+  const sid = getSessionId();
+  await cloudSave('markResult', {
+    sessionId: sid,
+    gameDate:  date,
+    away,
+    home,
+    result: result === null ? '' : result
+  });
+  // Sync weights if marking a result
+  if (result) {
+    // Retrain on this result using current model weights
+    cloudSave('saveWeights', { sessionId: sid, weights: MODEL_WEIGHTS, iter: trainIter });
   }
-  loadHistory();
+  // Reload history from cloud
+  await loadHistory();
 }
 
 // ── Load history ──────────────────────────────────────────────────────────────
 async function loadHistory() {
+  // Always load from Google Sheets
   let rows = [];
-  if (sbClient && histView === 'all') {
-    // Load from Supabase (community view)
-    try {
+  const sid = getSessionId();
+
+  try {
+    if (sbClient && histView === 'all') {
       const { data, error } = await sbClient
-        .from('predictions')
-        .select('*')
-        .order('game_date', { ascending: false })
-        .limit(200);
+        .from('predictions').select('*')
+        .order('game_date', { ascending: false }).limit(200);
       if (!error && data) {
         rows = data.map(r => ({
           id: r.id, date: r.game_date,
@@ -2068,59 +2040,69 @@ async function loadHistory() {
           session_id: r.session_id
         }));
       }
-    } catch(e) { console.warn('Supabase load error:', e); }
-  } else {
-    // Load from localStorage (personal view)
-    const idx = JSON.parse(localStorage.getItem('mlbpro-idx') || '[]');
-    idx.forEach(d => {
-      const r = JSON.parse(localStorage.getItem('mlbpro-' + d) || 'null');
-      if (r) r.forEach(g => rows.push({...g, date: d}));
-    });
-  }
+    } else {
+      const res = await cloudGet('getPredictions', { session: sid });
+      if (res?.rows?.length) {
+        rows = res.rows.map(r => ({
+          date:    String(r.game_date).slice(0,10),
+          away:    r.away,    home:   r.home,
+          fav:     r.fav,     favP:   r.fav_prob,
+          conf:    r.confidence,
+          total:   r.predicted_total,
+          topPick: r.top_pick_main,
+          result:  r.result || null,
+          session_id: r.session_id
+        }));
+      }
+    }
+  } catch(e) { console.warn('loadHistory error:', e); }
 
-  const total = rows.length;
-  const graded = rows.filter(r => r.result != null).length;
-  const correct = rows.filter(r => r.result === 'win').length;
+  const total      = rows.length;
+  const graded     = rows.filter(r => r.result != null).length;
+  const correct    = rows.filter(r => r.result === 'win').length;
   const highGraded = rows.filter(r => r.result != null && r.conf === 'High');
-  const highCorrect = highGraded.filter(r => r.result === 'win').length;
-  const roi = graded > 0 ? (correct * 91 - (graded - correct) * 100) / graded : null;
+  const highCorrect= highGraded.filter(r => r.result === 'win').length;
+  const roi        = graded > 0 ? (correct*91 - (graded-correct)*100) / graded : null;
 
-  setText('h-total', total);
-  setText('h-graded', graded);
-  setText('h-acc', graded > 0 ? Math.round(correct / graded * 100) + '%' : '—');
-  setText('h-high-acc', highGraded.length > 0 ? Math.round(highCorrect / highGraded.length * 100) + '%' : '—');
-  setText('h-roi', roi != null ? (roi >= 0 ? '+' : '') + roi.toFixed(1) + '%' : '—');
+  setText('h-total',    total);
+  setText('h-graded',   graded);
+  setText('h-acc',      graded>0 ? Math.round(correct/graded*100)+'%' : '—');
+  setText('h-high-acc', highGraded.length>0 ? Math.round(highCorrect/highGraded.length*100)+'%' : '—');
+  setText('h-roi',      roi!=null ? (roi>=0?'+':'')+roi.toFixed(1)+'%' : '—');
   updateCalib(rows.filter(r => r.result != null));
 
   if (!rows.length) {
-    document.getElementById('hist-wrap').innerHTML = '<div class="ebox">No hay predicciones aún.<br><span style="font-size:11px">Corre el análisis y marca resultados con ✓ ✗</span></div>';
+    const hw = document.getElementById('hist-wrap');
+    if (hw) hw.innerHTML = '<div class="ebox">No hay predicciones aún.<br><span style="font-size:11px">Corre el análisis y marca resultados con ✓ ✗</span></div>';
     return;
   }
+
   const mySessionId = getSessionId();
   const cS = c => c==='High'?'background:var(--gbg);color:var(--gtx)':c==='Medium'?'background:var(--abg);color:var(--atx)':'background:var(--bg3);color:var(--text2)';
   const cL = c => c==='High'?'🟢 Alta':c==='Medium'?'🟡 Media':'🔴 Baja';
-  document.getElementById('hist-wrap').innerHTML = `
-    <div style="overflow-x:auto">
-    <table class="htb"><thead><tr>
-      <th>Fecha</th><th>Partido</th><th>Favorito</th><th>Prob</th><th>Conf</th><th>Total</th><th>Mejor Pick</th><th>Resultado</th>
-    </tr></thead><tbody>
-    ${rows.map(r => `<tr style="${r.session_id && r.session_id !== mySessionId ? 'opacity:.7' : ''}">
-      <td>${r.date}</td>
-      <td><strong>${r.away}</strong> @ <strong>${r.home}</strong></td>
-      <td>${r.fav}</td>
-      <td style="font-weight:700">${Math.round((r.favP||0)*100)}%</td>
-      <td><span style="font-size:10px;padding:2px 7px;border-radius:4px;font-weight:600;${cS(r.conf)}">${cL(r.conf)}</span></td>
-      <td>${r.total?.toFixed(1)||'—'}</td>
-      <td style="font-size:10px;color:var(--text2);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.topPick||'—'}</td>
-      <td>
-        ${(histView==='mine'||r.session_id===mySessionId)?`
-        <button class="rb ${r.result==='win'?'win':''}" onclick="confirmMark('${r.date}','${r.away}','${r.home}','win',this)">✓ Ganó</button>
-        <button class="rb ${r.result==='loss'?'loss':''}" onclick="confirmMark('${r.date}','${r.away}','${r.home}','loss',this)">✗ Perdió</button>
-        `:r.result?`<span style="font-size:11px;font-weight:700;color:${r.result==='win'?'var(--green)':'var(--red)'}">${r.result==='win'?'✓ Ganó':'✗ Perdió'}</span>`:'<span style="color:var(--text3);font-size:10px">— Sin marcar —</span>'}
-      </td>
-    </tr>`).join('')}
-    </tbody></table></div>`;
+  const hw2 = document.getElementById('hist-wrap');
+  if (!hw2) return;
+  hw2.innerHTML = `<div style="overflow-x:auto"><table class="htb"><thead><tr>
+    <th>Fecha</th><th>Partido</th><th>Favorito</th><th>Prob</th><th>Conf</th><th>Total</th><th>Mejor Pick</th><th>Resultado</th>
+  </tr></thead><tbody>
+  ${rows.map(r => `<tr style="${r.session_id && r.session_id !== mySessionId ? 'opacity:.7' : ''}">
+    <td>${r.date}</td>
+    <td><strong>${r.away}</strong> @ <strong>${r.home}</strong></td>
+    <td>${r.fav}</td>
+    <td style="font-weight:700">${Math.round((r.favP||0)*100)}%</td>
+    <td><span style="font-size:10px;padding:2px 7px;border-radius:4px;font-weight:600;${cS(r.conf)}">${cL(r.conf)}</span></td>
+    <td>${r.total?.toFixed?.(1)||'—'}</td>
+    <td style="font-size:10px;color:var(--text2);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.topPick||'—'}</td>
+    <td>
+      ${(histView==='mine'||r.session_id===mySessionId)?`
+      <button class="rb ${r.result==='win'?'win':''}" onclick="confirmMark('${r.date}','${r.away}','${r.home}','win',this)">✓ Ganó</button>
+      <button class="rb ${r.result==='loss'?'loss':''}" onclick="confirmMark('${r.date}','${r.away}','${r.home}','loss',this)">✗ Perdió</button>
+      `:r.result?`<span style="font-size:11px;font-weight:700;color:${r.result==='win'?'var(--green)':'var(--red)'}">${r.result==='win'?'✓ Ganó':'✗ Perdió'}</span>`:'<span style="color:var(--text3);font-size:10px">— Sin marcar —</span>'}
+    </td>
+  </tr>`).join('')}
+  </tbody></table></div>`;
 }
+
 
 // ── Analytics ─────────────────────────────────────────────────────────────────
 async function loadAnalytics() {
@@ -2131,12 +2113,7 @@ async function loadAnalytics() {
       if (data) rows = data.map(r => ({ conf: r.confidence, favP: r.fav_prob, result: r.result, date: r.game_date, total: r.predicted_total }));
     } catch(e) {}
   }
-  // Merge with localStorage
-  const idx = JSON.parse(localStorage.getItem('mlbpro-idx') || '[]');
-  idx.forEach(d => {
-    const r = JSON.parse(localStorage.getItem('mlbpro-' + d) || 'null');
-    if (r) r.forEach(g => { if (!rows.find(x => x.date === d && x.away === g.away)) rows.push({ conf: g.conf, favP: g.favP, result: g.result, date: d, total: g.total }); });
-  });
+  // All data comes from Google Sheets — no localStorage merge needed
 
   const graded = rows.filter(r => r.result != null);
   const wins = graded.filter(r => r.result === 'win').length;

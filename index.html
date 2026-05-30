@@ -408,22 +408,27 @@ let trainIter = 0;
 const LR = 0.01; // learning rate
 
 async function loadWeights() {
-  // Load weights from Google Sheets
   try {
+    const gasUrl = getGasUrl();
+    if (!gasUrl) return;
     const sid = getSessionId();
     if (!sid) return;
     const res = await cloudGet('getWeights', { session: sid });
     if (res?.weights?.w_hp !== undefined) {
-      MODEL_WEIGHTS = res.weights;
-      trainIter = res.iter || 0;
+      MODEL_WEIGHTS = { ...DEFAULT_WEIGHTS, ...res.weights };
+      trainIter = parseInt(res.iter) || 0;
+      console.log('✅ Weights loaded from cloud:', MODEL_WEIGHTS);
     }
   } catch(e) { console.warn('loadWeights error:', e); }
 }
 
 function saveWeights() {
-  // Save weights to Google Sheets only
   const sid = getSessionId();
-  if (sid) cloudSave('saveWeights', { sessionId: sid, weights: MODEL_WEIGHTS, iter: trainIter });
+  const gasUrl = getGasUrl();
+  if (sid && gasUrl) {
+    cloudSave('saveWeights', { sessionId: sid, weights: MODEL_WEIGHTS, iter: trainIter })
+      .catch(e => console.warn('saveWeights error:', e));
+  }
 }
 
 function resetWeights() {
@@ -1800,12 +1805,14 @@ function renderWeightSliders() {
     ['w_str', 'Racha (streak)',   0, 0.8],
     ['w_hfa', 'Ventaja de campo', 0, 0.5],
   ];
-  area.innerHTML = params.map(([key,label,min,max])=>`
-    <div class="slider-row">
-      <div class="slider-label"><span>${label}</span><span id="sw-${key}">${MODEL_WEIGHTS[key].toFixed(3)}</span></div>
-      <input type="range" min="${min}" max="${max}" step="0.01" value="${MODEL_WEIGHTS[key]}"
+  area.innerHTML = params.map(([key,label,min,max])=>{
+    const val = (MODEL_WEIGHTS[key] || 0).toFixed(3);
+    return `<div class="slider-row">
+      <div class="slider-label"><span>${label}</span><span id="sw-${key}">${val}</span></div>
+      <input type="range" min="${min}" max="${max}" step="0.01" value="${val}"
         oninput="MODEL_WEIGHTS['${key}']=parseFloat(this.value);MODEL_WEIGHTS['${key.replace('w_h','w_a')}']=-(parseFloat(this.value));setText('sw-${key}', parseFloat(this.value).toFixed(3));saveWeights();">
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 async function loadModelTab() {

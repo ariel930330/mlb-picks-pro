@@ -1832,26 +1832,26 @@ async function loadModelTab() {
 // ── Cloud Storage (Google Apps Script → Google Sheets) ───────────────────────
 function getGasUrl() { return localStorage.getItem('gas-url') || ''; }
 
-async function cloudSave(action, data) {
-  const url = getGasUrl();
-  if (!url) return null;  // silently skip if not configured
-  try {
-    const r = await fetch(url, {
-      method: 'POST',
-      body: JSON.stringify({ action, ...data }),
-    });
-    return r.ok ? await r.json() : null;
-  } catch(e) { console.warn('Cloud save error:', e); return null; }
-}
-
-async function cloudGet(action, params = {}) {
+async function cloudSave(action, data = {}) {
   const url = getGasUrl();
   if (!url) return null;
   try {
-    const qs = new URLSearchParams({ action, ...params }).toString();
-    const r = await fetch(`${url}?${qs}`);
-    return r.ok ? await r.json() : null;
-  } catch(e) { console.warn('Cloud load error:', e); return null; }
+    const r = await fetch(url, {
+      method: 'POST',
+      mode: 'cors',
+      headers: { 'Content-Type': 'text/plain' }, // text/plain avoids CORS preflight
+      body: JSON.stringify({ action, ...data }),
+      redirect: 'follow',
+    });
+    if (!r.ok) return null;
+    const text = await r.text();
+    try { return JSON.parse(text); } catch { return null; }
+  } catch(e) { console.warn('Cloud error:', e); return null; }
+}
+
+async function cloudGet(action, params = {}) {
+  // Use POST for all GAS calls to avoid CORS preflight issues
+  return cloudSave(action, params);
 }
 
 async function syncFromCloud() {

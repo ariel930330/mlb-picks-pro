@@ -1808,7 +1808,9 @@ function renderWeightSliders() {
     </div>`).join('');
 }
 
-function loadModelTab() {
+async function loadModelTab() {
+  // Load weights from cloud first, then render
+  await loadWeights();
   renderWeightsChart();
   renderWeightSliders();
   setText('m-iters', trainIter);

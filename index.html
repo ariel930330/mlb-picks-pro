@@ -2020,8 +2020,10 @@ function setHistView(v) {
 
 // ── Save predictions ──────────────────────────────────────────────────────────
 async function saveHistory(date, games) {
-  if (!SB_KEY) return;
   try {
+    const sb = getSB();
+    if (!sb) { console.warn('No Supabase client'); return; }
+
     for (const g of games) {
       const picks = g.picks || [];
       if (!picks.length) continue;
@@ -2048,20 +2050,23 @@ async function saveHistory(date, games) {
       };
 
       // Check if already exists
-      const existing = await sbGet('predictions',
-        `game_date=eq.${date}&away=eq.${g.away}&home=eq.${g.home}`);
+      const { data: existing } = await sb.from('predictions')
+        .select('id,result')
+        .eq('game_date', date)
+        .eq('away', g.away)
+        .eq('home', g.home);
 
       if (existing?.length) {
-        // Update only if no result marked yet
         if (!existing[0].result) {
-          await sbPatch('predictions', row,
-            `game_date=eq.${date}&away=eq.${g.away}&home=eq.${g.home}`);
+          await sb.from('predictions').update(row)
+            .eq('game_date', date).eq('away', g.away).eq('home', g.home);
         }
       } else {
-        await sbPost('predictions', row);
+        const { error } = await sb.from('predictions').insert(row);
+        if (error) console.warn('Insert error:', error.message, row.away, row.home);
       }
     }
-    // Reload history to show new picks
+    console.log(`✅ Saved ${games.length} games to Supabase`);
     loadHistory();
   } catch(e) { console.warn('saveHistory error:', e); }
 }
@@ -2076,9 +2081,12 @@ function confirmMark(date, away, home, result, btn) {
 }
 
 async function markResult(date, away, home, result) {
-  const sid = getSessionId();
-  await cloudSave('markResult', { sessionId: sid, gameDate: date, away, home, result: result||'' });
-  if (result) cloudSave('saveWeights', { sessionId: sid, weights: MODEL_WEIGHTS, iter: trainIter });
+  const sb = getSB();
+  if (sb) {
+    await sb.from('predictions').update({ result: result || null })
+      .eq('game_date', date).eq('away', away).eq('home', home);
+    if (result) cloudSave('saveWeights', { weights: MODEL_WEIGHTS, iter: trainIter });
+  }
   await loadHistory();
 }
 

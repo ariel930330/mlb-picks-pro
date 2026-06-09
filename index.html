@@ -1830,38 +1830,57 @@ async function loadModelTab() {
 // ── Cloud Storage (Google Apps Script → Google Sheets) ───────────────────────
 function getGasUrl() { return localStorage.getItem('gas-url') || ''; }
 
+// ── Cloud via JSONP (bypasses CORS completely) ────────────────────────────────
+function cloudGet(action, params = {}) {
+  // JSONP: injects a <script> tag — no CORS restrictions from any domain
+  return new Promise((resolve) => {
+    const url     = getGasUrl();
+    if (!url) { resolve(null); return; }
+    const cbName  = '_gcb_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
+    const timeout = setTimeout(() => {
+      delete window[cbName];
+      const el = document.getElementById(cbName);
+      if (el) el.remove();
+      console.warn('cloudGet timeout:', action);
+      resolve(null);
+    }, 15000);
+    window[cbName] = (data) => {
+      clearTimeout(timeout);
+      delete window[cbName];
+      const el = document.getElementById(cbName);
+      if (el) el.remove();
+      resolve(data);
+    };
+    const qs  = new URLSearchParams({ action, callback: cbName, ...params }).toString();
+    const tag = document.createElement('script');
+    tag.id  = cbName;
+    tag.src = `${url}?${qs}`;
+    tag.onerror = () => {
+      clearTimeout(timeout);
+      delete window[cbName];
+      tag.remove();
+      resolve(null);
+    };
+    document.head.appendChild(tag);
+  });
+}
+
 async function cloudSave(action, data = {}) {
-  // Fire-and-forget write — no-cors avoids ALL CORS issues for writes
   const url = getGasUrl();
   if (!url) return null;
+  // Read actions → JSONP GET
+  const readActions = ['getPredictions','getWeights','getAll','getUser','getExtra','login','ping'];
+  if (readActions.includes(action)) return cloudGet(action, data);
+  // Write actions → no-cors POST (fire & forget)
   try {
-    // For actions that need a response, use GET
-    const readActions = ['getPredictions','getWeights','getAll','getUser','getExtra','login'];
-    if (readActions.includes(action)) {
-      return cloudGet(action, data);
-    }
-    // Write actions: use no-cors POST (fire and forget)
     fetch(url, {
       method: 'POST',
       mode: 'no-cors',
       headers: { 'Content-Type': 'text/plain' },
       body: JSON.stringify({ action, ...data }),
     }).catch(()=>{});
-    return { ok: true };
-  } catch(e) { return null; }
-}
-
-async function cloudGet(action, params = {}) {
-  // GET requests to GAS work perfectly with CORS from any domain
-  const url = getGasUrl();
-  if (!url) return null;
-  try {
-    const qs = new URLSearchParams({ action, ...params }).toString();
-    const r  = await fetch(`${url}?${qs}`, { redirect: 'follow' });
-    if (!r.ok) return null;
-    const text = await r.text();
-    try { return JSON.parse(text); } catch { return null; }
-  } catch(e) { console.warn('cloudGet error:', e); return null; }
+  } catch(e) {}
+  return { ok: true };
 }
 
 async function cloudGet(action, params = {}) {

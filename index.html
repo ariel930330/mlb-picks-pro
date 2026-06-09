@@ -1091,7 +1091,7 @@ function onDateChange(date) {
     if (_pa) _pa.innerHTML = '<div class="lbox"><div class="spin"></div><div>Buscando en la nube...</div></div>';
     // Load from cloud for this specific date
     if (_pa) _pa.innerHTML = '<div class="lbox"><div class="spin"></div><div>Buscando picks del '+date+'...</div></div>';
-    cloudGet('getPredictions', { session: getSessionId() }).then(res => {
+    cloudSave('getPredictions', { session: getSessionId() }).then(res => {
       const dateRows = (res?.rows||[]).filter(r => String(r.game_date).slice(0,10) === date);
       if (dateRows.length) {
         const games = dateRows.map(r => ({
@@ -1127,100 +1127,92 @@ function onDateChange(date) {
 async function loadFromCloudFirst() {
   const gasUrl = getGasUrl();
   const badge  = document.getElementById('cloud-status');
+  const _pa    = document.getElementById('picks-area');
 
-  if (badge) {
-    badge.innerHTML = '<i class="ti ti-loader-2" style="font-size:10px;animation:spin .7s linear infinite"></i> Cargando...';
-    badge.style.background = 'var(--bg3)';
-    badge.style.color = 'var(--text2)';
+  if (!gasUrl) {
+    if (_pa) _pa.innerHTML = '<div class="ebox"><i class="ti ti-trophy" style="font-size:36px;opacity:.15;display:block;margin:0 auto 10px"></i>Selecciona fecha y presiona <strong>Analizar partidos</strong></div>';
+    return;
   }
 
-  const _pa = document.getElementById('picks-area');
-  if (_pa) _pa.innerHTML = '<div class="lbox"><div class="spin"></div><div>Cargando desde Google Sheets...</div><p>Todos tus datos vienen de la nube</p></div>';
+  // Show loading
+  if (badge) { badge.innerHTML = '<i class="ti ti-loader-2" style="font-size:10px;animation:spin .7s linear infinite"></i> Cargando...'; badge.style.background='var(--bg3)'; badge.style.color='var(--text2)'; }
+  if (_pa)   { _pa.innerHTML = '<div class="lbox"><div class="spin"></div><div>Conectando a Google Sheets...</div><p>Cargando tus picks y pesos del modelo</p></div>'; }
 
-  if (gasUrl) {
-    try {
-      // 1. Get or create session + load keys from GAS
-      const session = localStorage.getItem('gas-session') || '';
-      if (session) {
-        // Restore keys from GAS
-        const userRes = await cloudGet('getUser', { session });
-        if (userRes?.ok) {
-          if (userRes.geminiKey) { API_KEY = userRes.geminiKey; }
-          if (userRes.oddsKey)   localStorage.setItem('_tmp_odds', userRes.oddsKey);
-        }
-      }
-
-      // 2. Load model weights from GAS
-      await loadWeights();
-
-      // 3. Sync all predictions from GAS
-
-      // 2. Update cloud badge
-      if (badge) {
-        badge.innerHTML = '<i class="ti ti-cloud" style="font-size:10px"></i> Google Sheets ✓';
-        badge.style.background = 'var(--gbg)';
-        badge.style.color = 'var(--gtx)';
-      }
-    } catch(e) {
-      console.warn('Cloud sync failed:', e);
-      if (badge) {
-        badge.innerHTML = '<i class="ti ti-cloud-off" style="font-size:10px"></i> Sin conexión';
-        badge.style.background = 'var(--rbg)';
-        badge.style.color = 'var(--rtx)';
-      }
-    }
-  } else {
-    if (badge) {
-      badge.innerHTML = '<i class="ti ti-database-off" style="font-size:10px"></i> Solo local';
-      badge.style.background = 'var(--bg3)';
-      badge.style.color = 'var(--text2)';
-    }
-  }
-
-  // 3. Initialize Supabase if configured
-  try { initDB(); } catch(e) {}
-
-  // 4. Load history and picks from whatever we have (cloud or local)
-  try { loadHistory(); } catch(e) {}
-
-  // 5. Load today's picks from cloud
-  const today = new Date().toISOString().slice(0,10);
   try {
-    const sid = getSessionId();
-    const res = await cloudGet('getPredictions', { session: sid });
-    const todayRows = (res?.rows || []).filter(r => String(r.game_date).slice(0,10) === today);
+    // Register session if needed
+    let session = localStorage.getItem('gas-session') || '';
+    if (!session) {
+      const reg = await cloudSave('registerSession', { geminiKey: localStorage.getItem('mlbpro-gemini')||'', oddsKey: localStorage.getItem('odds-key')||'' });
+      if (reg?.sessionId) { session = reg.sessionId; localStorage.setItem('gas-session', session); }
+    }
+
+    // Load everything in parallel
+    const [allData] = await Promise.all([
+      cloudSave('getAll', { session })
+    ]);
+
+    // Apply model weights from cloud
+    if (allData?.weights?.weights?.w_hp !== undefined) {
+      MODEL_WEIGHTS = { ...DEFAULT_WEIGHTS, ...allData.weights.weights };
+      trainIter = allData.weights.iter || 0;
+      saveWeights();
+    }
+
+    // Show cloud badge
+    if (badge) { badge.innerHTML = '<i class="ti ti-cloud-check" style="font-size:10px"></i> Google Sheets ✓'; badge.style.background='var(--gbg)'; badge.style.color='var(--gtx)'; }
+
+    // Show today's picks from cloud
+    const today = new Date().toISOString().slice(0,10);
+    const todayRows = (allData?.predictions?.rows||[]).filter(r => String(r.game_date||'').slice(0,10) === today);
+
     if (todayRows.length) {
-      const games = todayRows.map(r => ({
-        away:    r.away,   home:    r.home,
-        awayWP:  r.away_wp || 0.5,
-        homeWP:  r.home_wp || 0.5,
-        awayML:  r.away_ml || '—',
-        homeML:  r.home_ml || '—',
-        venue:   r.venue  || '',
-        time:    '—',
-        picks:   (() => { try { return JSON.parse(r.all_picks_json||'[]'); } catch { return r.top_pick_main ? [{cat:'',main:r.top_pick_main,prob:r.top_pick_prob||0.55,edge:0,conf:r.confidence||'Medium',sub:''}] : []; }})(),
-        allPicks:[],
-        weather: {tf:'—',cond:'',wm:0,wd:'',wn:'—'},
-        pf:      '—',
-        gameStarted: false,
-        isLocked:    true,
-        savedAt:     r.created_at || '',
-      }));
-      // Show stats
-      const _sr2 = document.getElementById('srow');
-      if (_sr2) _sr2.style.display = 'grid';
-      setText('sm-g', todayRows.length);
-      setText('sm-h', todayRows.filter(r => r.confidence === 'High').length);
-      setText('sm-m', todayRows.filter(r => r.confidence === 'Medium').length);
-      setText('sm-ov', '—');
-      setText('sm-p',  '—');
-      renderPicksFromCache(games, today);
+      _renderCloudPicks(todayRows, today);
     } else {
       if (_pa) _pa.innerHTML = '<div class="ebox"><i class="ti ti-trophy" style="font-size:36px;opacity:.15;display:block;margin:0 auto 10px"></i>Selecciona fecha y presiona <strong>Analizar partidos</strong></div>';
     }
+
+    // Load history
+    try { loadHistory(); } catch(e) {}
+    try { initDB(); } catch(e) {}
+
   } catch(e) {
-    if (_pa) _pa.innerHTML = '<div class="ebox"><i class="ti ti-trophy" style="font-size:36px;opacity:.15;display:block;margin:0 auto 10px"></i>Selecciona fecha y presiona <strong>Analizar partidos</strong></div>';
+    console.error('loadFromCloudFirst error:', e);
+    if (badge) { badge.innerHTML = '<i class="ti ti-cloud-off" style="font-size:10px"></i> Error CORS'; badge.style.background='var(--rbg)'; badge.style.color='var(--rtx)'; }
+    if (_pa) _pa.innerHTML = '<div class="errbox"><i class="ti ti-alert-circle"></i> Error conectando a Google Sheets. Verifica que el Apps Script esté desplegado con acceso "Cualquier persona".</div>';
   }
+}
+
+function _renderCloudPicks(rows, date) {
+  // Render picks loaded from Google Sheets
+  const _pa = document.getElementById('picks-area');
+  if (!_pa) return;
+
+  const _sr = document.getElementById('srow');
+  if (_sr) _sr.style.display = 'grid';
+  setText('sm-g', rows.length);
+  setText('sm-h', rows.filter(r=>r.confidence==='High').length);
+  setText('sm-m', rows.filter(r=>r.confidence==='Medium').length);
+  setText('sm-ov','—'); setText('sm-p','—');
+
+  const games = rows.map(r => {
+    let picks = [];
+    try { picks = JSON.parse(r.all_picks_json||'[]'); } catch {}
+    if (!picks.length && r.top_pick_main) {
+      picks = [{ cat: r.top_pick_cat||'', main: r.top_pick_main,
+                 prob: r.top_pick_prob||0.55, edge: r.top_pick_edge||0,
+                 conf: r.confidence||'Medium', sub: '' }];
+    }
+    return {
+      away: r.away, home: r.home, venue: r.venue||'',
+      awayWP: r.away_wp||0.5, homeWP: r.home_wp||0.5,
+      awayML: r.away_ml||'—', homeML: r.home_ml||'—',
+      picks, allPicks: picks,
+      weather:{tf:'—',cond:'',wm:0,wd:'',wn:'—'}, pf:'—',
+      gameStarted: false, isLocked: true,
+    };
+  });
+
+  renderPicksFromCache(games, date);
 }
 
 
@@ -1838,8 +1830,7 @@ async function cloudSave(action, data = {}) {
   try {
     const r = await fetch(url, {
       method: 'POST',
-      mode: 'cors',
-      headers: { 'Content-Type': 'text/plain' }, // text/plain avoids CORS preflight
+      headers: { 'Content-Type': 'text/plain' },
       body: JSON.stringify({ action, ...data }),
       redirect: 'follow',
     });
@@ -1847,6 +1838,11 @@ async function cloudSave(action, data = {}) {
     const text = await r.text();
     try { return JSON.parse(text); } catch { return null; }
   } catch(e) { console.warn('Cloud error:', e); return null; }
+}
+
+async function cloudGet(action, params = {}) {
+  // Always use POST with text/plain — avoids CORS preflight from any domain
+  return cloudSave(action, params);
 }
 
 async function cloudGet(action, params = {}) {
@@ -2010,91 +2006,60 @@ function confirmMark(date, away, home, result, btn) {
 }
 
 async function markResult(date, away, home, result) {
-  // Save directly to Google Sheets — no localStorage
   const sid = getSessionId();
-  await cloudSave('markResult', {
-    sessionId: sid,
-    gameDate:  date,
-    away,
-    home,
-    result: result === null ? '' : result
-  });
-  // Sync weights if marking a result
-  if (result) {
-    // Retrain on this result using current model weights
-    cloudSave('saveWeights', { sessionId: sid, weights: MODEL_WEIGHTS, iter: trainIter });
-  }
-  // Reload history from cloud
+  await cloudSave('markResult', { sessionId: sid, gameDate: date, away, home, result: result||'' });
+  if (result) cloudSave('saveWeights', { sessionId: sid, weights: MODEL_WEIGHTS, iter: trainIter });
   await loadHistory();
 }
 
 // ── Load history ──────────────────────────────────────────────────────────────
 async function loadHistory() {
-  // Always load from Google Sheets
   let rows = [];
   const sid = getSessionId();
 
   try {
     if (sbClient && histView === 'all') {
-      const { data, error } = await sbClient
-        .from('predictions').select('*')
-        .order('game_date', { ascending: false }).limit(200);
-      if (!error && data) {
-        rows = data.map(r => ({
-          id: r.id, date: r.game_date,
-          away: r.away, home: r.home,
-          fav: r.fav, favP: r.fav_prob,
-          conf: r.confidence, total: r.predicted_total,
-          topPick: r.top_pick_main, result: r.result,
-          session_id: r.session_id
-        }));
-      }
+      const { data, error } = await sbClient.from('predictions').select('*').order('game_date',{ascending:false}).limit(200);
+      if (!error && data) rows = data.map(r=>({date:r.game_date,away:r.away,home:r.home,fav:r.fav,favP:r.fav_prob,conf:r.confidence,total:r.predicted_total,topPick:r.top_pick_main,result:r.result,session_id:r.session_id}));
     } else {
-      const res = await cloudGet('getPredictions', { session: sid });
+      const res = await cloudSave('getPredictions', { session: sid });
       if (res?.rows?.length) {
         rows = res.rows.map(r => ({
-          date:    String(r.game_date).slice(0,10),
-          away:    r.away,    home:   r.home,
-          fav:     r.fav,     favP:   r.fav_prob,
-          conf:    r.confidence,
-          total:   r.predicted_total,
-          topPick: r.top_pick_main,
-          result:  r.result || null,
-          session_id: r.session_id
+          date:    String(r.game_date||'').slice(0,10),
+          away:    r.away, home: r.home, fav: r.fav,
+          favP:    r.fav_prob, conf: r.confidence,
+          total:   r.predicted_total, topPick: r.top_pick_main,
+          result:  r.result||null, session_id: r.session_id
         }));
       }
     }
   } catch(e) { console.warn('loadHistory error:', e); }
 
-  const total      = rows.length;
-  const graded     = rows.filter(r => r.result != null).length;
-  const correct    = rows.filter(r => r.result === 'win').length;
-  const highGraded = rows.filter(r => r.result != null && r.conf === 'High');
-  const highCorrect= highGraded.filter(r => r.result === 'win').length;
-  const roi        = graded > 0 ? (correct*91 - (graded-correct)*100) / graded : null;
+  const total   = rows.length;
+  const graded  = rows.filter(r=>r.result!=null).length;
+  const correct = rows.filter(r=>r.result==='win').length;
+  const highG   = rows.filter(r=>r.result!=null&&r.conf==='High');
+  const highC   = highG.filter(r=>r.result==='win').length;
+  const roi     = graded>0 ? (correct*91-(graded-correct)*100)/graded : null;
 
   setText('h-total',    total);
   setText('h-graded',   graded);
   setText('h-acc',      graded>0 ? Math.round(correct/graded*100)+'%' : '—');
-  setText('h-high-acc', highGraded.length>0 ? Math.round(highCorrect/highGraded.length*100)+'%' : '—');
+  setText('h-high-acc', highG.length>0 ? Math.round(highC/highG.length*100)+'%' : '—');
   setText('h-roi',      roi!=null ? (roi>=0?'+':'')+roi.toFixed(1)+'%' : '—');
-  updateCalib(rows.filter(r => r.result != null));
+  updateCalib(rows.filter(r=>r.result!=null));
 
-  if (!rows.length) {
-    const hw = document.getElementById('hist-wrap');
-    if (hw) hw.innerHTML = '<div class="ebox">No hay predicciones aún.<br><span style="font-size:11px">Corre el análisis y marca resultados con ✓ ✗</span></div>';
-    return;
-  }
+  const hw = document.getElementById('hist-wrap');
+  if (!hw) return;
+  if (!rows.length) { hw.innerHTML='<div class="ebox">No hay predicciones aún.<br><span style="font-size:11px">Corre el análisis y marca resultados con ✓ ✗</span></div>'; return; }
 
   const mySessionId = getSessionId();
-  const cS = c => c==='High'?'background:var(--gbg);color:var(--gtx)':c==='Medium'?'background:var(--abg);color:var(--atx)':'background:var(--bg3);color:var(--text2)';
-  const cL = c => c==='High'?'🟢 Alta':c==='Medium'?'🟡 Media':'🔴 Baja';
-  const hw2 = document.getElementById('hist-wrap');
-  if (!hw2) return;
-  hw2.innerHTML = `<div style="overflow-x:auto"><table class="htb"><thead><tr>
+  const cS = c=>c==='High'?'background:var(--gbg);color:var(--gtx)':c==='Medium'?'background:var(--abg);color:var(--atx)':'background:var(--bg3);color:var(--text2)';
+  const cL = c=>c==='High'?'🟢 Alta':c==='Medium'?'🟡 Media':'🔴 Baja';
+  hw.innerHTML = `<div style="overflow-x:auto"><table class="htb"><thead><tr>
     <th>Fecha</th><th>Partido</th><th>Favorito</th><th>Prob</th><th>Conf</th><th>Total</th><th>Mejor Pick</th><th>Resultado</th>
   </tr></thead><tbody>
-  ${rows.map(r => `<tr style="${r.session_id && r.session_id !== mySessionId ? 'opacity:.7' : ''}">
+  ${rows.map(r=>`<tr>
     <td>${r.date}</td>
     <td><strong>${r.away}</strong> @ <strong>${r.home}</strong></td>
     <td>${r.fav}</td>
@@ -2106,7 +2071,7 @@ async function loadHistory() {
       ${(histView==='mine'||r.session_id===mySessionId)?`
       <button class="rb ${r.result==='win'?'win':''}" onclick="confirmMark('${r.date}','${r.away}','${r.home}','win',this)">✓ Ganó</button>
       <button class="rb ${r.result==='loss'?'loss':''}" onclick="confirmMark('${r.date}','${r.away}','${r.home}','loss',this)">✗ Perdió</button>
-      `:r.result?`<span style="font-size:11px;font-weight:700;color:${r.result==='win'?'var(--green)':'var(--red)'}">${r.result==='win'?'✓ Ganó':'✗ Perdió'}</span>`:'<span style="color:var(--text3);font-size:10px">— Sin marcar —</span>'}
+      `:r.result?`<span style="font-size:11px;font-weight:700;color:${r.result==='win'?'var(--green)':'var(--red)'}">${r.result==='win'?'✓ Ganó':'✗ Perdió'}</span>`:'<span style="color:var(--text3);font-size:10px">—</span>'}
     </td>
   </tr>`).join('')}
   </tbody></table></div>`;

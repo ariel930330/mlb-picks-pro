@@ -1839,129 +1839,120 @@ async function loadModelTab() {
 // ── Cloud Storage (Google Apps Script → Google Sheets) ───────────────────────
 function getGasUrl() { return localStorage.getItem('gas-url') || ''; }
 
-// ── Supabase — base de datos en la nube sin CORS ─────────────────────────────
+// ── Supabase — usa el cliente oficial (ya cargado en la página) ─────────────
 const SB_URL = "https://xirpwbmekufozsddnaok.supabase.co";
-let SB_KEY   = 'sb_publishable_G3k6Se24l9d0kGfbuRZATQ_qYoV7RFK';
+const SB_ANON = "sb_publishable_G3k6Se24l9d0kGfbuRZATQ_qYoV7RFK";
+let SB_KEY = SB_ANON;
+let _sb = null;
 
-function sbHeaders() {
-  return {
-    'Content-Type':  'application/json',
-    'apikey':        SB_KEY,
-    'Authorization': 'Bearer ' + SB_KEY,
-    'Prefer':        'return=representation',
-  };
+function getSB() {
+  if (!_sb) {
+    try { _sb = supabase.createClient(SB_URL, SB_ANON); } catch(e) { console.error('Supabase init error:', e); }
+  }
+  return _sb;
 }
 
-async function sbGet(table, params = '') {
-  const r = await fetch(`${SB_URL}/rest/v1/${table}?${params}`, {
-    headers: sbHeaders()
-  });
-  if (!r.ok) return null;
-  return r.json();
+// ── Core helpers ──────────────────────────────────────────────────────────────
+async function sbSelect(table, filter = {}) {
+  const sb = getSB(); if (!sb) return [];
+  let q = sb.from(table).select('*');
+  Object.entries(filter).forEach(([k,v]) => { q = q.eq(k, v); });
+  const { data, error } = await q;
+  if (error) { console.warn('sbSelect error:', table, error.message); return []; }
+  return data || [];
 }
 
-async function sbPost(table, data) {
-  const r = await fetch(`${SB_URL}/rest/v1/${table}`, {
-    method:  'POST',
-    headers: sbHeaders(),
-    body:    JSON.stringify(data),
-  });
-  if (!r.ok) return null;
-  return r.json();
+async function sbUpsert(table, row, conflictCols) {
+  const sb = getSB(); if (!sb) return null;
+  const { data, error } = await sb.from(table).upsert(row, { onConflict: conflictCols });
+  if (error) console.warn('sbUpsert error:', table, error.message);
+  return data;
 }
 
-async function sbPatch(table, data, filter) {
-  const r = await fetch(`${SB_URL}/rest/v1/${table}?${filter}`, {
-    method:  'PATCH',
-    headers: sbHeaders(),
-    body:    JSON.stringify(data),
-  });
-  if (!r.ok) return null;
-  return r.json();
+async function sbUpdate(table, updates, filter) {
+  const sb = getSB(); if (!sb) return null;
+  let q = sb.from(table).update(updates);
+  Object.entries(filter).forEach(([k,v]) => { q = q.eq(k, v); });
+  const { error } = await q;
+  if (error) console.warn('sbUpdate error:', table, error.message);
+}
+
+async function sbInsert(table, row) {
+  const sb = getSB(); if (!sb) return null;
+  const { error } = await sb.from(table).insert(row);
+  if (error) console.warn('sbInsert error:', table, error.message);
 }
 
 async function sbDelete(table, filter) {
-  await fetch(`${SB_URL}/rest/v1/${table}?${filter}`, {
-    method: 'DELETE', headers: sbHeaders()
-  });
+  const sb = getSB(); if (!sb) return;
+  let q = sb.from(table).delete();
+  Object.entries(filter).forEach(([k,v]) => { q = q.eq(k, v); });
+  await q;
 }
 
-// ── Cloud wrappers (compatibilidad con código existente) ──────────────────────
-async function cloudGet(action, params = {}) {
-  return cloudSave(action, params);
-}
+// ── Cloud wrappers ────────────────────────────────────────────────────────────
+async function cloudGet(action, params = {}) { return cloudSave(action, params); }
 
 async function cloudSave(action, data = {}) {
   try {
     if (action === 'getPredictions') {
-      const rows = await sbGet('predictions', 'order=game_date.desc&limit=500') || [];
+      const rows = await sbSelect('predictions');
+      rows.sort((a,b) => b.game_date?.localeCompare?.(a.game_date) || 0);
       return { rows };
     }
     if (action === 'getWeights') {
-      const rows = await sbGet('model_weights', 'id=eq.1') || [];
+      const rows = await sbSelect('model_weights', { id: 1 });
       if (!rows.length) return { weights: null, iter: 0 };
-      try { return { weights: JSON.parse(rows[0].weights_json), iter: rows[0].train_iter || 0 }; } catch { return { weights: null, iter: 0 }; }
+      try { return { weights: JSON.parse(rows[0].weights_json), iter: rows[0].train_iter || 0 }; }
+      catch { return { weights: null, iter: 0 }; }
     }
     if (action === 'getAll') {
       const [preds, weights] = await Promise.all([
-        sbGet('predictions', 'order=game_date.desc&limit=500'),
-        sbGet('model_weights', 'id=eq.1'),
+        sbSelect('predictions'),
+        sbSelect('model_weights', { id: 1 }),
       ]);
+      preds.sort((a,b) => b.game_date?.localeCompare?.(a.game_date) || 0);
       let w = { weights: null, iter: 0 };
-      if (weights?.length) { try { w = { weights: JSON.parse(weights[0].weights_json), iter: weights[0].train_iter||0 }; } catch {} }
-      return { predictions: { rows: preds||[] }, weights: w };
-    }
-    if (action === 'savePredictions') {
-      const rows = data.data || [];
-      for (const r of rows) {
-        const existing = await sbGet('predictions', `game_date=eq.${r.game_date}&away=eq.${r.away}&home=eq.${r.home}`);
-        if (existing?.length) {
-          await sbPatch('predictions', r, `game_date=eq.${r.game_date}&away=eq.${r.away}&home=eq.${r.home}`);
-        } else {
-          await sbPost('predictions', r);
-        }
+      if (weights?.length) {
+        try { w = { weights: JSON.parse(weights[0].weights_json), iter: weights[0].train_iter||0 }; } catch {}
       }
+      return { predictions: { rows: preds }, weights: w };
+    }
+    if (action === 'saveWeights') {
+      await sbUpsert('model_weights',
+        { id: 1, weights_json: JSON.stringify(data.weights), train_iter: data.iter || 0 },
+        'id');
       return { ok: true };
     }
     if (action === 'markResult') {
-      await sbPatch('predictions', { result: data.result || null },
-        `game_date=eq.${data.gameDate}&away=eq.${data.away}&home=eq.${data.home}`);
-      return { ok: true };
-    }
-    if (action === 'saveWeights') {
-      const existing = await sbGet('model_weights', 'id=eq.1');
-      const row = { id: 1, weights_json: JSON.stringify(data.weights), train_iter: data.iter || 0 };
-      if (existing?.length) {
-        await sbPatch('model_weights', row, 'id=eq.1');
-      } else {
-        await sbPost('model_weights', row);
-      }
+      await sbUpdate('predictions',
+        { result: data.result || null },
+        { game_date: data.gameDate, away: data.away, home: data.home });
       return { ok: true };
     }
     if (action === 'clearHistory') {
-      await sbDelete('predictions', 'id=gt.0');
+      const sb = getSB();
+      if (sb) await sb.from('predictions').delete().neq('id', 0);
       return { ok: true };
     }
-    if (action === 'registerSession') {
-      return { ok: true, sessionId: 'sb-' + Date.now() };
-    }
+    if (action === 'registerSession') { return { ok: true, sessionId: 'sb-' + Date.now() }; }
     return { ok: true };
-  } catch(e) {
-    console.warn('Supabase error:', action, e);
-    return null;
-  }
+  } catch(e) { console.warn('cloudSave error:', action, e); return null; }
 }
 
 async function syncFromCloud() {
-  const result = await cloudSave('getAll', {});
+  const result = await cloudSave('getAll');
   if (!result) return;
   if (result.weights?.weights?.w_hp !== undefined) {
     MODEL_WEIGHTS = { ...DEFAULT_WEIGHTS, ...result.weights.weights };
     trainIter = parseInt(result.weights.iter) || 0;
     localStorage.setItem('mlbpro-weights', JSON.stringify(MODEL_WEIGHTS));
     localStorage.setItem('mlbpro-train-iter', String(trainIter));
+    console.log('✅ Weights from Supabase — iter:', trainIter);
   }
 }
+
+
 
 
 // ── Database layer ───────────────────────────────────────────────────────────

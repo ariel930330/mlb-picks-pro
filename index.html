@@ -2029,56 +2029,50 @@ function setHistView(v) {
 
 // ── Save predictions ──────────────────────────────────────────────────────────
 async function saveHistory(date, games) {
-  const sessionId = getSessionId();
-
-  // Get previously saved picks from cloud (for lock logic)
-  let existing = [];
+  if (!SB_KEY) return;
   try {
-    const prev = await cloudGet('getPredictions', { session: sessionId, date });
-    existing = (prev?.rows || []).filter(r => String(r.game_date).slice(0,10) === date);
-  } catch(e) {}
+    for (const g of games) {
+      const picks = g.picks || [];
+      if (!picks.length) continue;
+      const top = picks[0];
 
-  // Build rows — lock picks if already saved and game hasn't started
-  const cloudRows = games.map(g => {
-    const saved      = existing.find(r => r.away === g.away && r.home === g.home);
-    const gameStarted = g.status === 'Live' || g.status === 'Final' || g.gameStarted;
-    if (saved && saved.locked && !gameStarted) return null; // skip — already locked
+      const row = {
+        game_date:       date,
+        away:            g.away,
+        home:            g.home,
+        venue:           g.venue || '',
+        fav:             g.homeWP >= g.awayWP ? g.home : g.away,
+        fav_prob:        +Math.max(g.homeWP, g.awayWP).toFixed(4),
+        confidence:      top.conf || 'Low',
+        predicted_total: g.total || 0,
+        home_wp:         +g.homeWP.toFixed(4),
+        away_wp:         +g.awayWP.toFixed(4),
+        home_ml:         g.homeML || '',
+        away_ml:         g.awayML || '',
+        top_pick_cat:    top.cat  || '',
+        top_pick_main:   top.main || '',
+        top_pick_prob:   +(top.prob || 0).toFixed(4),
+        top_pick_edge:   +(top.edge || 0).toFixed(4),
+        all_picks_json:  JSON.stringify(picks.map(p=>({cat:p.cat,main:p.main,prob:p.prob,edge:p.edge,conf:p.conf}))),
+      };
 
-    return {
-      session_id:      sessionId,
-      game_date:       date,
-      away:            g.away,       home:   g.home,    venue: g.venue || '',
-      fav:             g.homeWP >= g.awayWP ? g.home : g.away,
-      fav_prob:        +Math.max(g.homeWP, g.awayWP).toFixed(4),
-      confidence:      g.picks[0]?.conf || 'Low',
-      predicted_total: g.total || 0,
-      home_wp:         +g.homeWP.toFixed(4),
-      away_wp:         +g.awayWP.toFixed(4),
-      home_ml:         g.homeML || '',
-      away_ml:         g.awayML || '',
-      top_pick_cat:    g.picks[0]?.cat  || '',
-      top_pick_main:   g.picks[0]?.main || '',
-      top_pick_prob:   +(g.picks[0]?.prob  || 0).toFixed(4),
-      top_pick_edge:   +(g.picks[0]?.edge  || 0).toFixed(4),
-      all_picks_json:  JSON.stringify(g.picks.map(p => ({cat:p.cat,main:p.main,prob:p.prob,edge:p.edge,conf:p.conf}))),
-      home_wp_val:     +g.homeWP.toFixed(4),
-      away_wp_val:     +g.awayWP.toFixed(4),
-      locked:          true,
-    };
-  }).filter(Boolean);
+      // Check if already exists
+      const existing = await sbGet('predictions',
+        `game_date=eq.${date}&away=eq.${g.away}&home=eq.${g.home}`);
 
-  if (cloudRows.length) {
-    await cloudSave('savePredictions', { data: cloudRows });
-  }
-
-  // Also save extra tab data (pitchers/batters/parlays) to cloud
-  const extraData = {
-    pitchers: games.map(g => ({...g.pitchers, away_team: g.away, home_team: g.home, matchup: g.away+'@'+g.home, time: g.time, batters: g.batters})),
-    batters:  games.map(g => ({ away: g.away, home: g.home, topBatters: g.topBatters, batters: g.batters, pitchers: g.pitchers, time: g.time })),
-    parlays:  buildParlays(games).map(p => ({...p})),
-    date,
-  };
-  await cloudSave('saveExtra', { sessionId, date, data: JSON.stringify(extraData) });
+      if (existing?.length) {
+        // Update only if no result marked yet
+        if (!existing[0].result) {
+          await sbPatch('predictions', row,
+            `game_date=eq.${date}&away=eq.${g.away}&home=eq.${g.home}`);
+        }
+      } else {
+        await sbPost('predictions', row);
+      }
+    }
+    // Reload history to show new picks
+    loadHistory();
+  } catch(e) { console.warn('saveHistory error:', e); }
 }
 
 

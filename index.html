@@ -194,9 +194,9 @@ input[type=range]{width:100%;accent-color:var(--gold)}
     <input type="password" class="sinp" id="api-key-input" placeholder="AIza... (o déjalo vacío para usar solo MLB Stats API)" autocomplete="off">
     <div class="shint">Los picks funcionan 100% sin key · Datos reales de MLB Stats API</div>
     <div style="margin-top:1rem;border-top:1px solid var(--b);padding-top:1rem">
-      <div class="slbl">🔗 URL de tu Google Apps Script <span style="font-weight:400;color:var(--text3)">(para guardar datos en la nube — gratis)</span></div>
-      <input type="text" class="sinp" id="gas-url-input" placeholder="https://script.google.com/macros/s/XXXX/exec" autocomplete="off" style="font-size:11px">
-      <div class="shint">Tus datos se guardan automáticamente en tu Google Sheet · Accesible desde cualquier dispositivo</div>
+      <div class="slbl">🗄️ Supabase Publishable Key <span style="font-weight:400;color:var(--text3)">(para guardar datos en la nube)</span></div>
+      <input type="password" class="sinp" id="gas-url-input" placeholder="sb_publishable_..." autocomplete="off" style="font-size:11px">
+      <div class="shint">Tus picks se guardan en Supabase · Accesible desde cualquier dispositivo · Gratis</div>
     </div>
     <div style="margin-top:.75rem;border-top:1px solid var(--b);padding-top:.75rem">
       <div class="slbl">The Odds API Key <span style="font-weight:400;color:var(--text3)">(opcional — cuotas reales)</span></div>
@@ -1125,7 +1125,14 @@ function onDateChange(date) {
 
 // ── Cloud-first loader: always fetches from Google Sheets on startup ──────────
 async function loadFromCloudFirst() {
+  // gasUrl field now holds the Supabase publishable key
   const gasUrl = getGasUrl();
+  if (gasUrl && gasUrl.startsWith('sb_')) {
+    SB_KEY = gasUrl;
+  } else if (gasUrl) {
+    SB_KEY = gasUrl;
+  }
+  const gasUrl2 = gasUrl;
   const badge  = document.getElementById('cloud-status');
   const _pa    = document.getElementById('picks-area');
 
@@ -1136,7 +1143,7 @@ async function loadFromCloudFirst() {
 
   // Show loading
   if (badge) { badge.innerHTML = '<i class="ti ti-loader-2" style="font-size:10px;animation:spin .7s linear infinite"></i> Cargando...'; badge.style.background='var(--bg3)'; badge.style.color='var(--text2)'; }
-  if (_pa)   { _pa.innerHTML = '<div class="lbox"><div class="spin"></div><div>Conectando a Google Sheets...</div><p>Cargando tus picks y pesos del modelo</p></div>'; }
+  if (_pa)   { _pa.innerHTML = '<div class="lbox"><div class="spin"></div><div>Conectando a Supabase...</div><p>Cargando tus picks y pesos del modelo</p></div>'; }
 
   try {
     // Register session if needed
@@ -1163,7 +1170,7 @@ async function loadFromCloudFirst() {
     }
 
     // Show cloud badge
-    if (badge) { badge.innerHTML = '<i class="ti ti-cloud-check" style="font-size:10px"></i> Google Sheets ✓'; badge.style.background='var(--gbg)'; badge.style.color='var(--gtx)'; }
+    if (badge) { badge.innerHTML = '<i class="ti ti-cloud-check" style="font-size:10px"></i> Supabase ✓'; badge.style.background='var(--gbg)'; badge.style.color='var(--gtx)'; }
     // Refresh model tab if already open
     try { loadModelTab(); } catch(e) {}
 
@@ -1184,7 +1191,7 @@ async function loadFromCloudFirst() {
   } catch(e) {
     console.error('loadFromCloudFirst error:', e);
     if (badge) { badge.innerHTML = '<i class="ti ti-cloud-off" style="font-size:10px"></i> Error CORS'; badge.style.background='var(--rbg)'; badge.style.color='var(--rtx)'; }
-    if (_pa) _pa.innerHTML = '<div class="errbox"><i class="ti ti-alert-circle"></i> Error conectando a Google Sheets. Verifica que el Apps Script esté desplegado con acceso "Cualquier persona".</div>';
+    if (_pa) _pa.innerHTML = '<div class="errbox"><i class="ti ti-alert-circle"></i> Error conectando a Google Sheets. Verifica que ingresaste la Publishable Key de Supabase correctamente.</div>';
   }
 }
 
@@ -1228,7 +1235,7 @@ function startApp(){
     const gasUrl  = (document.getElementById('gas-url-input')?.value||'').trim();
     const oddsKey = (document.getElementById('odds-key-input')?.value||'').trim();
     if(k)      API_KEY = k;
-    if(gasUrl) localStorage.setItem('gas-url', gasUrl); // only url stays local
+    if(gasUrl) { localStorage.setItem('gas-url', gasUrl); SB_KEY = gasUrl; }
 
     document.getElementById('setup').style.display = 'none';
     document.getElementById('app').style.display   = 'block';
@@ -1263,7 +1270,9 @@ document.addEventListener('DOMContentLoaded', function(){
   if (savedGas && gasEl) gasEl.value = savedGas;
 
   // If we have a GAS URL → auto-login and load everything from cloud
-  if (savedGas) {
+  // Auto-enter: SB_KEY is already set, skip setup
+  SB_KEY = SB_KEY || savedGas || '';
+  {
     document.getElementById('setup').style.display = 'none';
     document.getElementById('app').style.display   = 'block';
     const t  = new Date();
@@ -1830,77 +1839,129 @@ async function loadModelTab() {
 // ── Cloud Storage (Google Apps Script → Google Sheets) ───────────────────────
 function getGasUrl() { return localStorage.getItem('gas-url') || ''; }
 
-// ── Cloud via JSONP (bypasses CORS completely) ────────────────────────────────
-function cloudGet(action, params = {}) {
-  // JSONP: injects a <script> tag — no CORS restrictions from any domain
-  return new Promise((resolve) => {
-    const url     = getGasUrl();
-    if (!url) { resolve(null); return; }
-    const cbName  = '_gcb_' + Date.now() + '_' + Math.random().toString(36).slice(2,6);
-    const timeout = setTimeout(() => {
-      delete window[cbName];
-      const el = document.getElementById(cbName);
-      if (el) el.remove();
-      console.warn('cloudGet timeout:', action);
-      resolve(null);
-    }, 15000);
-    window[cbName] = (data) => {
-      clearTimeout(timeout);
-      delete window[cbName];
-      const el = document.getElementById(cbName);
-      if (el) el.remove();
-      resolve(data);
-    };
-    const qs  = new URLSearchParams({ action, callback: cbName, ...params }).toString();
-    const tag = document.createElement('script');
-    tag.id  = cbName;
-    tag.src = `${url}?${qs}`;
-    tag.onerror = () => {
-      clearTimeout(timeout);
-      delete window[cbName];
-      tag.remove();
-      resolve(null);
-    };
-    document.head.appendChild(tag);
+// ── Supabase — base de datos en la nube sin CORS ─────────────────────────────
+const SB_URL = "https://xirpwbmekufozsddnaok.supabase.co";
+let SB_KEY   = 'sb_publishable_G3k6Se24l9d0kGfbuRZATQ_qYoV7RFK';
+
+function sbHeaders() {
+  return {
+    'Content-Type':  'application/json',
+    'apikey':        SB_KEY,
+    'Authorization': 'Bearer ' + SB_KEY,
+    'Prefer':        'return=representation',
+  };
+}
+
+async function sbGet(table, params = '') {
+  const r = await fetch(`${SB_URL}/rest/v1/${table}?${params}`, {
+    headers: sbHeaders()
+  });
+  if (!r.ok) return null;
+  return r.json();
+}
+
+async function sbPost(table, data) {
+  const r = await fetch(`${SB_URL}/rest/v1/${table}`, {
+    method:  'POST',
+    headers: sbHeaders(),
+    body:    JSON.stringify(data),
+  });
+  if (!r.ok) return null;
+  return r.json();
+}
+
+async function sbPatch(table, data, filter) {
+  const r = await fetch(`${SB_URL}/rest/v1/${table}?${filter}`, {
+    method:  'PATCH',
+    headers: sbHeaders(),
+    body:    JSON.stringify(data),
+  });
+  if (!r.ok) return null;
+  return r.json();
+}
+
+async function sbDelete(table, filter) {
+  await fetch(`${SB_URL}/rest/v1/${table}?${filter}`, {
+    method: 'DELETE', headers: sbHeaders()
   });
 }
 
-async function cloudSave(action, data = {}) {
-  const url = getGasUrl();
-  if (!url) return null;
-  // Read actions → JSONP GET
-  const readActions = ['getPredictions','getWeights','getAll','getUser','getExtra','login','ping'];
-  if (readActions.includes(action)) return cloudGet(action, data);
-  // Write actions → no-cors POST (fire & forget)
-  try {
-    fetch(url, {
-      method: 'POST',
-      mode: 'no-cors',
-      headers: { 'Content-Type': 'text/plain' },
-      body: JSON.stringify({ action, ...data }),
-    }).catch(()=>{});
-  } catch(e) {}
-  return { ok: true };
+// ── Cloud wrappers (compatibilidad con código existente) ──────────────────────
+async function cloudGet(action, params = {}) {
+  return cloudSave(action, params);
 }
 
-
-async function syncFromCloud() {
-  // Pull all data from Google Sheets — no localStorage involved
-  const sid    = getSessionId();
-  const result = await cloudGet('getAll', { session: sid });
-  if (!result) return;
-
-  // Sync model weights if cloud has more iterations
-  if (result.weights?.weights) {
-    const cloudIter = result.weights.iter || 0;
-    if (cloudIter >= trainIter) {
-      MODEL_WEIGHTS = result.weights.weights;
-      trainIter     = cloudIter;
-      saveWeights(); // only saves to localStorage for fast access next time
+async function cloudSave(action, data = {}) {
+  try {
+    if (action === 'getPredictions') {
+      const rows = await sbGet('predictions', 'order=game_date.desc&limit=500') || [];
+      return { rows };
     }
+    if (action === 'getWeights') {
+      const rows = await sbGet('model_weights', 'id=eq.1') || [];
+      if (!rows.length) return { weights: null, iter: 0 };
+      try { return { weights: JSON.parse(rows[0].weights_json), iter: rows[0].train_iter || 0 }; } catch { return { weights: null, iter: 0 }; }
+    }
+    if (action === 'getAll') {
+      const [preds, weights] = await Promise.all([
+        sbGet('predictions', 'order=game_date.desc&limit=500'),
+        sbGet('model_weights', 'id=eq.1'),
+      ]);
+      let w = { weights: null, iter: 0 };
+      if (weights?.length) { try { w = { weights: JSON.parse(weights[0].weights_json), iter: weights[0].train_iter||0 }; } catch {} }
+      return { predictions: { rows: preds||[] }, weights: w };
+    }
+    if (action === 'savePredictions') {
+      const rows = data.data || [];
+      for (const r of rows) {
+        const existing = await sbGet('predictions', `game_date=eq.${r.game_date}&away=eq.${r.away}&home=eq.${r.home}`);
+        if (existing?.length) {
+          await sbPatch('predictions', r, `game_date=eq.${r.game_date}&away=eq.${r.away}&home=eq.${r.home}`);
+        } else {
+          await sbPost('predictions', r);
+        }
+      }
+      return { ok: true };
+    }
+    if (action === 'markResult') {
+      await sbPatch('predictions', { result: data.result || null },
+        `game_date=eq.${data.gameDate}&away=eq.${data.away}&home=eq.${data.home}`);
+      return { ok: true };
+    }
+    if (action === 'saveWeights') {
+      const existing = await sbGet('model_weights', 'id=eq.1');
+      const row = { id: 1, weights_json: JSON.stringify(data.weights), train_iter: data.iter || 0 };
+      if (existing?.length) {
+        await sbPatch('model_weights', row, 'id=eq.1');
+      } else {
+        await sbPost('model_weights', row);
+      }
+      return { ok: true };
+    }
+    if (action === 'clearHistory') {
+      await sbDelete('predictions', 'id=gt.0');
+      return { ok: true };
+    }
+    if (action === 'registerSession') {
+      return { ok: true, sessionId: 'sb-' + Date.now() };
+    }
+    return { ok: true };
+  } catch(e) {
+    console.warn('Supabase error:', action, e);
+    return null;
   }
 }
 
+async function syncFromCloud() {
+  const result = await cloudSave('getAll', {});
+  if (!result) return;
+  if (result.weights?.weights?.w_hp !== undefined) {
+    MODEL_WEIGHTS = { ...DEFAULT_WEIGHTS, ...result.weights.weights };
+    trainIter = parseInt(result.weights.iter) || 0;
+    localStorage.setItem('mlbpro-weights', JSON.stringify(MODEL_WEIGHTS));
+    localStorage.setItem('mlbpro-train-iter', String(trainIter));
+  }
+}
 
 
 // ── Database layer ───────────────────────────────────────────────────────────

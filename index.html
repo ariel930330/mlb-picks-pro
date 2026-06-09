@@ -1883,10 +1883,6 @@ async function cloudSave(action, data = {}) {
   return { ok: true };
 }
 
-async function cloudGet(action, params = {}) {
-  // Use POST for all GAS calls to avoid CORS preflight issues
-  return cloudSave(action, params);
-}
 
 async function syncFromCloud() {
   // Pull all data from Google Sheets — no localStorage involved
@@ -2027,20 +2023,10 @@ async function saveHistory(date, games) {
 
 // ── Mark result ───────────────────────────────────────────────────────────────
 function confirmMark(date, away, home, result, btn) {
-  // Get current result from localStorage
-  const key = 'mlbpro-' + date;
-  const data = JSON.parse(localStorage.getItem(key) || 'null');
-  if (!data) return;
-  const g = data.find(x => x.away === away && x.home === home);
-  const currentResult = g?.result || null;
-
-  if (currentResult === result) {
-    // Already marked with this result → UNMARK (toggle off)
-    markResult(date, away, home, null);
-  } else {
-    // Not marked or marked differently → mark with new result
-    markResult(date, away, home, result);
-  }
+  // Toggle: if already same result, unmark; otherwise mark
+  const currentResult = btn?.closest('td')?.querySelector('.win.rb') && result === 'win' ? 'win'
+                      : btn?.closest('td')?.querySelector('.loss.rb') && result === 'loss' ? 'loss' : null;
+  markResult(date, away, home, currentResult === result ? null : result);
 }
 
 async function markResult(date, away, home, result) {

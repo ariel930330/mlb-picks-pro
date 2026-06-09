@@ -1154,12 +1154,18 @@ async function loadFromCloudFirst() {
     // Apply model weights from cloud
     if (allData?.weights?.weights?.w_hp !== undefined) {
       MODEL_WEIGHTS = { ...DEFAULT_WEIGHTS, ...allData.weights.weights };
-      trainIter = allData.weights.iter || 0;
-      saveWeights();
+      trainIter = parseInt(allData.weights.iter) || 0;
+      localStorage.setItem('mlbpro-weights', JSON.stringify(MODEL_WEIGHTS));
+      localStorage.setItem('mlbpro-train-iter', String(trainIter));
+      console.log('✅ Weights loaded from cloud — iter:', trainIter, 'w_hp:', MODEL_WEIGHTS.w_hp);
+    } else {
+      console.warn('⚠️ No weights found in cloud — using defaults');
     }
 
     // Show cloud badge
     if (badge) { badge.innerHTML = '<i class="ti ti-cloud-check" style="font-size:10px"></i> Google Sheets ✓'; badge.style.background='var(--gbg)'; badge.style.color='var(--gtx)'; }
+    // Refresh model tab if already open
+    try { loadModelTab(); } catch(e) {}
 
     // Show today's picks from cloud
     const today = new Date().toISOString().slice(0,10);
@@ -1825,24 +1831,37 @@ async function loadModelTab() {
 function getGasUrl() { return localStorage.getItem('gas-url') || ''; }
 
 async function cloudSave(action, data = {}) {
+  // Fire-and-forget write — no-cors avoids ALL CORS issues for writes
   const url = getGasUrl();
   if (!url) return null;
   try {
-    const r = await fetch(url, {
+    // For actions that need a response, use GET
+    const readActions = ['getPredictions','getWeights','getAll','getUser','getExtra','login'];
+    if (readActions.includes(action)) {
+      return cloudGet(action, data);
+    }
+    // Write actions: use no-cors POST (fire and forget)
+    fetch(url, {
       method: 'POST',
+      mode: 'no-cors',
       headers: { 'Content-Type': 'text/plain' },
       body: JSON.stringify({ action, ...data }),
-      redirect: 'follow',
-    });
-    if (!r.ok) return null;
-    const text = await r.text();
-    try { return JSON.parse(text); } catch { return null; }
-  } catch(e) { console.warn('Cloud error:', e); return null; }
+    }).catch(()=>{});
+    return { ok: true };
+  } catch(e) { return null; }
 }
 
 async function cloudGet(action, params = {}) {
-  // Always use POST with text/plain — avoids CORS preflight from any domain
-  return cloudSave(action, params);
+  // GET requests to GAS work perfectly with CORS from any domain
+  const url = getGasUrl();
+  if (!url) return null;
+  try {
+    const qs = new URLSearchParams({ action, ...params }).toString();
+    const r  = await fetch(`${url}?${qs}`, { redirect: 'follow' });
+    if (!r.ok) return null;
+    const text = await r.text();
+    try { return JSON.parse(text); } catch { return null; }
+  } catch(e) { console.warn('cloudGet error:', e); return null; }
 }
 
 async function cloudGet(action, params = {}) {

@@ -106,6 +106,7 @@ input[type=date]{background:var(--bg2);border:1px solid var(--border);border-rad
 .conf-Low{background:var(--bg3);color:var(--text2)}
 .mark-btn{font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid var(--border);background:transparent;cursor:pointer;font-family:inherit;color:var(--text2)}
 .mark-btn.win{background:var(--gbg);color:var(--gtx);border-color:var(--green)}
+.mark-btn.push{background:#1a2040;color:#7fa8d8;border-color:var(--blue)}
 .mark-btn.loss{background:var(--rbg);color:var(--rtx);border-color:var(--red)}
 
 /* ── Model sliders ── */
@@ -203,7 +204,7 @@ input[type=range]{width:100%;accent-color:var(--gold)}
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
         <div style="display:flex;gap:8px">
           <button class="btn-sm" onclick="loadHistory()">🔄 Recargar</button>
-          <button class="btn-sm" style="color:var(--rtx)" onclick="clearHistory()">🗑 Limpiar todo</button>
+          <button class="btn-sm" style="color:var(--rtx);border-color:var(--red)" onclick="clearHistory()">🗑 Limpiar historial</button>
         </div>
       </div>
       <div class="stats-bar">
@@ -638,7 +639,9 @@ async function loadHistory() {
 
   const graded=rows.filter(r=>r.result), wins=graded.filter(r=>r.result==='win');
   const highG=graded.filter(r=>r.confidence==='High'), highW=highG.filter(r=>r.result==='win');
-  const roi=graded.length>0?(wins.length*91-(graded.length-wins.length)*100)/graded.length:null;
+  const pushes=graded.filter(r=>r.result==='push');
+  const losses=graded.filter(r=>r.result==='loss');
+  const roi=graded.length>0?(wins.length*91-losses.length*100)/graded.length:null;
 
   txt('h-total',rows.length); txt('h-graded',graded.length);
   txt('h-acc', graded.length?Math.round(wins.length/graded.length*100)+'%':'—');
@@ -656,23 +659,26 @@ async function loadHistory() {
       <td style="font-weight:700">${Math.round((r.fav_prob||0)*100)}%</td>
       <td><span class="conf-pill conf-${r.confidence}">${r.confidence==='High'?'🟢 Alta':r.confidence==='Medium'?'🟡 Media':'🔴 Baja'}</span></td>
       <td style="font-size:10px;color:var(--text2);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.top_pick_main||'—'}</td>
-      <td>
+      <td style="white-space:nowrap">
         <button class="mark-btn ${r.result==='win'?'win':''}" onclick="markResult(${r.id},'win',this)">✓ Ganó</button>
+        <button class="mark-btn ${r.result==='push'?'push':''}" onclick="markResult(${r.id},'push',this)">↔ Push</button>
         <button class="mark-btn ${r.result==='loss'?'loss':''}" onclick="markResult(${r.id},'loss',this)">✗ Perdió</button>
       </td>
     </tr>`).join('')}</tbody></table></div>`;
 }
 
 async function markResult(id, result, btn) {
-  const cur = btn.classList.contains(result===('win'?'win':'loss'));
   const newResult = btn.classList.contains(result) ? null : result;
-  await sb.from('predictions').update({result:newResult}).eq('id',id);
+  const {error} = await sb.from('predictions').update({result: newResult}).eq('id', id);
+  if(error) { alert('Error: ' + error.message); return; }
   loadHistory();
 }
 
 async function clearHistory() {
-  if(!confirm('¿Borrar TODO el historial? No se puede deshacer.')) return;
-  await sb.from('predictions').delete().gt('id',0);
+  if(!confirm('¿Borrar TODO el historial de Supabase? No se puede deshacer.')) return;
+  const {error} = await sb.from('predictions').delete().gte('id', 0);
+  if(error) { alert('❌ Error: ' + error.message + '\nCorre el SQL de permisos en Supabase.'); return; }
+  alert('✅ Historial borrado');
   loadHistory();
 }
 

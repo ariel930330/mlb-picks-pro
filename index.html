@@ -732,7 +732,43 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Load weights
   loadModelTab();
+
+  // Restore today's picks from Supabase
+  restoreToday();
 });
+
+async function restoreToday() {
+  const today = new Date().toISOString().slice(0,10);
+  const {data:rows,error} = await sb.from('predictions')
+    .select('*').eq('game_date',today).order('fav_prob',{ascending:false});
+  if(error||!rows?.length) return;
+
+  // Rebuild game objects from saved data
+  const games = rows.map(r=>{
+    let picks=[];
+    try{picks=JSON.parse(r.all_picks_json||'[]');}catch{}
+    if(!picks.length&&r.top_pick_main) picks=[{cat:r.top_pick_cat||'',main:r.top_pick_main,prob:r.top_pick_prob||.55,edge:r.top_pick_edge||0,conf:r.confidence||'Medium',sub:''}];
+    return {
+      away:r.away, home:r.home, venue:r.venue||'',
+      awayWP:r.away_wp||.5, homeWP:r.home_wp||.5,
+      awayML:r.away_ml||'—', homeML:r.home_ml||'—',
+      total:r.predicted_total||0, totalLine:0, pf:1.0,
+      picks, allPicks:picks,
+      pitchers:{away:{name:'—',era:0,fip:0,k9:0,kExp:0,kLine:0},home:{name:'—',era:0,fip:0,k9:0,kExp:0,kLine:0}},
+      topBatters:{away:[],home:[]},
+    };
+  });
+
+  allGames = games;
+  renderPicks(games);
+
+  const high=games.flatMap(g=>g.picks).filter(p=>p.conf==='High').length;
+  const med =games.flatMap(g=>g.picks).filter(p=>p.conf==='Medium').length;
+  $('stats-bar').style.display='grid';
+  txt('s-games',games.length); txt('s-high',high); txt('s-med',med);
+  txt('s-overs','—'); txt('s-parlays','—');
+  $('run-status').textContent=`📂 ${games.length} partidos del ${today} cargados desde Supabase`;
+}
 </script>
 </body>
 </html>

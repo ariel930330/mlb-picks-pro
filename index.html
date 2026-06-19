@@ -150,6 +150,22 @@ input[type=range]{width:100%;accent-color:var(--gold)}
 .stat-card:hover{border-color:rgba(255,255,255,.16)}
 .tab-btn{transition:color .12s,border-color .12s}
 .card-hdr-title{display:flex;align-items:center;gap:6px}
+.pick-stake{font-size:9px;color:var(--gtx);font-weight:700;margin-top:2px}
+.filterbar{display:flex;align-items:center;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+.pf-btn{background:var(--bg3);color:var(--text2);border:1px solid var(--border);padding:5px 11px;border-radius:var(--rs);font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;transition:background .12s}
+.pf-btn.active{background:var(--gold);color:#fff;border-color:var(--gold)}
+.pf-btn:hover:not(.active){background:var(--bg4)}
+
+/* ── Responsive ── */
+@media(max-width:640px){
+  .tab-pane{padding:10px}
+  .team-name{font-size:21px}
+  .team-logo-img{width:40px;height:40px}
+  .stats-bar{grid-template-columns:repeat(2,1fr)}
+  .toolbar #odds-key{min-width:140px;flex:1}
+  .htable th,.htable td{padding:6px 7px}
+  .pick-badge{width:60px}
+}
 </style>
 </head>
 <body>
@@ -167,6 +183,25 @@ input[type=range]{width:100%;accent-color:var(--gold)}
     <div class="hdr-right">
       <span id="cloud-badge" class="badge">Conectando...</span>
       <span id="hdr-date" class="badge"></span>
+      <button id="auth-btn" class="btn-sm" onclick="toggleAuth()"><i class="ti ti-lock"></i> <span id="auth-label">Entrar</span></button>
+    </div>
+  </div>
+
+  <!-- Login (dueño) -->
+  <div id="login-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:50;align-items:center;justify-content:center">
+    <div style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);padding:20px;width:300px;max-width:90vw">
+      <div style="font-size:14px;font-weight:700;margin-bottom:4px">🔒 Acceso del dueño</div>
+      <div style="font-size:11px;color:var(--text2);margin-bottom:14px">Solo necesario para generar, guardar y calificar. Ver es libre.</div>
+      <input id="login-email" type="email" placeholder="Email" autocomplete="username"
+        style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:var(--rs);padding:9px 11px;font-size:13px;color:var(--text);font-family:inherit;outline:none;margin-bottom:8px">
+      <input id="login-pass" type="password" placeholder="Contraseña" autocomplete="current-password"
+        style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:var(--rs);padding:9px 11px;font-size:13px;color:var(--text);font-family:inherit;outline:none;margin-bottom:8px"
+        onkeydown="if(event.key==='Enter')doLogin()">
+      <div id="login-err" style="font-size:11px;color:var(--rtx);margin-bottom:8px;min-height:14px"></div>
+      <div style="display:flex;gap:8px">
+        <button class="btn" style="flex:1;justify-content:center" onclick="doLogin()"><i class="ti ti-login"></i>Entrar</button>
+        <button class="btn-sm" onclick="$('login-modal').style.display='none'">Cancelar</button>
+      </div>
     </div>
   </div>
 
@@ -207,6 +242,13 @@ input[type=range]{width:100%;accent-color:var(--gold)}
         <div class="stat-card"><div class="stat-label">Overs</div><div class="stat-val" style="color:var(--blue)" id="s-overs">0</div></div>
         <div class="stat-card"><div class="stat-label">Parlays</div><div class="stat-val" style="color:var(--gold)" id="s-parlays">0</div></div>
       </div>
+      <div class="filterbar" id="filterbar" style="display:none">
+        <span style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase">Filtrar:</span>
+        <button class="pf-btn active" data-f="all"  onclick="setPickFilter('all')">Todos</button>
+        <button class="pf-btn" data-f="ev"   onclick="setPickFilter('ev')">+EV (valor)</button>
+        <button class="pf-btn" data-f="high" onclick="setPickFilter('high')">🟢 Alta conf.</button>
+        <button class="btn-sm" style="margin-left:auto" onclick="copyPicks()"><i class="ti ti-copy"></i> Copiar</button>
+      </div>
       <div id="picks-area"><div class="empty"><i class="ti ti-trophy" style="font-size:40px;opacity:.15;display:block;margin:0 auto 12px"></i>Selecciona fecha y presiona Analizar partidos</div></div>
     </div>
 
@@ -230,7 +272,8 @@ input[type=range]{width:100%;accent-color:var(--gold)}
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
         <div style="display:flex;gap:8px">
           <button class="btn-sm" onclick="loadHistory()">🔄 Recargar</button>
-          <button class="btn-sm" style="color:var(--rtx);border-color:var(--red)" onclick="clearHistory()">🗑 Limpiar historial</button>
+          <button class="btn-sm owner-only" onclick="autoGrade()">⚡ Auto-calificar</button>
+          <button class="btn-sm owner-only" style="color:var(--rtx);border-color:var(--red)" onclick="clearHistory()">🗑 Limpiar historial</button>
         </div>
       </div>
       <div class="stats-bar">
@@ -262,21 +305,72 @@ input[type=range]{width:100%;accent-color:var(--gold)}
 
 <script>
 // ── Supabase ──────────────────────────────────────────────────────────────────
+// NOTA: la "anon/publishable key" es pública por diseño. La seguridad la dan las
+// políticas RLS (ver supabase-setup.sql): lectura pública, escritura solo autenticado.
 const SB_URL  = 'https://xirpwbmekufozsddnaok.supabase.co';
 const SB_KEY  = 'sb_publishable_G3k6Se24l9d0kGfbuRZATQ_qYoV7RFK';
 const sb      = supabase.createClient(SB_URL, SB_KEY);
 
+// ── Auth (dueño) ────────────────────────────────────────────────────────────
+let session = null;
+const isOwner = () => !!session;
+// Bloquea acciones de escritura para visitantes anónimos.
+function requireAuth(){
+  if(isOwner()) return true;
+  $('login-modal').style.display='flex';
+  setTimeout(()=>$('login-email')?.focus(),50);
+  return false;
+}
+function updateAuthUI(){
+  const lbl=$('auth-label'), btn=$('auth-btn');
+  if(!lbl||!btn) return;
+  if(isOwner()){ lbl.textContent='Salir'; btn.title=session.user?.email||''; btn.querySelector('i').className='ti ti-logout'; }
+  else{ lbl.textContent='Entrar'; btn.title='Acceso del dueño'; btn.querySelector('i').className='ti ti-lock'; }
+  document.querySelectorAll('.owner-only').forEach(el=>el.style.display=isOwner()?'':'none');
+}
+function toggleAuth(){ isOwner()?doLogout():(($('login-modal').style.display='flex'),setTimeout(()=>$('login-email')?.focus(),50)); }
+async function doLogin(){
+  const email=$('login-email').value.trim(), password=$('login-pass').value;
+  $('login-err').textContent='';
+  const {data,error}=await sb.auth.signInWithPassword({email,password});
+  if(error){ $('login-err').textContent=error.message; return; }
+  session=data.session; $('login-modal').style.display='none'; $('login-pass').value='';
+  updateAuthUI();
+}
+async function doLogout(){ await sb.auth.signOut(); session=null; updateAuthUI(); }
+
 // ── MLB Stats API ─────────────────────────────────────────────────────────────
 const MLB = 'https://statsapi.mlb.com/api/v1';
+const _mlbCache = new Map();   // caché de sesión (stats estables); el schedule nunca se cachea
 const mlb = async (path) => {
+  const cacheable = !path.includes('/schedule');
+  if (cacheable && _mlbCache.has(path)) return _mlbCache.get(path);
   const r = await fetch(MLB + path);
   if (!r.ok) throw new Error('MLB ' + r.status);
-  return r.json();
+  const j = await r.json();
+  if (cacheable) _mlbCache.set(path, j);
+  return j;
 };
 
 // ── Park factors ──────────────────────────────────────────────────────────────
 const PF = {108:.99,109:.98,110:1.03,111:1.06,112:1.04,113:1.08,114:.97,115:1.24,116:.95,117:1.00,118:.96,119:.96,120:1.00,121:.97,133:.93,134:.97,135:.93,136:.94,137:.93,138:.99,139:.96,140:1.01,141:1.03,142:1.01,143:1.04,144:1.02,145:1.01,146:.92,147:1.02,158:1.02};
 const VENUES = {108:'Angel Stadium',109:'Chase Field',110:'Camden Yards',111:'Fenway Park',112:'Wrigley Field',113:'GABP',114:'Progressive Field',115:'Coors Field',116:'Comerica Park',117:'Minute Maid Park',118:'Kauffman Stadium',119:'Dodger Stadium',120:'Nationals Park',121:'Citi Field',133:'Oakland Coliseum',134:'PNC Park',135:'Petco Park',136:'T-Mobile Park',137:'Oracle Park',138:'Busch Stadium',139:'Tropicana Field',140:'Globe Life Field',141:'Rogers Centre',142:'Target Field',143:'Citizens Bank Park',144:'Truist Park',145:'Guaranteed Rate Field',146:'loanDepot Park',147:'Yankee Stadium',158:'Am. Family Field'};
+
+// ── Geo de estadios (lat,lon,dome) para clima. dome=true => sin efecto climático ──
+const VENUE_GEO = {
+  108:{lat:33.80,lon:-117.88}, 109:{lat:33.45,lon:-112.07,dome:1}, 110:{lat:39.28,lon:-76.62},
+  111:{lat:42.35,lon:-71.10}, 112:{lat:41.95,lon:-87.66}, 113:{lat:39.10,lon:-84.51},
+  114:{lat:41.50,lon:-81.69}, 115:{lat:39.76,lon:-104.99}, 116:{lat:42.34,lon:-83.05},
+  117:{lat:29.76,lon:-95.36,dome:1}, 118:{lat:39.05,lon:-94.48}, 119:{lat:34.07,lon:-118.24},
+  120:{lat:38.87,lon:-77.01}, 121:{lat:40.76,lon:-73.85}, 133:{lat:37.75,lon:-122.20},
+  134:{lat:40.45,lon:-80.01}, 135:{lat:32.71,lon:-117.16}, 136:{lat:47.59,lon:-122.33},
+  137:{lat:37.78,lon:-122.39}, 138:{lat:38.62,lon:-90.19}, 139:{lat:27.77,lon:-82.65,dome:1},
+  140:{lat:32.75,lon:-97.08,dome:1}, 141:{lat:43.64,lon:-79.39,dome:1}, 142:{lat:44.98,lon:-93.28},
+  143:{lat:39.91,lon:-75.17}, 144:{lat:33.89,lon:-84.47}, 145:{lat:41.83,lon:-87.63},
+  146:{lat:25.78,lon:-80.22,dome:1}, 147:{lat:40.83,lon:-73.93}, 158:{lat:43.03,lon:-87.97,dome:1}
+};
+// Factor climático sobre carreras: ~0.3%/°F respecto a 70°F base; acotado a ±6%
+const wxFactor = wx => (!wx || wx.temp==null) ? 1 : cl(1+(wx.temp-70)*0.003, 0.94, 1.06);
 
 // ── Imágenes: logos de equipos (SVG oficial) y fotos de jugadores (headshots) ──
 const teamLogo  = id => id?`https://www.mlbstatic.com/team-logos/${id}.svg`:'';
@@ -332,6 +426,10 @@ const bestAm   = arr => arr.reduce((b,x)=> amPayout(x)>amPayout(b)?x:b);  // mej
 const avg      = arr => arr.reduce((s,x)=>s+x,0)/arr.length;
 const median   = arr => { const s=[...arr].sort((a,b)=>a-b); return s[Math.floor(s.length/2)]; };
 const normName = s => (s||'').toLowerCase().replace(/[^a-z]/g,'');         // "New York Yankees"→"newyorkyankees"
+const amDec    = a => a>0 ? 1+a/100 : 1+100/(-a);                          // americana → decimal
+// Fracción de Kelly: f* = (b·p − (1−p))/b, con b = cuota decimal − 1. Devuelve 0 si no hay valor.
+const kelly    = (p,american) => { const b=amDec(american)-1; return b<=0?0:Math.max(0,(b*p-(1-p))/b); };
+const KELLY_FRAC = 0.5;  // medio-Kelly (más conservador, menos varianza)
 
 function calcFIP(st, era=4.5) {
   const hr=sf(st.homeRuns,0),bb=sf(st.baseOnBalls,0),hbp=sf(st.hitByPitch,0),k=sf(st.strikeOuts,0),ip=sf(st.inningsPitched,0);
@@ -370,9 +468,10 @@ function computePicks(data) {
   const hwp=sig(logit), awp=1-hwp;
 
   const lg=4.4;
+  const wxF=wxFactor(data.wx);   // ajuste por temperatura (1.0 si techado / sin dato)
   // Carreras esperadas de cada equipo = SU ofensiva vs el pitcher RIVAL (local anota vs pitcher visitante)
-  const hExp=lg*(1+(.5-aps)*.85)*(1+(hos-.5)*.55)*pf;
-  const aExp=lg*(1+(.5-hps)*.85)*(1+(aos-.5)*.55)*pf;
+  const hExp=lg*(1+(.5-aps)*.85)*(1+(hos-.5)*.55)*pf*wxF;
+  const aExp=lg*(1+(.5-hps)*.85)*(1+(aos-.5)*.55)*pf*wxF;
   const total=+(hExp+aExp).toFixed(1);
   const totalSigma=Math.sqrt(total)*1.3;         // runs totales: sobre-dispersos respecto a Poisson
   const favHome=hwp>=awp;
@@ -413,8 +512,8 @@ function computePicks(data) {
     const {fairHome,fairAway,priceHome,priceAway}=odds.ml;
     const eHome=hwp-fairHome, eAway=awp-fairAway;
     picks.push(eHome>=eAway
-      ? {cat:'Money Line',main:`${home} ML ${amFmt(priceHome)}`,sub:`Modelo ${pct(hwp)} vs Mercado ${pct(fairHome)}`,prob:hwp,edge:+eHome.toFixed(3),mkt:true}
-      : {cat:'Money Line',main:`${away} ML ${amFmt(priceAway)}`,sub:`Modelo ${pct(awp)} vs Mercado ${pct(fairAway)}`,prob:awp,edge:+eAway.toFixed(3),mkt:true});
+      ? {cat:'Money Line',main:`${home} ML ${amFmt(priceHome)}`,sub:`Modelo ${pct(hwp)} vs Mercado ${pct(fairHome)}`,prob:hwp,edge:+eHome.toFixed(3),mkt:true,price:priceHome}
+      : {cat:'Money Line',main:`${away} ML ${amFmt(priceAway)}`,sub:`Modelo ${pct(awp)} vs Mercado ${pct(fairAway)}`,prob:awp,edge:+eAway.toFixed(3),mkt:true,price:priceAway});
   } else {
     picks.push(favHome
       ? {cat:'Money Line',main:`${home} ML ${p2ml(hwp)}`,sub:`Modelo: ${pct(hwp)}`,prob:hwp,edge:+(hwp-BREAKEVEN).toFixed(3)}
@@ -426,8 +525,8 @@ function computePicks(data) {
     const line=odds.total.point, mOver=normOver(total,totalSigma,line);
     const eOver=mOver-odds.total.fairOver, eUnder=(1-mOver)-odds.total.fairUnder;
     picks.push(eOver>=eUnder
-      ? {cat:'Total del partido',main:`OVER ${line} ${amFmt(odds.total.priceOver)}`,sub:`Proy ${total} · Modelo ${pct(mOver)} vs Mercado ${pct(odds.total.fairOver)} · PF ${pf}`,prob:mOver,edge:+eOver.toFixed(3),mkt:true}
-      : {cat:'Total del partido',main:`UNDER ${line} ${amFmt(odds.total.priceUnder)}`,sub:`Proy ${total} · Modelo ${pct(1-mOver)} vs Mercado ${pct(odds.total.fairUnder)} · PF ${pf}`,prob:1-mOver,edge:+eUnder.toFixed(3),mkt:true});
+      ? {cat:'Total del partido',main:`OVER ${line} ${amFmt(odds.total.priceOver)}`,sub:`Proy ${total} · Modelo ${pct(mOver)} vs Mercado ${pct(odds.total.fairOver)} · PF ${pf}`,prob:mOver,edge:+eOver.toFixed(3),mkt:true,price:odds.total.priceOver}
+      : {cat:'Total del partido',main:`UNDER ${line} ${amFmt(odds.total.priceUnder)}`,sub:`Proy ${total} · Modelo ${pct(1-mOver)} vs Mercado ${pct(odds.total.fairUnder)} · PF ${pf}`,prob:1-mOver,edge:+eUnder.toFixed(3),mkt:true,price:odds.total.priceUnder});
   } else {
     picks.push({cat:'Total del partido',main:`${totalPick?'OVER':'UNDER'} ${totalLine} runs`,sub:`Proyección: ${total} runs · PF ${pf}`,prob:totalProb,edge:+(totalProb-BREAKEVEN).toFixed(3)});
   }
@@ -439,7 +538,7 @@ function computePicks(data) {
     const fairCover=homeFav?odds.spread.fairHomeCover:odds.spread.fairAwayCover;
     const price=homeFav?odds.spread.priceHome:odds.spread.priceAway;
     const pt=homeFav?odds.spread.homePoint:odds.spread.awayPoint;
-    picks.push({cat:'Run Line',main:`${homeFav?home:away} ${pt} ${amFmt(price)}`,sub:`Modelo ${pct(mCover)} vs Mercado ${pct(fairCover)}`,prob:mCover,edge:+(mCover-fairCover).toFixed(3),mkt:true});
+    picks.push({cat:'Run Line',main:`${homeFav?home:away} ${pt} ${amFmt(price)}`,sub:`Modelo ${pct(mCover)} vs Mercado ${pct(fairCover)}`,prob:mCover,edge:+(mCover-fairCover).toFixed(3),mkt:true,price});
   } else {
     picks.push({cat:'Run Line -1.5',main:`${favHome?home:away} -1.5`,sub:`${pct(rlProb)} prob ganar por 2+`,prob:rlProb,edge:+(rlProb-BREAKEVEN).toFixed(3)});
   }
@@ -447,11 +546,14 @@ function computePicks(data) {
   picks.push({cat:'F5 Total',main:`${f5Pick?'OVER':'UNDER'} ${f5line} (F5)`,sub:`Proyección F5: ${f5total}`,prob:f5totalProb,edge:+(f5totalProb-BREAKEVEN).toFixed(3)});
   picks.push({cat:'Ks Pitcher',main:`${bestK.name} ${bestK.pOver>=.5?'OVER':'UNDER'} ${bestK.line}K`,sub:`Proyección: ${bestK.exp}K`,prob:bestKProb,edge:+(bestKProb-BREAKEVEN).toFixed(3)});
 
-  picks.sort((a,b)=>b.prob-a.prob);
+  // Stake sugerido (medio-Kelly, % del bankroll) solo cuando hay cuota real y edge positivo
+  picks.forEach(p=>{ p.stake = (p.price!=null && p.edge>0) ? +(KELLY_FRAC*kelly(p.prob,p.price)*100).toFixed(1) : 0; });
+  // Orden por VALOR (edge), no por probabilidad: los value bets primero
+  picks.sort((a,b)=>b.edge-a.edge);
   const top3=picks.slice(0,3).map(p=>({...p,conf:p.prob>=.58?'High':p.prob>=.53?'Medium':'Low'}));
 
   return {
-    away,home,awayId,homeId,venue:VENUES[homeId]||'',
+    away,home,awayId,homeId,venue:VENUES[homeId]||'',wx:data.wx||null,
     awayWP:+awp.toFixed(4),homeWP:+hwp.toFixed(4),
     awayML:p2ml(awp),homeML:p2ml(hwp),
     total,totalLine,pf,
@@ -503,6 +605,7 @@ async function getTopBatters(id,yr) {
 const ODDS_BASE = 'https://api.the-odds-api.com/v4';
 const getOddsKey = () => localStorage.getItem('odds_api_key') || '';
 const saveOddsKey = v => { v=v.trim(); v?localStorage.setItem('odds_api_key',v):localStorage.removeItem('odds_api_key'); };
+let oddsRemaining = null;  // peticiones restantes del plan (header x-requests-remaining)
 
 // Devuelve un mapa { "homeNorm|awayNorm": {ml,total,spread} } con consenso entre casas.
 // Cada mercado trae probabilidades JUSTAS (sin vig) y la mejor línea disponible.
@@ -514,6 +617,7 @@ async function getOdds(date) {
     const url = `${ODDS_BASE}/sports/baseball_mlb/odds?apiKey=${key}&regions=us&markets=h2h,spreads,totals&oddsFormat=american&commenceTimeFrom=${from}&commenceTimeTo=${to}`;
     const r = await fetch(url);
     if (!r.ok) throw new Error('Odds API ' + r.status);
+    oddsRemaining = r.headers.get('x-requests-remaining');
     const events = await r.json();
     const map = {};
     for (const ev of events) {
@@ -533,7 +637,7 @@ async function getOdds(date) {
           }
         }
       }
-      const o = {};
+      const o = { commence: ev.commence_time };
       if (mlPairs.length) {
         const fh = avg(mlPairs.map(p => { const ih = amProb(p.h), ia = amProb(p.a); return ih / (ih + ia); }));
         o.ml = { fairHome: fh, fairAway: 1 - fh, priceHome: bestAm(mlPairs.map(p => p.h)), priceAway: bestAm(mlPairs.map(p => p.a)) };
@@ -546,10 +650,38 @@ async function getOdds(date) {
         const fhc = avg(spPairs.map(p => { const ih = amProb(p.hpr), ia = amProb(p.apr); return ih / (ih + ia); }));
         o.spread = { homePoint: median(spPairs.map(p => p.hp)), awayPoint: median(spPairs.map(p => p.ap)), fairHomeCover: fhc, fairAwayCover: 1 - fhc, priceHome: bestAm(spPairs.map(p => p.hpr)), priceAway: bestAm(spPairs.map(p => p.apr)) };
       }
-      map[normName(home) + '|' + normName(away)] = o;
+      const key = normName(home) + '|' + normName(away);
+      (map[key] = map[key] || []).push(o);   // array: soporta doubleheaders (mismo matchup 2 veces)
     }
     return map;
   } catch (e) { console.warn('getOdds:', e.message); return {}; }
+}
+
+// Elige las cuotas del evento cuyo horario está más cerca del partido (doubleheaders)
+function pickOdds(map, home, away, gameISO) {
+  const arr = map[normName(home) + '|' + normName(away)];
+  if (!arr?.length) return null;
+  if (arr.length === 1 || !gameISO) return arr[0];
+  const t = new Date(gameISO).getTime();
+  return arr.reduce((b, o) => Math.abs(new Date(o.commence).getTime() - t) < Math.abs(new Date(b.commence).getTime() - t) ? o : b);
+}
+
+// ── Clima (Open-Meteo, gratis y sin API key) ────────────────────────────────
+async function getWeather(geo, date, gameISO) {
+  if (!geo || geo.dome) return null;   // estadios techados: sin efecto climático
+  try {
+    const next = new Date(new Date(date).getTime() + 864e5).toISOString().slice(0,10);
+    const url = `https://api.open-meteo.com/v1/forecast?latitude=${geo.lat}&longitude=${geo.lon}`
+      + `&hourly=temperature_2m,wind_speed_10m&temperature_unit=fahrenheit&wind_speed_unit=mph`
+      + `&timezone=UTC&start_date=${date}&end_date=${next}`;
+    const r = await fetch(url); if (!r.ok) return null;
+    const d = await r.json();
+    const times = d.hourly?.time || []; if (!times.length) return null;
+    const target = new Date(gameISO).getTime();
+    let bi = 0, bd = Infinity;
+    times.forEach((t,i)=>{ const diff=Math.abs(new Date(t+'Z').getTime()-target); if(diff<bd){bd=diff;bi=i;} });
+    return { temp: d.hourly.temperature_2m[bi], wind: d.hourly.wind_speed_10m[bi] };
+  } catch { return null; }
 }
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -557,14 +689,16 @@ let allGames=[], allBatters=[], allParlays=[];
 
 // ── Main analysis ─────────────────────────────────────────────────────────────
 async function runAnalysis() {
+  if(!requireAuth()) return;
   const date = $('date-pick').value;
+  if(!date){ $('run-status').textContent='Selecciona una fecha.'; return; }
   const btn  = $('run-btn');
   btn.disabled=true; btn.innerHTML='<i class="ti ti-loader-2" style="animation:spin .7s linear infinite"></i>Analizando...';
   $('run-status').textContent='';
   $('picks-area').innerHTML='<div class="loading"><div class="spin"></div>Consultando MLB Stats API...</div>';
 
   try {
-    const yr = new Date().getFullYear();
+    const yr = +date.slice(0,4);   // año de la temporada según la fecha elegida (no el actual)
     const sched = await mlb(`/schedule?sportId=1&date=${date}&hydrate=probablePitcher,team,venue,status`);
     const games = (sched.dates||[]).flatMap(d=>d.games||[]).filter(g=>g.status?.abstractGameState!=='Final');
 
@@ -581,12 +715,13 @@ async function runAnalysis() {
       const hId=g.teams.home.team.id, aId=g.teams.away.team.id;
       const hpId=g.teams.home.probablePitcher?.id, apId=g.teams.away.probablePitcher?.id;
 
-      const [hpSt,apSt,hTSt,aTSt,hWL,aWL,hInj,aInj,hBat,aBat] = await Promise.all([
+      const [hpSt,apSt,hTSt,aTSt,hWL,aWL,hInj,aInj,hBat,aBat,wx] = await Promise.all([
         getPitcherStats(hpId,yr), getPitcherStats(apId,yr),
         getTeamStats(hId,yr), getTeamStats(aId,yr),
         getRecentGames(hId,yr), getRecentGames(aId,yr),
         getInjuries(hId), getInjuries(aId),
         getTopBatters(hId,yr), getTopBatters(aId,yr),
+        getWeather(VENUE_GEO[hId], date, g.gameDate),
       ]);
 
       const gd = computePicks({
@@ -599,8 +734,8 @@ async function runAnalysis() {
         awayPitcher: apSt, homePitcher: hpSt,
         awayStats: aTSt, homeStats: hTSt,
         awayRecent: aWL, homeRecent: hWL,
-        awayInj: aInj, homeInj: hInj,
-        odds: oddsMap[normName(g.teams.home.team.name)+'|'+normName(g.teams.away.team.name)] || null,
+        awayInj: aInj, homeInj: hInj, wx,
+        odds: pickOdds(oddsMap, g.teams.home.team.name, g.teams.away.team.name, g.gameDate),
       });
       gd.gamePk    = g.gamePk;
       gd.time      = g.gameDate;
@@ -631,7 +766,7 @@ async function runAnalysis() {
     txt('s-games',results.length); txt('s-high',high); txt('s-med',med);
     txt('s-overs',overs); txt('s-parlays',allParlays.length);
     $('run-status').textContent=`✅ ${results.length} partidos analizados`+
-      (getOddsKey()?(oddsCount?` · 📈 cuotas reales (${oddsCount} partidos)`:` · ⚠ sin cuotas (revisa API key o fecha)`):` · sin cuotas (edge vs -110)`);
+      (getOddsKey()?(oddsCount?` · 📈 cuotas reales (${oddsCount} partidos)`+(oddsRemaining!=null?` · ${oddsRemaining} req restantes`:''):` · ⚠ sin cuotas (revisa API key o fecha)`):` · sin cuotas (edge vs -110)`);
 
   } catch(e) {
     $('picks-area').innerHTML=`<div class="error-box"><i class="ti ti-alert-circle"></i> ${e.message}</div>`;
@@ -665,10 +800,21 @@ async function savePredictions(date, games) {
 }
 
 // ── Render picks ──────────────────────────────────────────────────────────────
+let pickFilter='all';
+function setPickFilter(f){
+  pickFilter=f;
+  document.querySelectorAll('.pf-btn').forEach(b=>b.classList.toggle('active',b.dataset.f===f));
+  renderPicks(allGames);
+}
+function pickPasses(p){ return pickFilter==='ev' ? p.edge>0 : pickFilter==='high' ? p.conf==='High' : true; }
+
 function renderPicks(games) {
   const confMap = {High:'high',Medium:'med',Low:'low'};
   const labelMap = {High:'🟢 ALTA',Medium:'🟡 MEDIA',Low:'🔴 BAJA'};
-  $('picks-area').innerHTML = games.map(g=>{
+  $('filterbar').style.display = games.length ? 'flex' : 'none';
+  const html = games.map(g=>{
+    const picks = (g.picks||[]).filter(pickPasses);
+    if(!picks.length) return '';
     const awp=Math.round(g.awayWP*100), hwp=Math.round(g.homeWP*100);
     const barW=awp+'%';
     return `<div class="card">
@@ -683,19 +829,34 @@ function renderPicks(games) {
       </div>
       <div class="prob-bar"><div class="prob-away" style="width:${barW}"></div><div class="prob-home" style="flex:1"></div></div>
       <div class="picks">
-        ${g.picks.map(p=>{
+        ${picks.map(p=>{
           const cc=confMap[p.conf]||'low', lbl=labelMap[p.conf]||'🔴 BAJA';
           return `<div class="pick-row ${cc}">
             <div class="pick-accent"></div>
             <div class="pick-badge"><span class="icon">${lbl.split(' ')[0]}</span><span class="label">${lbl.split(' ')[1]||''}</span></div>
             <div class="pick-body"><div class="pick-cat">${p.cat}</div><div class="pick-main">${p.main}</div><div class="pick-sub">${p.sub||''}</div></div>
-            <div class="pick-pct"><div class="pick-prob">${pct(p.prob)}</div><div class="pick-edge">edge ${p.edge>=0?'+':''}${(p.edge*100).toFixed(1)}%</div></div>
+            <div class="pick-pct"><div class="pick-prob">${pct(p.prob)}</div><div class="pick-edge">edge ${p.edge>=0?'+':''}${(p.edge*100).toFixed(1)}%</div>${p.stake>0?`<div class="pick-stake">apostar ${p.stake}%</div>`:''}</div>
           </div>`;
         }).join('')}
       </div>
-      <div class="game-footer">PF ${g.pf} · Total proy. ${g.total} runs · ${g.pitchers.away.name.split(' ').slice(-1)[0]} vs ${g.pitchers.home.name.split(' ').slice(-1)[0]}</div>
+      <div class="game-footer">PF ${g.pf} · Total proy. ${g.total} runs${g.wx?.temp!=null?` · 🌡 ${Math.round(g.wx.temp)}°F`+(g.wx.wind!=null?` · 💨 ${Math.round(g.wx.wind)} mph`:''):''} · ${g.pitchers.away.name.split(' ').slice(-1)[0]} vs ${g.pitchers.home.name.split(' ').slice(-1)[0]}</div>
     </div>`;
   }).join('');
+  $('picks-area').innerHTML = html || '<div class="empty">Ningún pick cumple el filtro seleccionado.</div>';
+}
+
+// Copia los picks visibles al portapapeles (texto plano para compartir)
+function copyPicks(){
+  if(!allGames.length){ alert('Corre el análisis primero.'); return; }
+  const lines=[];
+  allGames.forEach(g=>{
+    const picks=(g.picks||[]).filter(pickPasses);
+    if(!picks.length) return;
+    lines.push(`⚾ ${g.away} @ ${g.home}`);
+    picks.forEach(p=>lines.push(`  • ${p.cat}: ${p.main}  (${pct(p.prob)}, edge ${p.edge>=0?'+':''}${(p.edge*100).toFixed(1)}%${p.stake>0?`, apostar ${p.stake}%`:''})`));
+  });
+  const txt=lines.join('\n')||'Sin picks.';
+  navigator.clipboard?.writeText(txt).then(()=>alert('📋 Picks copiados al portapapeles')).catch(()=>alert(txt));
 }
 
 // ── Parlays ───────────────────────────────────────────────────────────────────
@@ -849,13 +1010,68 @@ async function loadHistory() {
 }
 
 async function markResult(id, result, btn) {
+  if(!requireAuth()) return;
   const newResult = btn.classList.contains(result) ? null : result;
   const {error} = await sb.from('predictions').update({result: newResult}).eq('id', id);
   if(error) { alert('Error: ' + error.message); return; }
   loadHistory();
 }
 
+// ── Auto-grading: califica desde el marcador final de MLB ──────────────────
+// Devuelve 'win' | 'loss' | 'push' | null (null = no calificable automáticamente)
+function gradeTopPick(r, g) {
+  const aS=g.teams?.away?.score, hS=g.teams?.home?.score;
+  if(aS==null||hS==null) return null;
+  const cat=r.top_pick_cat||'', tok=(r.top_pick_main||'').trim().split(/\s+/);
+  const isHome = t => t===r.home;
+  const inn=g.linescore?.innings||[];
+  const f5=inn.slice(0,5).reduce((o,i)=>({a:o.a+(i.away?.runs||0),h:o.h+(i.home?.runs||0)}),{a:0,h:0});
+
+  if(cat==='Money Line'){ const t=tok[0]; return (isHome(t)?hS>aS:aS>hS)?'win':'loss'; }
+  if(cat==='Total del partido'){ const side=tok[0],line=parseFloat(tok[1]),tot=aS+hS;
+    if(isNaN(line)) return null; if(tot===line) return 'push';
+    return (side==='OVER'?tot>line:tot<line)?'win':'loss'; }
+  if(cat.startsWith('Run Line')){ const t=tok[0],pt=parseFloat(tok[1]);
+    if(isNaN(pt)) return null; const ts=isHome(t)?hS:aS, os=isHome(t)?aS:hS, m=ts-os+pt;
+    if(m===0) return 'push'; return m>0?'win':'loss'; }
+  if(cat==='Primeras 5 Innings'){ if(!inn.length) return null; const t=tok[0];
+    const tf=isHome(t)?f5.h:f5.a, of=isHome(t)?f5.a:f5.h;
+    if(tf===of) return 'push'; return tf>of?'win':'loss'; }
+  if(cat==='F5 Total'){ if(!inn.length) return null; const side=tok[0],line=parseFloat(tok[1]),tot=f5.a+f5.h;
+    if(isNaN(line)) return null; if(tot===line) return 'push';
+    return (side==='OVER'?tot>line:tot<line)?'win':'loss'; }
+  return null;  // Ks u otros: requieren boxscore, se califican a mano
+}
+
+async function autoGrade() {
+  if(!requireAuth()) return;
+  $('history-area').insertAdjacentHTML('afterbegin','<div class="loading" id="grading-msg"><div class="spin"></div>Consultando marcadores finales...</div>');
+  const {data:rows,error} = await sb.from('predictions').select('*').is('result',null);
+  if(error){ $('grading-msg')?.remove(); alert('Error: '+error.message); return; }
+  if(!rows?.length){ $('grading-msg')?.remove(); alert('No hay predicciones sin calificar.'); return; }
+
+  const finals={};
+  for(const d of [...new Set(rows.map(r=>r.game_date))]){
+    try{ const sched=await mlb(`/schedule?sportId=1&date=${d}&hydrate=linescore,team`);
+      (sched.dates||[]).flatMap(x=>x.games||[]).forEach(g=>{
+        const a=g.teams?.away?.team?.abbreviation, h=g.teams?.home?.team?.abbreviation;
+        if(a&&h) finals[`${d}|${a}|${h}`]=g;
+      }); }catch{}
+  }
+  let graded=0, pending=0;
+  for(const r of rows){
+    const g=finals[`${r.game_date}|${r.away}|${r.home}`];
+    if(!g || g.status?.abstractGameState!=='Final'){ pending++; continue; }
+    const res=gradeTopPick(r,g);
+    if(res){ await sb.from('predictions').update({result:res}).eq('id',r.id); graded++; }
+  }
+  $('grading-msg')?.remove();
+  alert(`✅ ${graded} calificadas automáticamente`+(pending?` · ${pending} aún sin marcador final`:'')+`\n(Ks y props se califican a mano)`);
+  loadHistory();
+}
+
 async function clearHistory() {
+  if(!requireAuth()) return;
   if(!confirm('¿Borrar TODO el historial de Supabase? No se puede deshacer.')) return;
   const {error} = await sb.from('predictions').delete().gte('id', 0);
   if(error) { alert('❌ Error: ' + error.message + '\nCorre el SQL de permisos en Supabase.'); return; }
@@ -885,6 +1101,7 @@ function renderSliders() {
 }
 
 async function saveWeightsToCloud() {
+  if(!requireAuth()) return;
   const {error} = await sb.from('model_weights').upsert({id:1,weights_json:JSON.stringify(W),train_iter:trainIter},{onConflict:'id'});
   if(error) alert('Error: '+error.message);
   else alert('✅ Pesos guardados en Supabase');
@@ -911,6 +1128,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('date-pick').value=today.toISOString().slice(0,10);
   $('hdr-date').textContent=today.toLocaleDateString('es-MX',{weekday:'short',month:'short',day:'numeric'});
   $('odds-key').value=getOddsKey();
+
+  // Restaurar sesión (si el dueño ya inició sesión antes)
+  const {data:sd} = await sb.auth.getSession();
+  session = sd?.session || null;
+  sb.auth.onAuthStateChange((_e,s)=>{ session=s; updateAuthUI(); });
+  updateAuthUI();
 
   // Test Supabase connection
   const {error} = await sb.from('predictions').select('id',{count:'exact',head:true});
@@ -940,7 +1163,7 @@ async function restoreToday() {
       away:r.away, home:r.home, awayId:ABBR2ID[r.away], homeId:ABBR2ID[r.home], venue:r.venue||'',
       awayWP:r.away_wp||.5, homeWP:r.home_wp||.5,
       awayML:r.away_ml||'—', homeML:r.home_ml||'—',
-      total:r.predicted_total||0, totalLine:0, pf:1.0,
+      total:r.predicted_total||0, totalLine:r.predicted_total||0, pf:1.0,
       picks, allPicks:picks,
       pitchers:{away:{name:'—',era:0,fip:0,k9:0,kExp:0,kLine:0},home:{name:'—',era:0,fip:0,k9:0,kExp:0,kLine:0}},
       topBatters:{away:[],home:[]},

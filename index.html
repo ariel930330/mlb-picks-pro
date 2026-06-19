@@ -127,6 +127,29 @@ input[type=range]{width:100%;accent-color:var(--gold)}
 .legend-item{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--text2)}
 .legend-key{font-size:10px;font-weight:700;color:var(--text);background:var(--bg3);padding:1px 5px;border-radius:3px}
 .legend-sep{width:1px;height:12px;background:var(--border);margin:0 2px}
+
+/* ── Imágenes: logos y headshots ── */
+.team-logo-img{width:52px;height:52px;object-fit:contain;display:block;margin:0 0 6px;filter:drop-shadow(0 2px 4px rgba(0,0,0,.4))}
+.team-home .team-logo-img{margin-left:auto}
+.logo-xs{width:16px;height:16px;object-fit:contain;vertical-align:middle;flex-shrink:0}
+.headshot{width:46px;height:46px;border-radius:50%;object-fit:cover;background:var(--bg);border:2px solid var(--border);flex-shrink:0}
+.headshot-sm{width:30px;height:30px;border-radius:50%;object-fit:cover;background:var(--bg);border:1px solid var(--border);flex-shrink:0}
+
+/* ── Pulido visual ── */
+.hdr{background:linear-gradient(180deg,var(--bg3),var(--bg2))}
+.logo{box-shadow:0 2px 8px rgba(217,118,6,.35)}
+.card{box-shadow:0 1px 3px rgba(0,0,0,.25);transition:border-color .15s,transform .15s}
+.card:hover{border-color:rgba(255,255,255,.16)}
+.game-matchup{background:radial-gradient(120% 100% at 50% 0%,var(--bg3),var(--bg2))}
+.team-name{line-height:1.05;letter-spacing:-.5px}
+.vs{font-size:11px;font-weight:700;opacity:.6;align-self:center}
+.prob-bar{height:7px;border-radius:0 0 2px 2px;overflow:hidden}
+.pick-row{transition:background .12s}
+.pick-row:hover{background:rgba(255,255,255,.025)}
+.stat-card{transition:border-color .15s}
+.stat-card:hover{border-color:rgba(255,255,255,.16)}
+.tab-btn{transition:color .12s,border-color .12s}
+.card-hdr-title{display:flex;align-items:center;gap:6px}
 </style>
 </head>
 <body>
@@ -164,6 +187,9 @@ input[type=range]{width:100%;accent-color:var(--gold)}
       <div class="toolbar">
         <input type="date" id="date-pick">
         <button class="btn" id="run-btn" onclick="runAnalysis()"><i class="ti ti-refresh"></i>Analizar partidos</button>
+        <input type="password" id="odds-key" placeholder="The Odds API key (opcional)" autocomplete="off"
+          style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:7px 10px;font-size:12px;color:var(--text);font-family:inherit;outline:none;min-width:200px"
+          onchange="saveOddsKey(this.value)">
         <span id="run-status" style="font-size:11px;color:var(--text3)"></span>
       </div>
       <div class="legend">
@@ -252,6 +278,12 @@ const mlb = async (path) => {
 const PF = {108:.99,109:.98,110:1.03,111:1.06,112:1.04,113:1.08,114:.97,115:1.24,116:.95,117:1.00,118:.96,119:.96,120:1.00,121:.97,133:.93,134:.97,135:.93,136:.94,137:.93,138:.99,139:.96,140:1.01,141:1.03,142:1.01,143:1.04,144:1.02,145:1.01,146:.92,147:1.02,158:1.02};
 const VENUES = {108:'Angel Stadium',109:'Chase Field',110:'Camden Yards',111:'Fenway Park',112:'Wrigley Field',113:'GABP',114:'Progressive Field',115:'Coors Field',116:'Comerica Park',117:'Minute Maid Park',118:'Kauffman Stadium',119:'Dodger Stadium',120:'Nationals Park',121:'Citi Field',133:'Oakland Coliseum',134:'PNC Park',135:'Petco Park',136:'T-Mobile Park',137:'Oracle Park',138:'Busch Stadium',139:'Tropicana Field',140:'Globe Life Field',141:'Rogers Centre',142:'Target Field',143:'Citizens Bank Park',144:'Truist Park',145:'Guaranteed Rate Field',146:'loanDepot Park',147:'Yankee Stadium',158:'Am. Family Field'};
 
+// ── Imágenes: logos de equipos (SVG oficial) y fotos de jugadores (headshots) ──
+const teamLogo  = id => id?`https://www.mlbstatic.com/team-logos/${id}.svg`:'';
+const playerImg = id => id?`https://midfield.mlbstatic.com/v1/people/${id}/spots/120`:'';
+const IMG_FALLBACK = "this.style.visibility='hidden'";
+const ABBR2ID = {LAA:108,AZ:109,ARI:109,BAL:110,BOS:111,CHC:112,CIN:113,CLE:114,COL:115,DET:116,HOU:117,KC:118,LAD:119,WSH:120,WAS:120,NYM:121,OAK:133,ATH:133,PIT:134,SD:135,SDP:135,SEA:136,SF:137,SFG:137,STL:138,TB:139,TBR:139,TEX:140,TOR:141,MIN:142,PHI:143,ATL:144,CWS:145,CHW:145,MIA:146,NYY:147,MIL:158};
+
 // ── Model weights (trained) ───────────────────────────────────────────────────
 const DEFAULT_W = {w_hp:.7257,w_ap:-.6703,w_ho:.5365,w_ao:-.4919,w_hb:.2767,w_ab:-.2566,w_str:.0,w_hfa:.0823};
 let W = {...DEFAULT_W};
@@ -263,9 +295,43 @@ const cl = (v,a=0,b=1) => Math.max(a,Math.min(b,v));
 const sig = x => 1/(1+Math.exp(-Math.max(-20,Math.min(20,x))));
 const p2ml = p => { p=cl(p,.01,.99); return p>=.5?String(Math.round(-p/(1-p)*100)):'+'+Math.round((1-p)/p*100); };
 const pct  = p => Math.round(p*100)+'%';
-const normCDF = x => { const t=1/(1+.3275911*Math.abs(x)); const y=1-(.254829592+t*(-.284496736+t*(1.421413741+t*(-1.453152027+t*1.061405429))))*t*Math.exp(-x*x/2); return x>=0?y:1-y; };
+// Φ(x) = ½·(1+erf(x/√2)); erf por aproximación A&S 7.1.26 (error < 1.5e-7)
+const erf = z => { const s=z<0?-1:1; z=Math.abs(z); const t=1/(1+.3275911*z); const y=1-(((((1.061405429*t-1.453152027)*t)+1.421413741)*t-.284496736)*t+.254829592)*t*Math.exp(-z*z); return s*y; };
+const normCDF = x => .5*(1+erf(x/Math.SQRT2));
+// Inversa de la normal estándar (probit) — algoritmo de Acklam
+const probit = p => {
+  p=cl(p,1e-9,1-1e-9);
+  const a=[-39.69683028665376,220.9460984245205,-275.9285104469687,138.3577518672690,-30.66479806614716,2.506628277459239];
+  const b=[-54.47609879822406,161.5858368580409,-155.6989798598866,66.80131188771972,-13.28068155288572];
+  const c=[-0.007784894002430293,-0.3223964580411365,-2.400758277161838,-2.549732539343734,4.374664141464968,2.938163982698783];
+  const d=[0.007784695709041462,0.3224671290700398,2.445134137142996,3.754408661907416];
+  const lo=0.02425, hi=1-lo; let q,r;
+  if(p<lo){ q=Math.sqrt(-2*Math.log(p)); return (((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5])/((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1); }
+  if(p<=hi){ q=p-0.5; r=q*q; return (((((a[0]*r+a[1])*r+a[2])*r+a[3])*r+a[4])*r+a[5])*q/(((((b[0]*r+b[1])*r+b[2])*r+b[3])*r+b[4])*r+1); }
+  q=Math.sqrt(-2*Math.log(1-p)); return -(((((c[0]*q+c[1])*q+c[2])*q+c[3])*q+c[4])*q+c[5])/((((d[0]*q+d[1])*q+d[2])*q+d[3])*q+1);
+};
 const $  = id => document.getElementById(id);
 const txt = (id,v) => { const el=$(id); if(el) el.textContent=v; };
+
+// ── Probabilidad sobre una línea ────────────────────────────────────────────
+// P(X > line) con X ~ Poisson(lambda); line es semientero (ej. 6.5)
+const poissonOver = (lambda,line) => {
+  const k=Math.ceil(line); let cdf=0,term=Math.exp(-lambda);
+  for(let i=0;i<k;i++){ cdf+=term; term*=lambda/(i+1); }   // suma P(X<=k-1)
+  return cl(1-cdf,.02,.98);
+};
+// P(X > line) con X ~ Normal(mean,sd)
+const normOver = (mean,sd,line) => cl(1-normCDF((line-mean)/sd),.02,.98);
+const BREAKEVEN = .524; // breakeven real frente al vig de -110
+
+// ── Cuotas americanas / mercado ─────────────────────────────────────────────
+const amProb   = a => a<0 ? (-a)/(-a+100) : 100/(a+100);   // prob implícita (con vig)
+const amPayout = a => a>0 ? a/100 : 100/(-a);              // ganancia por unidad apostada
+const amFmt    = a => (a>0?'+':'')+a;
+const bestAm   = arr => arr.reduce((b,x)=> amPayout(x)>amPayout(b)?x:b);  // mejor línea (line shopping)
+const avg      = arr => arr.reduce((s,x)=>s+x,0)/arr.length;
+const median   = arr => { const s=[...arr].sort((a,b)=>a-b); return s[Math.floor(s.length/2)]; };
+const normName = s => (s||'').toLowerCase().replace(/[^a-z]/g,'');         // "New York Yankees"→"newyorkyankees"
 
 function calcFIP(st, era=4.5) {
   const hr=sf(st.homeRuns,0),bb=sf(st.baseOnBalls,0),hbp=sf(st.hitByPitch,0),k=sf(st.strikeOuts,0),ip=sf(st.inningsPitched,0);
@@ -277,7 +343,7 @@ function calcFIP(st, era=4.5) {
 
 // ── Picks computation ─────────────────────────────────────────────────────────
 function computePicks(data) {
-  const {away,home,homeId,awayPitcher,homePitcher,awayStats,homeStats,awayRecent,homeRecent,awayInj,homeInj} = data;
+  const {away,home,awayId,homeId,awayPitcherId,homePitcherId,awayPitcher,homePitcher,awayStats,homeStats,awayRecent,homeRecent,awayInj,homeInj,odds} = data;
   const pf = PF[homeId]||1.0;
 
   const aOPS = sf(awayStats?.hitting?.ops,.72) - (awayInj?.length>=3?.02:(awayInj?.length>=1?.01:0));
@@ -304,43 +370,93 @@ function computePicks(data) {
   const hwp=sig(logit), awp=1-hwp;
 
   const lg=4.4;
-  const hExp=lg*(1+(.5-hps)*.85)*(1+(aos-.5)*.55)*pf;
-  const aExp=lg*(1+(.5-aps)*.85)*(1+(hos-.5)*.55)*pf;
+  // Carreras esperadas de cada equipo = SU ofensiva vs el pitcher RIVAL (local anota vs pitcher visitante)
+  const hExp=lg*(1+(.5-aps)*.85)*(1+(hos-.5)*.55)*pf;
+  const aExp=lg*(1+(.5-hps)*.85)*(1+(aos-.5)*.55)*pf;
   const total=+(hExp+aExp).toFixed(1);
-  const sigma=Math.sqrt(hExp+aExp)*.9;
+  const totalSigma=Math.sqrt(total)*1.3;         // runs totales: sobre-dispersos respecto a Poisson
   const favHome=hwp>=awp;
-  const rlProb=favHome?normCDF((hExp-aExp-1.5)/sigma):normCDF((aExp-hExp-1.5)/sigma);
-  const totalLine=+(Math.round(total*2)/2-.5).toFixed(1);
-  const totalEdge=total-totalLine;
-  const f5hwp=sig(logit*1.15-.07),f5total=+(total*.545).toFixed(1),f5line=+(Math.round(f5total*2)/2-.5).toFixed(1);
+  // Run line consistente con la prob. de victoria entrenada: margen esperado = SD · probit(hwp)
+  const RUN_SD=3.4;                              // SD empírica del diferencial de carreras en MLB
+  const hMargin=RUN_SD*probit(hwp);             // diferencial esperado del local (+ favorece al local)
+  const rlProb=favHome?normOver(hMargin,RUN_SD,1.5):normOver(-hMargin,RUN_SD,1.5);
+
+  // Total: la línea es la proyección redondeada a .5 (sin el sesgo artificial al OVER)
+  const totalLine=+(Math.round(total*2)/2).toFixed(1);
+  const totalOver=normOver(total,totalSigma,totalLine);
+  const totalPick=totalOver>=.5, totalProb=Math.max(totalOver,1-totalOver);
+
+  // F5: solo abridores (sin bullpen ni racha) y regresado hacia 50% por ser pocos innings
+  const f5logit=(W.w_hp*hps+W.w_ap*aps+W.w_ho*hos+W.w_ao*aos+W.w_hfa)*.9;
+  const f5hwp=sig(f5logit), f5fav=f5hwp>=.5?home:away, f5favP=Math.max(f5hwp,1-f5hwp);
+  const f5total=+(total*.545).toFixed(1);
+  const f5line=+(Math.round(f5total*2)/2).toFixed(1);
+  const f5Over=normOver(f5total,Math.sqrt(f5total)*1.25,f5line);
+  const f5Pick=f5Over>=.5, f5totalProb=Math.max(f5Over,1-f5Over);
+
+  // Ks del abridor ~ Poisson(kExp); elegimos al pitcher con mayor desviación de 50%
   const apGS=Math.max(1,sf(awayPitcher?.gamesStarted,1)),hpGS=Math.max(1,sf(homePitcher?.gamesStarted,1));
   const apIP=sf(awayPitcher?.inningsPitched,0),hpIP=sf(homePitcher?.inningsPitched,0);
   const apExpIP=Math.min(6.5,Math.max(4,apIP/apGS||5.5)),hpExpIP=Math.min(6.5,Math.max(4,hpIP/hpGS||5.5));
   const apKExp=+(apK9/9*apExpIP).toFixed(1),hpKExp=+(hpK9/9*hpExpIP).toFixed(1);
   const apKLine=Math.floor(apKExp)+.5,hpKLine=Math.floor(hpKExp)+.5;
+  const apKover=poissonOver(apKExp,apKLine),hpKover=poissonOver(hpKExp,hpKLine);
+  const aK={name:(data.awayPitcherName||away).split(' ').slice(-1)[0],exp:apKExp,line:apKLine,pOver:apKover};
+  const hK={name:(data.homePitcherName||home).split(' ').slice(-1)[0],exp:hpKExp,line:hpKLine,pOver:hpKover};
+  const bestK=Math.abs(apKover-.5)>=Math.abs(hpKover-.5)?aK:hK;
+  const bestKProb=Math.max(bestK.pOver,1-bestK.pOver);
 
   const picks=[];
-  if(hwp>.52) picks.push({cat:'Money Line',main:`${home} ML ${p2ml(hwp)}`,sub:`Modelo: ${pct(hwp)}`,prob:hwp,edge:+(hwp-.52).toFixed(3)});
-  else picks.push({cat:'Money Line',main:`${away} ML ${p2ml(awp)}`,sub:`Modelo: ${pct(awp)}`,prob:awp,edge:+(awp-.52).toFixed(3)});
-  picks.push({cat:'Total del partido',main:`${totalEdge>0?'OVER':'UNDER'} ${totalLine} runs`,sub:`Proyección: ${total} runs · PF ${pf}`,prob:cl(.50+Math.abs(totalEdge)*.08),edge:+Math.abs(totalEdge*.07).toFixed(3)});
-  picks.push({cat:'Run Line -1.5',main:`${favHome?home:away} -1.5`,sub:`${pct(rlProb)} prob ganar por 2+`,prob:rlProb,edge:+(rlProb-.52).toFixed(3)});
-  const f5fav=f5hwp>=.5?home:away,f5favP=Math.max(f5hwp,1-f5hwp);
-  picks.push({cat:'Primeras 5 Innings',main:`${f5fav} F5 ${p2ml(f5favP)}`,sub:`${pct(f5favP)} en F5`,prob:f5favP,edge:+(f5favP-.52).toFixed(3)});
-  const f5tE=f5total-f5line;
-  picks.push({cat:'F5 Total',main:`${f5tE>0?'OVER':'UNDER'} ${f5line} (F5)`,sub:`Proyección F5: ${f5total}`,prob:cl(.50+Math.abs(f5tE)*.09),edge:+Math.abs(f5tE*.08).toFixed(3)});
-  const bestK=apKExp-apKLine>=hpKExp-hpKLine?{name:(data.awayPitcherName||away).split(' ').slice(-1)[0],exp:apKExp,line:apKLine,edge:+(apKExp-apKLine).toFixed(2)}:{name:(data.homePitcherName||home).split(' ').slice(-1)[0],exp:hpKExp,line:hpKLine,edge:+(hpKExp-hpKLine).toFixed(2)};
-  picks.push({cat:'Ks Pitcher',main:`${bestK.name} ${bestK.edge>=0?'OVER':'UNDER'} ${bestK.line}K`,sub:`Proyección: ${bestK.exp}K`,prob:cl(.50+Math.abs(bestK.edge)*.09),edge:+Math.abs(bestK.edge*.08).toFixed(3)});
+
+  // ── Money Line: edge real = modelo − prob. justa del mercado (sin vig) ──
+  if(odds?.ml){
+    const {fairHome,fairAway,priceHome,priceAway}=odds.ml;
+    const eHome=hwp-fairHome, eAway=awp-fairAway;
+    picks.push(eHome>=eAway
+      ? {cat:'Money Line',main:`${home} ML ${amFmt(priceHome)}`,sub:`Modelo ${pct(hwp)} vs Mercado ${pct(fairHome)}`,prob:hwp,edge:+eHome.toFixed(3),mkt:true}
+      : {cat:'Money Line',main:`${away} ML ${amFmt(priceAway)}`,sub:`Modelo ${pct(awp)} vs Mercado ${pct(fairAway)}`,prob:awp,edge:+eAway.toFixed(3),mkt:true});
+  } else {
+    picks.push(favHome
+      ? {cat:'Money Line',main:`${home} ML ${p2ml(hwp)}`,sub:`Modelo: ${pct(hwp)}`,prob:hwp,edge:+(hwp-BREAKEVEN).toFixed(3)}
+      : {cat:'Money Line',main:`${away} ML ${p2ml(awp)}`,sub:`Modelo: ${pct(awp)}`,prob:awp,edge:+(awp-BREAKEVEN).toFixed(3)});
+  }
+
+  // ── Total: usa la línea del mercado y compara P(over) modelo vs mercado ──
+  if(odds?.total){
+    const line=odds.total.point, mOver=normOver(total,totalSigma,line);
+    const eOver=mOver-odds.total.fairOver, eUnder=(1-mOver)-odds.total.fairUnder;
+    picks.push(eOver>=eUnder
+      ? {cat:'Total del partido',main:`OVER ${line} ${amFmt(odds.total.priceOver)}`,sub:`Proy ${total} · Modelo ${pct(mOver)} vs Mercado ${pct(odds.total.fairOver)} · PF ${pf}`,prob:mOver,edge:+eOver.toFixed(3),mkt:true}
+      : {cat:'Total del partido',main:`UNDER ${line} ${amFmt(odds.total.priceUnder)}`,sub:`Proy ${total} · Modelo ${pct(1-mOver)} vs Mercado ${pct(odds.total.fairUnder)} · PF ${pf}`,prob:1-mOver,edge:+eUnder.toFixed(3),mkt:true});
+  } else {
+    picks.push({cat:'Total del partido',main:`${totalPick?'OVER':'UNDER'} ${totalLine} runs`,sub:`Proyección: ${total} runs · PF ${pf}`,prob:totalProb,edge:+(totalProb-BREAKEVEN).toFixed(3)});
+  }
+
+  // ── Run Line: usa el handicap real del mercado para el favorito ──
+  if(odds?.spread){
+    const homeFav=odds.spread.homePoint<0;
+    const mCover=homeFav?normOver(hMargin,RUN_SD,1.5):normOver(-hMargin,RUN_SD,1.5);
+    const fairCover=homeFav?odds.spread.fairHomeCover:odds.spread.fairAwayCover;
+    const price=homeFav?odds.spread.priceHome:odds.spread.priceAway;
+    const pt=homeFav?odds.spread.homePoint:odds.spread.awayPoint;
+    picks.push({cat:'Run Line',main:`${homeFav?home:away} ${pt} ${amFmt(price)}`,sub:`Modelo ${pct(mCover)} vs Mercado ${pct(fairCover)}`,prob:mCover,edge:+(mCover-fairCover).toFixed(3),mkt:true});
+  } else {
+    picks.push({cat:'Run Line -1.5',main:`${favHome?home:away} -1.5`,sub:`${pct(rlProb)} prob ganar por 2+`,prob:rlProb,edge:+(rlProb-BREAKEVEN).toFixed(3)});
+  }
+  picks.push({cat:'Primeras 5 Innings',main:`${f5fav} F5 ${p2ml(f5favP)}`,sub:`${pct(f5favP)} en F5`,prob:f5favP,edge:+(f5favP-BREAKEVEN).toFixed(3)});
+  picks.push({cat:'F5 Total',main:`${f5Pick?'OVER':'UNDER'} ${f5line} (F5)`,sub:`Proyección F5: ${f5total}`,prob:f5totalProb,edge:+(f5totalProb-BREAKEVEN).toFixed(3)});
+  picks.push({cat:'Ks Pitcher',main:`${bestK.name} ${bestK.pOver>=.5?'OVER':'UNDER'} ${bestK.line}K`,sub:`Proyección: ${bestK.exp}K`,prob:bestKProb,edge:+(bestKProb-BREAKEVEN).toFixed(3)});
 
   picks.sort((a,b)=>b.prob-a.prob);
   const top3=picks.slice(0,3).map(p=>({...p,conf:p.prob>=.58?'High':p.prob>=.53?'Medium':'Low'}));
 
   return {
-    away,home,venue:VENUES[homeId]||'',
+    away,home,awayId,homeId,venue:VENUES[homeId]||'',
     awayWP:+awp.toFixed(4),homeWP:+hwp.toFixed(4),
     awayML:p2ml(awp),homeML:p2ml(hwp),
     total,totalLine,pf,
-    pitchers:{away:{name:data.awayPitcherName||'TBD',era:+apERA.toFixed(2),fip:+apFIP.toFixed(2),k9:+apK9.toFixed(1),kExp:apKExp,kLine:apKLine},
-              home:{name:data.homePitcherName||'TBD',era:+hpERA.toFixed(2),fip:+hpFIP.toFixed(2),k9:+hpK9.toFixed(1),kExp:hpKExp,kLine:hpKLine}},
+    pitchers:{away:{id:awayPitcherId,name:data.awayPitcherName||'TBD',era:+apERA.toFixed(2),fip:+apFIP.toFixed(2),k9:+apK9.toFixed(1),kExp:apKExp,kLine:apKLine},
+              home:{id:homePitcherId,name:data.homePitcherName||'TBD',era:+hpERA.toFixed(2),fip:+hpFIP.toFixed(2),k9:+hpK9.toFixed(1),kExp:hpKExp,kLine:hpKLine}},
     picks:top3,allPicks:picks,
     features:{hps,aps,hos,aos,hbs,abs:abs2,str},
   };
@@ -378,9 +494,62 @@ async function getTopBatters(id,yr) {
       const pa=parseInt(st.plateAppearances||0),k=parseInt(st.strikeOuts||0),bb=parseInt(st.baseOnBalls||0);
       const h=parseInt(st.hits||0),d2=parseInt(st.doubles||0),t=parseInt(st.triples||0),hr=parseInt(st.homeRuns||0);
       const woba=pa>0?+((bb*.69+(h-d2-t-hr)*.88+d2*1.21+t*1.57+hr*2.10)/pa).toFixed(3):0;
-      return {name:p.fullName||'?',pos,ba:parseFloat(st.avg||0),obp:parseFloat(st.obp||0),slg:parseFloat(st.slg||0),ops:parseFloat(st.ops||0),hr,rbi:parseInt(st.rbi||0),ab:parseInt(st.atBats||0),kpct:pa>0?+(k/pa*100).toFixed(1):0,woba};
+      return {id:p.id,name:p.fullName||'?',pos,ba:parseFloat(st.avg||0),obp:parseFloat(st.obp||0),slg:parseFloat(st.slg||0),ops:parseFloat(st.ops||0),hr,rbi:parseInt(st.rbi||0),ab:parseInt(st.atBats||0),kpct:pa>0?+(k/pa*100).toFixed(1):0,woba};
     }).filter(p=>p.ab>=20&&!['P','SP','RP','TWP'].includes(p.pos)).sort((a,b)=>b.ops-a.ops).slice(0,9);
   }catch{return[];}
+}
+
+// ── The Odds API (cuotas reales) ────────────────────────────────────────────
+const ODDS_BASE = 'https://api.the-odds-api.com/v4';
+const getOddsKey = () => localStorage.getItem('odds_api_key') || '';
+const saveOddsKey = v => { v=v.trim(); v?localStorage.setItem('odds_api_key',v):localStorage.removeItem('odds_api_key'); };
+
+// Devuelve un mapa { "homeNorm|awayNorm": {ml,total,spread} } con consenso entre casas.
+// Cada mercado trae probabilidades JUSTAS (sin vig) y la mejor línea disponible.
+async function getOdds(date) {
+  const key = getOddsKey();
+  if (!key) return {};
+  try {
+    const from = `${date}T00:00:00Z`, to = `${date}T23:59:59Z`;
+    const url = `${ODDS_BASE}/sports/baseball_mlb/odds?apiKey=${key}&regions=us&markets=h2h,spreads,totals&oddsFormat=american&commenceTimeFrom=${from}&commenceTimeTo=${to}`;
+    const r = await fetch(url);
+    if (!r.ok) throw new Error('Odds API ' + r.status);
+    const events = await r.json();
+    const map = {};
+    for (const ev of events) {
+      const home = ev.home_team, away = ev.away_team;
+      const mlPairs = [], totPairs = [], spPairs = [];
+      for (const bk of ev.bookmakers || []) {
+        for (const mk of bk.markets || []) {
+          if (mk.key === 'h2h') {
+            let h, a; for (const oc of mk.outcomes) { if (oc.name === home) h = oc.price; else if (oc.name === away) a = oc.price; }
+            if (h != null && a != null) mlPairs.push({ h, a });
+          } else if (mk.key === 'totals') {
+            let ov, un, pt; for (const oc of mk.outcomes) { if (oc.name === 'Over') { ov = oc.price; pt = oc.point; } else if (oc.name === 'Under') un = oc.price; }
+            if (ov != null && un != null) totPairs.push({ point: pt, over: ov, under: un });
+          } else if (mk.key === 'spreads') {
+            let hp, hpr, ap, apr; for (const oc of mk.outcomes) { if (oc.name === home) { hp = oc.point; hpr = oc.price; } else if (oc.name === away) { ap = oc.point; apr = oc.price; } }
+            if (hpr != null && apr != null) spPairs.push({ hp, hpr, ap, apr });
+          }
+        }
+      }
+      const o = {};
+      if (mlPairs.length) {
+        const fh = avg(mlPairs.map(p => { const ih = amProb(p.h), ia = amProb(p.a); return ih / (ih + ia); }));
+        o.ml = { fairHome: fh, fairAway: 1 - fh, priceHome: bestAm(mlPairs.map(p => p.h)), priceAway: bestAm(mlPairs.map(p => p.a)) };
+      }
+      if (totPairs.length) {
+        const fo = avg(totPairs.map(p => { const io = amProb(p.over), iu = amProb(p.under); return io / (io + iu); }));
+        o.total = { point: median(totPairs.map(p => p.point)), fairOver: fo, fairUnder: 1 - fo, priceOver: bestAm(totPairs.map(p => p.over)), priceUnder: bestAm(totPairs.map(p => p.under)) };
+      }
+      if (spPairs.length) {
+        const fhc = avg(spPairs.map(p => { const ih = amProb(p.hpr), ia = amProb(p.apr); return ih / (ih + ia); }));
+        o.spread = { homePoint: median(spPairs.map(p => p.hp)), awayPoint: median(spPairs.map(p => p.ap)), fairHomeCover: fhc, fairAwayCover: 1 - fhc, priceHome: bestAm(spPairs.map(p => p.hpr)), priceAway: bestAm(spPairs.map(p => p.apr)) };
+      }
+      map[normName(home) + '|' + normName(away)] = o;
+    }
+    return map;
+  } catch (e) { console.warn('getOdds:', e.message); return {}; }
 }
 
 // ── State ─────────────────────────────────────────────────────────────────────
@@ -401,6 +570,9 @@ async function runAnalysis() {
 
     if(!games.length){$('picks-area').innerHTML='<div class="empty">No hay partidos para esta fecha.</div>';return;}
     $('run-status').textContent=`Analizando ${games.length} partidos...`;
+
+    const oddsMap = await getOdds(date);
+    const oddsCount = Object.keys(oddsMap).length;
 
     const results=[];
     const batchBatters=[];
@@ -423,10 +595,12 @@ async function runAnalysis() {
         homeId: hId, awayId: aId,
         awayPitcherName: g.teams.away.probablePitcher?.fullName||'TBD',
         homePitcherName: g.teams.home.probablePitcher?.fullName||'TBD',
+        awayPitcherId: apId, homePitcherId: hpId,
         awayPitcher: apSt, homePitcher: hpSt,
         awayStats: aTSt, homeStats: hTSt,
         awayRecent: aWL, homeRecent: hWL,
         awayInj: aInj, homeInj: hInj,
+        odds: oddsMap[normName(g.teams.home.team.name)+'|'+normName(g.teams.away.team.name)] || null,
       });
       gd.gamePk    = g.gamePk;
       gd.time      = g.gameDate;
@@ -456,7 +630,8 @@ async function runAnalysis() {
     $('stats-bar').style.display='grid';
     txt('s-games',results.length); txt('s-high',high); txt('s-med',med);
     txt('s-overs',overs); txt('s-parlays',allParlays.length);
-    $('run-status').textContent=`✅ ${results.length} partidos analizados`;
+    $('run-status').textContent=`✅ ${results.length} partidos analizados`+
+      (getOddsKey()?(oddsCount?` · 📈 cuotas reales (${oddsCount} partidos)`:` · ⚠ sin cuotas (revisa API key o fecha)`):` · sin cuotas (edge vs -110)`);
 
   } catch(e) {
     $('picks-area').innerHTML=`<div class="error-box"><i class="ti ti-alert-circle"></i> ${e.message}</div>`;
@@ -498,13 +673,13 @@ function renderPicks(games) {
     const barW=awp+'%';
     return `<div class="card">
       <div class="card-hdr">
-        <span class="card-hdr-title">⚾ ${g.away} @ ${g.home}</span>
+        <span class="card-hdr-title"><img class="logo-xs" src="${teamLogo(g.awayId)}" onerror="${IMG_FALLBACK}"> ${g.away} <span style="color:var(--text3)">@</span> <img class="logo-xs" src="${teamLogo(g.homeId)}" onerror="${IMG_FALLBACK}"> ${g.home}</span>
         <span style="font-size:10px;color:var(--text3)">${g.venue}</span>
       </div>
       <div class="game-matchup">
-        <div class="team-away"><div class="team-name">${g.away}</div><div class="team-pct" style="color:var(--blue)">${awp}%</div><div class="team-ml">${g.awayML}</div></div>
+        <div class="team-away"><img class="team-logo-img" src="${teamLogo(g.awayId)}" onerror="${IMG_FALLBACK}"><div class="team-name">${g.away}</div><div class="team-pct" style="color:var(--blue)">${awp}%</div><div class="team-ml">${g.awayML}</div></div>
         <div class="vs">@</div>
-        <div class="team-home"><div class="team-name">${g.home}</div><div class="team-pct" style="color:var(--green)">${hwp}%</div><div class="team-ml">${g.homeML}</div></div>
+        <div class="team-home"><img class="team-logo-img" src="${teamLogo(g.homeId)}" onerror="${IMG_FALLBACK}"><div class="team-name">${g.home}</div><div class="team-pct" style="color:var(--green)">${hwp}%</div><div class="team-ml">${g.homeML}</div></div>
       </div>
       <div class="prob-bar"><div class="prob-away" style="width:${barW}"></div><div class="prob-home" style="flex:1"></div></div>
       <div class="picks">
@@ -514,7 +689,7 @@ function renderPicks(games) {
             <div class="pick-accent"></div>
             <div class="pick-badge"><span class="icon">${lbl.split(' ')[0]}</span><span class="label">${lbl.split(' ')[1]||''}</span></div>
             <div class="pick-body"><div class="pick-cat">${p.cat}</div><div class="pick-main">${p.main}</div><div class="pick-sub">${p.sub||''}</div></div>
-            <div class="pick-pct"><div class="pick-prob">${pct(p.prob)}</div><div class="pick-edge">edge +${(p.edge*100).toFixed(1)}%</div></div>
+            <div class="pick-pct"><div class="pick-prob">${pct(p.prob)}</div><div class="pick-edge">edge ${p.edge>=0?'+':''}${(p.edge*100).toFixed(1)}%</div></div>
           </div>`;
         }).join('')}
       </div>
@@ -572,8 +747,8 @@ function renderParlays(parlays) {
 // ── Pitchers ──────────────────────────────────────────────────────────────────
 function renderPitchers(games) {
   const pitchers = games.flatMap(g=>[
-    {...g.pitchers.away,team:g.away,opp:g.home,matchup:`${g.away} @ ${g.home}`},
-    {...g.pitchers.home,team:g.home,opp:g.away,matchup:`${g.away} @ ${g.home}`},
+    {...g.pitchers.away,team:g.away,teamId:g.awayId,opp:g.home,matchup:`${g.away} @ ${g.home}`},
+    {...g.pitchers.home,team:g.home,teamId:g.homeId,opp:g.away,matchup:`${g.away} @ ${g.home}`},
   ]).filter(p=>p.name!=='TBD').sort((a,b)=>b.k9-a.k9);
 
   $('pitchers-area').innerHTML=pitchers.map(p=>{
@@ -581,7 +756,13 @@ function renderPitchers(games) {
     const rec=ke>.3?'OVER':ke<-.3?'UNDER':'—';
     const recColor=ke>.3?'var(--green)':ke<-.3?'var(--red)':'var(--text3)';
     return `<div class="card">
-      <div class="card-hdr"><span class="card-hdr-title">${p.name}</span><span style="font-size:10px;color:var(--text2)">${p.team} vs ${p.opp}</span></div>
+      <div class="card-hdr">
+        <span class="card-hdr-title" style="display:flex;align-items:center;gap:10px">
+          <img class="headshot" src="${playerImg(p.id)}" onerror="${IMG_FALLBACK}">
+          <span><span style="display:block">${p.name}</span><span style="font-size:10px;color:var(--text2);font-weight:400;display:flex;align-items:center;gap:4px"><img class="logo-xs" src="${teamLogo(p.teamId)}" onerror="${IMG_FALLBACK}">${p.team} vs ${p.opp}</span></span>
+        </span>
+        <span style="font-size:13px;font-weight:700;color:${recColor}">${rec} ${p.kLine}K</span>
+      </div>
       <div style="display:flex;gap:8px;padding:10px 12px;flex-wrap:wrap">
         ${[['ERA',p.era],['FIP',p.fip],['K/9',p.k9],['Ks Exp.',p.kExp],['Línea',p.kLine]].map(([l,v])=>`
           <div style="background:var(--bg3);border-radius:var(--rs);padding:6px 12px;text-align:center;min-width:60px">
@@ -616,8 +797,8 @@ function renderBatters(batData) {
       <tbody>${rows.map((r,i)=>{
         const hp=r.hitP>=.74?'var(--green)':r.hitP>=.68?'var(--amber)':'var(--text2)';
         return `<tr style="${i%2?'background:var(--bg)':''}">
-          <td><strong>${r.name}</strong><div style="font-size:9px;color:var(--text3)">${r.pos}</div></td>
-          <td><span style="font-size:10px;padding:1px 6px;border-radius:3px;background:var(--bg3);font-weight:700">${r.team}</span></td>
+          <td><div style="display:flex;align-items:center;gap:8px"><img class="headshot-sm" src="${playerImg(r.id)}" onerror="${IMG_FALLBACK}"><div><strong>${r.name}</strong><div style="font-size:9px;color:var(--text3)">${r.pos}</div></div></div></td>
+          <td><span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;padding:1px 6px;border-radius:3px;background:var(--bg3);font-weight:700"><img class="logo-xs" src="${teamLogo(ABBR2ID[r.team])}" onerror="${IMG_FALLBACK}">${r.team}</span></td>
           <td style="font-size:10px;color:var(--text2)">${(r.pitcher||'').split(' ').slice(-1)[0]||'—'}</td>
           <td style="font-weight:700">${r.ba.toFixed(3)}</td>
           <td>${r.obp.toFixed(3)}</td><td>${r.slg.toFixed(3)}</td><td>${r.ops.toFixed(3)}</td>
@@ -729,6 +910,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   const today=new Date();
   $('date-pick').value=today.toISOString().slice(0,10);
   $('hdr-date').textContent=today.toLocaleDateString('es-MX',{weekday:'short',month:'short',day:'numeric'});
+  $('odds-key').value=getOddsKey();
 
   // Test Supabase connection
   const {error} = await sb.from('predictions').select('id',{count:'exact',head:true});
@@ -755,7 +937,7 @@ async function restoreToday() {
     try{picks=JSON.parse(r.all_picks_json||'[]');}catch{}
     if(!picks.length&&r.top_pick_main) picks=[{cat:r.top_pick_cat||'',main:r.top_pick_main,prob:r.top_pick_prob||.55,edge:r.top_pick_edge||0,conf:r.confidence||'Medium',sub:''}];
     return {
-      away:r.away, home:r.home, venue:r.venue||'',
+      away:r.away, home:r.home, awayId:ABBR2ID[r.away], homeId:ABBR2ID[r.home], venue:r.venue||'',
       awayWP:r.away_wp||.5, homeWP:r.home_wp||.5,
       awayML:r.away_ml||'—', homeML:r.home_ml||'—',
       total:r.predicted_total||0, totalLine:0, pf:1.0,

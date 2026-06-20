@@ -225,6 +225,9 @@ input[type=range]{width:100%;accent-color:var(--gold)}
         <input type="password" id="odds-key" placeholder="The Odds API key (opcional)" autocomplete="off"
           style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:7px 10px;font-size:12px;color:var(--text);font-family:inherit;outline:none;min-width:200px"
           onchange="saveOddsKey(this.value)">
+        <label title="Trae la línea real de ponches por pitcher. Usa 1 petición extra por partido." style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer">
+          <input type="checkbox" id="kprops-chk" onchange="saveKProps(this.checked)" style="accent-color:var(--gold)"> Props Ks reales
+        </label>
         <span id="run-status" style="font-size:11px;color:var(--text3)"></span>
       </div>
       <div class="legend">
@@ -493,17 +496,14 @@ function computePicks(data) {
   const f5Over=normOver(f5total,Math.sqrt(f5total)*1.25,f5line);
   const f5Pick=f5Over>=.5, f5totalProb=Math.max(f5Over,1-f5Over);
 
-  // Ks del abridor ~ Poisson(kExp); elegimos al pitcher con mayor desviación de 50%
+  // Ks del abridor: proyección del modelo (solo informativa en la pestaña Lanzadores)
   const apGS=Math.max(1,sf(awayPitcher?.gamesStarted,1)),hpGS=Math.max(1,sf(homePitcher?.gamesStarted,1));
   const apIP=sf(awayPitcher?.inningsPitched,0),hpIP=sf(homePitcher?.inningsPitched,0);
   const apExpIP=Math.min(6.5,Math.max(4,apIP/apGS||5.5)),hpExpIP=Math.min(6.5,Math.max(4,hpIP/hpGS||5.5));
   const apKExp=+(apK9/9*apExpIP).toFixed(1),hpKExp=+(hpK9/9*hpExpIP).toFixed(1);
-  const apKLine=Math.floor(apKExp)+.5,hpKLine=Math.floor(hpKExp)+.5;
-  const apKover=poissonOver(apKExp,apKLine),hpKover=poissonOver(hpKExp,hpKLine);
-  const aK={name:(data.awayPitcherName||away).split(' ').slice(-1)[0],exp:apKExp,line:apKLine,pOver:apKover};
-  const hK={name:(data.homePitcherName||home).split(' ').slice(-1)[0],exp:hpKExp,line:hpKLine,pOver:hpKover};
-  const bestK=Math.abs(apKover-.5)>=Math.abs(hpKover-.5)?aK:hK;
-  const bestKProb=Math.max(bestK.pOver,1-bestK.pOver);
+  const apKLine=Math.floor(apKExp)+.5,hpKLine=Math.floor(hpKExp)+.5;   // línea del modelo (solo si no hay línea de casa)
+  const aKMkt=data.kprops?.[normName(data.awayPitcherName)]||null;     // línea REAL del mercado (The Odds API)
+  const hKMkt=data.kprops?.[normName(data.homePitcherName)]||null;
 
   const picks=[];
 
@@ -544,7 +544,7 @@ function computePicks(data) {
   }
   picks.push({cat:'Primeras 5 Innings',main:`${f5fav} F5 ${p2ml(f5favP)}`,sub:`${pct(f5favP)} en F5`,prob:f5favP,edge:+(f5favP-BREAKEVEN).toFixed(3)});
   picks.push({cat:'F5 Total',main:`${f5Pick?'OVER':'UNDER'} ${f5line} (F5)`,sub:`Proyección F5: ${f5total}`,prob:f5totalProb,edge:+(f5totalProb-BREAKEVEN).toFixed(3)});
-  picks.push({cat:'Ks Pitcher',main:`${bestK.name} ${bestK.pOver>=.5?'OVER':'UNDER'} ${bestK.line}K`,sub:`Proyección: ${bestK.exp}K`,prob:bestKProb,edge:+(bestKProb-BREAKEVEN).toFixed(3)});
+  // Nota: los Ks de pitcher NO van como pick del partido; se muestran en la pestaña "Lanzadores".
 
   // Stake sugerido (medio-Kelly, % del bankroll) solo cuando hay cuota real y edge positivo
   picks.forEach(p=>{ p.stake = (p.price!=null && p.edge>0) ? +(KELLY_FRAC*kelly(p.prob,p.price)*100).toFixed(1) : 0; });
@@ -557,8 +557,8 @@ function computePicks(data) {
     awayWP:+awp.toFixed(4),homeWP:+hwp.toFixed(4),
     awayML:p2ml(awp),homeML:p2ml(hwp),
     total,totalLine,pf,
-    pitchers:{away:{id:awayPitcherId,name:data.awayPitcherName||'TBD',era:+apERA.toFixed(2),fip:+apFIP.toFixed(2),k9:+apK9.toFixed(1),kExp:apKExp,kLine:apKLine},
-              home:{id:homePitcherId,name:data.homePitcherName||'TBD',era:+hpERA.toFixed(2),fip:+hpFIP.toFixed(2),k9:+hpK9.toFixed(1),kExp:hpKExp,kLine:hpKLine}},
+    pitchers:{away:{id:awayPitcherId,name:data.awayPitcherName||'TBD',era:+apERA.toFixed(2),fip:+apFIP.toFixed(2),k9:+apK9.toFixed(1),kExp:apKExp,kLine:apKLine,kMkt:aKMkt},
+              home:{id:homePitcherId,name:data.homePitcherName||'TBD',era:+hpERA.toFixed(2),fip:+hpFIP.toFixed(2),k9:+hpK9.toFixed(1),kExp:hpKExp,kLine:hpKLine,kMkt:hKMkt}},
     picks:top3,allPicks:picks,
     features:{hps,aps,hos,aos,hbs,abs:abs2,str},
   };
@@ -606,12 +606,44 @@ const ODDS_BASE = 'https://api.the-odds-api.com/v4';
 const getOddsKey = () => localStorage.getItem('odds_api_key') || '';
 const saveOddsKey = v => { v=v.trim(); v?localStorage.setItem('odds_api_key',v):localStorage.removeItem('odds_api_key'); };
 let oddsRemaining = null;  // peticiones restantes del plan (header x-requests-remaining)
+const getKProps = () => localStorage.getItem('kprops_off')!=='1';   // props de Ks activas por defecto
+const saveKProps = on => on?localStorage.removeItem('kprops_off'):localStorage.setItem('kprops_off','1');
+
+// Props de ponches (pitcher_strikeouts): línea REAL de las casas. 1 petición por partido.
+async function getStrikeoutProps(key, events) {
+  const byPitcher = {};
+  for (const ev of events) {
+    try {
+      const url = `${ODDS_BASE}/sports/baseball_mlb/events/${ev.id}/odds?apiKey=${key}&regions=us&markets=pitcher_strikeouts&oddsFormat=american`;
+      const r = await fetch(url); if (!r.ok) continue;
+      const rem = r.headers.get('x-requests-remaining'); if (rem != null) oddsRemaining = rem;
+      const d = await r.json();
+      const agg = {};   // nombre pitcher -> [{point,over,under}]
+      (d.bookmakers || []).forEach(bk => (bk.markets || []).forEach(mk => {
+        if (mk.key !== 'pitcher_strikeouts') return;
+        const byName = {};
+        (mk.outcomes || []).forEach(oc => {
+          const n = oc.description || oc.participant || ''; if (!n) return;
+          (byName[n] = byName[n] || {});
+          if (oc.name === 'Over')  { byName[n].over = oc.price; byName[n].point = oc.point; }
+          if (oc.name === 'Under') { byName[n].under = oc.price; byName[n].point = oc.point; }
+        });
+        Object.entries(byName).forEach(([n, v]) => { if (v.over != null && v.under != null) (agg[n] = agg[n] || []).push(v); });
+      }));
+      Object.entries(agg).forEach(([n, arr]) => {
+        const fo = avg(arr.map(v => { const io = amProb(v.over), iu = amProb(v.under); return io / (io + iu); }));
+        byPitcher[normName(n)] = { name: n, line: median(arr.map(v => v.point)), fairOver: fo, fairUnder: 1 - fo, priceOver: bestAm(arr.map(v => v.over)), priceUnder: bestAm(arr.map(v => v.under)) };
+      });
+    } catch {}
+  }
+  return byPitcher;
+}
 
 // Devuelve un mapa { "homeNorm|awayNorm": {ml,total,spread} } con consenso entre casas.
 // Cada mercado trae probabilidades JUSTAS (sin vig) y la mejor línea disponible.
 async function getOdds(date) {
   const key = getOddsKey();
-  if (!key) return {};
+  if (!key) return { map: {}, kprops: {} };
   try {
     const from = `${date}T00:00:00Z`, to = `${date}T23:59:59Z`;
     const url = `${ODDS_BASE}/sports/baseball_mlb/odds?apiKey=${key}&regions=us&markets=h2h,spreads,totals&oddsFormat=american&commenceTimeFrom=${from}&commenceTimeTo=${to}`;
@@ -653,8 +685,10 @@ async function getOdds(date) {
       const key = normName(home) + '|' + normName(away);
       (map[key] = map[key] || []).push(o);   // array: soporta doubleheaders (mismo matchup 2 veces)
     }
-    return map;
-  } catch (e) { console.warn('getOdds:', e.message); return {}; }
+    // Props de ponches (línea real de Ks por pitcher), si están activadas
+    const kprops = getKProps() ? await getStrikeoutProps(key, events) : {};
+    return { map, kprops };
+  } catch (e) { console.warn('getOdds:', e.message); return { map: {}, kprops: {} }; }
 }
 
 // Elige las cuotas del evento cuyo horario está más cerca del partido (doubleheaders)
@@ -705,7 +739,7 @@ async function runAnalysis() {
     if(!games.length){$('picks-area').innerHTML='<div class="empty">No hay partidos para esta fecha.</div>';return;}
     $('run-status').textContent=`Analizando ${games.length} partidos...`;
 
-    const oddsMap = await getOdds(date);
+    const {map:oddsMap, kprops} = await getOdds(date);
     const oddsCount = Object.keys(oddsMap).length;
 
     const results=[];
@@ -734,7 +768,7 @@ async function runAnalysis() {
         awayPitcher: apSt, homePitcher: hpSt,
         awayStats: aTSt, homeStats: hTSt,
         awayRecent: aWL, homeRecent: hWL,
-        awayInj: aInj, homeInj: hInj, wx,
+        awayInj: aInj, homeInj: hInj, wx, kprops,
         odds: pickOdds(oddsMap, g.teams.home.team.name, g.teams.away.team.name, g.gameDate),
       });
       gd.gamePk    = g.gamePk;
@@ -913,28 +947,44 @@ function renderPitchers(games) {
   ]).filter(p=>p.name!=='TBD').sort((a,b)=>b.k9-a.k9);
 
   $('pitchers-area').innerHTML=pitchers.map(p=>{
-    const ke=p.kExp-p.kLine;
-    const rec=ke>.3?'OVER':ke<-.3?'UNDER':'—';
-    const recColor=ke>.3?'var(--green)':ke<-.3?'var(--red)':'var(--text3)';
+    const mkt=p.kMkt;
+    let line, lineSrc, rec, recColor, badge, sub;
+    if(mkt){
+      line=mkt.line; lineSrc='casa';
+      if(line<3.5){
+        // Línea muy baja = salida corta/opener: el modelo (que asume abridor completo) no aplica
+        rec='—'; recColor='var(--text3)';
+        badge=`casa ${line}K`;
+        sub=`Línea de casa ${line}K · Mercado: Over ${pct(mkt.fairOver)} / Under ${pct(mkt.fairUnder)} · ⚠ salida corta (proyección del modelo no aplica)`;
+      } else {
+        const mOver=poissonOver(p.kExp,line), over=mOver>=.5;
+        const modelP=over?mOver:1-mOver, fair=over?mkt.fairOver:mkt.fairUnder, price=over?mkt.priceOver:mkt.priceUnder;
+        const edge=modelP-fair, stake=edge>0?+(KELLY_FRAC*kelly(modelP,price)*100).toFixed(1):0;
+        rec=over?'OVER':'UNDER'; recColor=edge>0?(over?'var(--green)':'var(--red)'):'var(--text3)';  // sin valor => neutro
+        badge=`${rec} ${line}K ${amFmt(price)}`;
+        sub=`Proy ${p.kExp}K · Modelo ${pct(modelP)} vs Mercado ${pct(fair)} · edge ${edge>=0?'+':''}${(edge*100).toFixed(1)}%${stake>0?` · apostar ${stake}%`:''}`;
+      }
+    } else {
+      line=p.kLine; lineSrc='modelo'; rec='proy'; recColor='var(--text3)';
+      badge=`~${p.kExp}K`;
+      sub=`Proyección del modelo: ${p.kExp}K · sin línea de casa`;
+    }
     return `<div class="card">
       <div class="card-hdr">
         <span class="card-hdr-title" style="display:flex;align-items:center;gap:10px">
           <img class="headshot" src="${playerImg(p.id)}" onerror="${IMG_FALLBACK}">
           <span><span style="display:block">${p.name}</span><span style="font-size:10px;color:var(--text2);font-weight:400;display:flex;align-items:center;gap:4px"><img class="logo-xs" src="${teamLogo(p.teamId)}" onerror="${IMG_FALLBACK}">${p.team} vs ${p.opp}</span></span>
         </span>
-        <span style="font-size:13px;font-weight:700;color:${recColor}">${rec} ${p.kLine}K</span>
+        <span style="font-size:13px;font-weight:700;color:${recColor}">${badge}</span>
       </div>
       <div style="display:flex;gap:8px;padding:10px 12px;flex-wrap:wrap">
-        ${[['ERA',p.era],['FIP',p.fip],['K/9',p.k9],['Ks Exp.',p.kExp],['Línea',p.kLine]].map(([l,v])=>`
+        ${[['ERA',p.era],['FIP',p.fip],['K/9',p.k9],['Ks Exp.',p.kExp],[`Línea (${lineSrc})`,line]].map(([l,v])=>`
           <div style="background:var(--bg3);border-radius:var(--rs);padding:6px 12px;text-align:center;min-width:60px">
             <div style="font-size:9px;color:var(--text3)">${l}</div>
             <div style="font-size:14px;font-weight:700;color:${['K/9','Ks Exp.'].includes(l)?'var(--green)':'var(--text)'}">${v}</div>
           </div>`).join('')}
       </div>
-      <div style="padding:6px 12px 10px;display:flex;justify-content:space-between;align-items:center">
-        <span style="font-size:10px;color:var(--text2)">Prop Ks: proyección ${p.kExp}K · línea ${p.kLine}K</span>
-        <span style="font-size:13px;font-weight:700;color:${recColor}">${rec} ${p.kLine}K</span>
-      </div>
+      <div style="padding:6px 12px 10px;font-size:10px;color:var(--text2)">${sub}</div>
     </div>`;
   }).join('');
 }
@@ -1128,6 +1178,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('date-pick').value=today.toISOString().slice(0,10);
   $('hdr-date').textContent=today.toLocaleDateString('es-MX',{weekday:'short',month:'short',day:'numeric'});
   $('odds-key').value=getOddsKey();
+  $('kprops-chk').checked=getKProps();
 
   // Restaurar sesión (si el dueño ya inició sesión antes)
   const {data:sd} = await sb.auth.getSession();

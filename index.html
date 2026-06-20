@@ -498,9 +498,15 @@ function computePicks(data) {
 
   const lg=4.4;
   const wxF=wxFactor(data.wx);   // ajuste por temperatura (1.0 si techado / sin dato)
-  // Carreras esperadas de cada equipo = SU ofensiva vs el pitcher RIVAL (local anota vs pitcher visitante)
-  const hExp=lg*(1+(.5-aps)*.85)*(1+(hos-.5)*.55)*pf*wxF;
-  const aExp=lg*(1+(.5-hps)*.85)*(1+(aos-.5)*.55)*pf*wxF;
+  // El abridor lanza ~60% del juego; el bullpen cubre el resto (cerca del promedio).
+  // Mezclar abridor+bullpen evita sub-proyectar totales en duelos de ases (antes daba ~5.5 irreal).
+  const SF=.6, KP=.6;                            // fracción del abridor · fuerza de supresión
+  const kF=s=>1+(.5-s)*KP;                        // factor de carreras por calidad de quien lanza
+  const oF=o=>1+(o-.5)*.55;                       // factor por ofensiva
+  const awayStaff=SF*kF(aps)+(1-SF)*kF(abs2);    // pitcheo visitante (abridor+bullpen) que enfrenta al local
+  const homeStaff=SF*kF(hps)+(1-SF)*kF(hbs);     // pitcheo local que enfrenta al visitante
+  const hExp=lg*oF(hos)*awayStaff*pf*wxF;        // carreras del local = su ofensiva vs pitcheo visitante
+  const aExp=lg*oF(aos)*homeStaff*pf*wxF;
   const total=+(hExp+aExp).toFixed(1);
   const totalSigma=Math.sqrt(total)*1.3;         // runs totales: sobre-dispersos respecto a Poisson
   const favHome=hwp>=awp;

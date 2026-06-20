@@ -451,7 +451,8 @@ const amFmt    = a => (a>0?'+':'')+a;
 const bestAm   = arr => arr.reduce((b,x)=> amPayout(x)>amPayout(b)?x:b);  // mejor línea (line shopping)
 const avg      = arr => arr.reduce((s,x)=>s+x,0)/arr.length;
 const median   = arr => { const s=[...arr].sort((a,b)=>a-b); return s[Math.floor(s.length/2)]; };
-const normName = s => (s||'').toLowerCase().replace(/[^a-z]/g,'');         // "New York Yankees"→"newyorkyankees"
+// Normaliza acentos a ASCII y deja solo letras: "Cristopher Sánchez"→"cristophersanchez"
+const normName = s => (s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/[^a-z]/g,'');
 const amDec    = a => a>0 ? 1+a/100 : 1+100/(-a);                          // americana → decimal
 // Fracción de Kelly: f* = (b·p − (1−p))/b, con b = cuota decimal − 1. Devuelve 0 si no hay valor.
 const kelly    = (p,american) => { const b=amDec(american)-1; return b<=0?0:Math.max(0,(b*p-(1-p))/b); };

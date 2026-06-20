@@ -414,6 +414,16 @@ const VENUE_GEO = {
 };
 // Factor climático sobre carreras: ~0.3%/°F respecto a 70°F base; acotado a ±6%
 const wxFactor = wx => (!wx || wx.temp==null) ? 1 : cl(1+(wx.temp-70)*0.003, 0.94, 1.06);
+// Orientación aproximada home->jardín central (grados, 0=N) por estadio, para el viento
+const VENUE_BEARING = {108:45,110:33,111:45,112:30,113:60,114:5,115:0,116:30,118:50,119:25,120:30,121:25,133:60,134:70,135:45,136:60,137:80,138:70,142:75,143:30,144:70,145:55,147:30};
+// Factor por VIENTO: componente que sopla hacia el jardín (sale = más carreras). Acotado ±4%.
+// dir = de dónde viene el viento (meteorológico); sopla hacia (dir+180).
+const windFactor = (wx,bearing) => {
+  if(!wx || wx.wind==null || wx.windDir==null || bearing==null) return 1;
+  const toward=(wx.windDir+180)%360, diff=(toward-bearing+540)%360-180;   // ángulo vs el central
+  const outward=Math.cos(diff*Math.PI/180)*wx.wind;                        // mph soplando hacia afuera (+) o adentro (-)
+  return cl(1+outward*0.004, 0.96, 1.04);                                  // ~0.4%/mph, acotado
+};
 
 // ── Imágenes: logos de equipos (SVG oficial) y fotos de jugadores (headshots) ──
 const teamLogo  = id => id?`https://www.mlbstatic.com/team-logos/${id}.svg`:'';
@@ -539,7 +549,7 @@ function computePicks(data) {
   const hwp=sig(logit), awp=1-hwp;
 
   const lg=4.4;
-  const wxF=wxFactor(data.wx);   // ajuste por temperatura (1.0 si techado / sin dato)
+  const wxF=wxFactor(data.wx)*windFactor(data.wx,VENUE_BEARING[homeId]);   // temperatura × viento (1.0 si techado)
   // El abridor lanza ~60% del juego; el bullpen cubre el resto (cerca del promedio).
   // Mezclar abridor+bullpen evita sub-proyectar totales en duelos de ases (antes daba ~5.5 irreal).
   const SF=.6, KP=.6;                            // fracción del abridor · fuerza de supresión
@@ -874,7 +884,7 @@ async function getWeather(geo, date, gameISO) {
   try {
     const next = new Date(new Date(date).getTime() + 864e5).toISOString().slice(0,10);
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${geo.lat}&longitude=${geo.lon}`
-      + `&hourly=temperature_2m,wind_speed_10m&temperature_unit=fahrenheit&wind_speed_unit=mph`
+      + `&hourly=temperature_2m,wind_speed_10m,wind_direction_10m&temperature_unit=fahrenheit&wind_speed_unit=mph`
       + `&timezone=UTC&start_date=${date}&end_date=${next}`;
     const r = await fetch(url); if (!r.ok) return null;
     const d = await r.json();
@@ -882,7 +892,7 @@ async function getWeather(geo, date, gameISO) {
     const target = new Date(gameISO).getTime();
     let bi = 0, bd = Infinity;
     times.forEach((t,i)=>{ const diff=Math.abs(new Date(t+'Z').getTime()-target); if(diff<bd){bd=diff;bi=i;} });
-    return { temp: d.hourly.temperature_2m[bi], wind: d.hourly.wind_speed_10m[bi] };
+    return { temp: d.hourly.temperature_2m[bi], wind: d.hourly.wind_speed_10m[bi], windDir: d.hourly.wind_direction_10m[bi] };
   } catch { return null; }
 }
 
@@ -1070,7 +1080,7 @@ function renderPicks(games) {
           </div>`;
         }).join('')}
       </div>
-      <div class="game-footer">PF ${g.pf} · Total proy. ${g.total} runs${g.wx?.temp!=null?` · 🌡 ${Math.round(g.wx.temp)}°F`+(g.wx.wind!=null?` · 💨 ${Math.round(g.wx.wind)} mph`:''):''} · ${g.pitchers.away.name.split(' ').slice(-1)[0]} vs ${g.pitchers.home.name.split(' ').slice(-1)[0]}</div>
+      <div class="game-footer">PF ${g.pf} · Total proy. ${g.total} runs${g.wx?.temp!=null?` · 🌡 ${Math.round(g.wx.temp)}°F`+(g.wx.wind!=null?` · 💨 ${Math.round(g.wx.wind)} mph${(wf=>wf>1.01?' ↗ sale':wf<0.99?' ↘ entra':'')(windFactor(g.wx,VENUE_BEARING[g.homeId]))}`:''):''} · ${g.pitchers.away.name.split(' ').slice(-1)[0]} vs ${g.pitchers.home.name.split(' ').slice(-1)[0]}</div>
     </div>`;
   }).join('');
   $('picks-area').innerHTML = html || '<div class="empty">Ningún pick cumple el filtro seleccionado.</div>';

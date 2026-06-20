@@ -773,8 +773,8 @@ async function getWeather(geo, date, gameISO) {
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let allGames=[], allBatters=[], allParlays=[], allBProps={};
-let battersPerTeam = 3;   // cuántos bateadores (los mejores) mostrar por equipo en cada juego
-function setBattersPerTeam(n){ battersPerTeam=+n; renderBatters(allBatters); }
+let batView = localStorage.getItem('bat_view') || 'top10';   // vista de bateadores
+function setBatView(v){ batView=v; localStorage.setItem('bat_view',v); renderBatters(allBatters); }
 
 // ── Main analysis ─────────────────────────────────────────────────────────────
 async function runAnalysis() {
@@ -1070,26 +1070,38 @@ function renderBatters(batData) {
       const evHR  =bp?.hr  ?evalProp(poissonOver(expHR,  bp.hr.line),  bp.hr)  :null;
       return {...b,pitcher:oppPitcher,tag,hitP,tbExp,evHits,evTB,evHR};
     };
-    // Solo los mejores (por OPS, ya vienen ordenados) de cada equipo en cada juego
-    (g.awayBatters||[]).slice(0,battersPerTeam).forEach(b=>{const r=mk(b,g.awayOppScore??.5,g.homePitcher); if(r){r.team=g.away;rows.push(r);}});
-    (g.homeBatters||[]).slice(0,battersPerTeam).forEach(b=>{const r=mk(b,g.homeOppScore??.5,g.awayPitcher); if(r){r.team=g.home;rows.push(r);}});
+    (g.awayBatters||[]).forEach(b=>{const r=mk(b,g.awayOppScore??.5,g.homePitcher); if(r){r.team=g.away;r.game=`${g.away} @ ${g.home}`;rows.push(r);}});
+    (g.homeBatters||[]).forEach(b=>{const r=mk(b,g.homeOppScore??.5,g.awayPitcher); if(r){r.team=g.home;r.game=`${g.away} @ ${g.home}`;rows.push(r);}});
   });
-  rows.sort((a,b)=> a.team.localeCompare(b.team) || b.hitP-a.hitP);   // agrupados por equipo; mejor P(Hit) primero
   if(!rows.length){$('batters-area').innerHTML='<div class="empty">Corre el análisis primero.</div>';return;}
-  const opt=n=>`<option value="${n}"${battersPerTeam===n?' selected':''}>${n}</option>`;
-  const hasProps=rows.some(r=>r.evHits||r.evTB||r.evHR);
+
+  // Aplica la vista elegida
+  let display;
+  if(batView==='game1'){                       // el mejor bateador de cada juego
+    const byGame={}; rows.forEach(r=>{ if(!byGame[r.game]||r.hitP>byGame[r.game].hitP) byGame[r.game]=r; });
+    display=Object.values(byGame).sort((a,b)=>b.hitP-a.hitP);
+  } else if(batView.startsWith('top')){        // top N de toda la jornada
+    display=[...rows].sort((a,b)=>b.hitP-a.hitP).slice(0,+batView.slice(3));
+  } else {                                     // teamN: top N por equipo, agrupados
+    const n=+batView.slice(4), byTeam={};
+    rows.forEach(r=>{(byTeam[r.team]=byTeam[r.team]||[]).push(r);});
+    display=[]; Object.keys(byTeam).sort().forEach(t=>{ byTeam[t].sort((a,b)=>b.hitP-a.hitP); display.push(...byTeam[t].slice(0,n)); });
+  }
+
+  const sel=(v,lbl)=>`<option value="${v}"${batView===v?' selected':''}>${lbl}</option>`;
+  const hasProps=display.some(r=>r.evHits||r.evTB||r.evHR);
   const propTag=ev=>ev?`<div style="font-size:8px;font-weight:700;margin-top:1px;color:${ev.edge>0?'var(--gtx)':'var(--text3)'}">casa ${ev.over?'O':'U'}${ev.line} ${ev.edge>=0?'+':''}${(ev.edge*100).toFixed(0)}%${ev.stake>0?` · ${ev.stake}%`:''}</div>`:'';
   $('batters-area').innerHTML=`
     <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px;flex-wrap:wrap">
-      <span style="font-size:10px;color:var(--text3)">BA/OBP/SLG/OPS/wOBA = temporada · <b>P(Hit)</b> y <b>TB Exp.</b> ajustados por pitcher/estadio/clima${hasProps?' · <b>casa</b> = línea real (hits/TB/HR) con edge y stake':''}.</span>
-      <label style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:6px">Mejores por equipo:
-        <select onchange="setBattersPerTeam(this.value)" style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--rs);padding:4px 8px;font-size:11px;color:var(--text);font-family:inherit">${opt(3)}${opt(5)}${opt(9)}</select>
+      <span style="font-size:10px;color:var(--text3)">Ordenados por <b>P(Hit)</b> · ajustado por pitcher/estadio/clima${hasProps?' · <b>casa</b> = línea real (hits/TB/HR) con edge y stake':''}.</span>
+      <label style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:6px">Vista:
+        <select onchange="setBatView(this.value)" style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--rs);padding:4px 8px;font-size:11px;color:var(--text);font-family:inherit">${sel('top5','Top 5 jornada')}${sel('top10','Top 10 jornada')}${sel('top15','Top 15 jornada')}${sel('game1','1 por juego')}${sel('team3','3 por equipo')}${sel('team5','5 por equipo')}</select>
       </label>
     </div>
     <div style="overflow-x:auto;background:var(--bg2);border-radius:var(--r);border:1px solid var(--border)">
     <table class="htable">
       <thead><tr><th>Jugador</th><th>Equipo</th><th>vs Pitcher</th><th>Matchup</th><th>BA</th><th>OBP</th><th>SLG</th><th>OPS</th><th>wOBA</th><th>K%</th><th>HR</th><th>P(Hit)</th><th>TB Exp.</th></tr></thead>
-      <tbody>${rows.map((r,i)=>{
+      <tbody>${display.map((r,i)=>{
         const hp=r.hitP>=.74?'var(--green)':r.hitP>=.68?'var(--amber)':'var(--text2)';
         return `<tr style="${i%2?'background:var(--bg)':''}">
           <td><div style="display:flex;align-items:center;gap:8px"><img class="headshot-sm" src="${playerImg(r.id)}" onerror="${IMG_FALLBACK}"><div><strong>${r.name}</strong><div style="font-size:9px;color:var(--text3)">${r.pos}</div></div></div></td>

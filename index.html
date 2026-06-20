@@ -979,34 +979,38 @@ function copyPicks(){
 }
 
 // ── Parlays ───────────────────────────────────────────────────────────────────
+// Reglas: 1 pata por partido (sin correlación), 3 y 4 patas, cuota real si existe,
+// ordenados por VALOR (edge combinado = prob. del modelo − prob. implícita del pago).
 function buildParlays(games) {
-  const high=games.flatMap(g=>g.allPicks.filter(p=>p.prob>=.58).map(p=>({...p,matchup:`${g.away} @ ${g.home}`})));
-  if(high.length<2) return [];
+  // Mejor pata por juego: la de mayor edge entre picks con prob >= 55%
+  const cand=[];
+  games.forEach(g=>{
+    const elig=(g.allPicks||[]).filter(p=>p.prob>=.55);
+    if(!elig.length) return;
+    const best=elig.reduce((a,b)=>b.edge>a.edge?b:a);
+    cand.push({...best, matchup:`${g.away} @ ${g.home}`, dec: best.price!=null?amDec(best.price):1/Math.max(best.prob,.01)});
+  });
+  cand.sort((a,b)=>b.edge-a.edge);
+  const pool=cand.slice(0,8);   // top 8 por valor, para limitar combinaciones
   const out=[];
-  for(let i=0;i<Math.min(high.length,6);i++)
-    for(let j=i+1;j<Math.min(high.length,6);j++){
-      const legs=[high[i],high[j]];
-      out.push({legs,cp:legs[0].prob*legs[1].prob,type:'2 equipos'});
-    }
-  if(high.length>=3)
-    for(let i=0;i<Math.min(high.length,5);i++)
-      for(let j=i+1;j<Math.min(high.length,5);j++)
-        for(let k=j+1;k<Math.min(high.length,5);k++){
-          const legs=[high[i],high[j],high[k]];
-          out.push({legs,cp:legs[0].prob*legs[1].prob*legs[2].prob,type:'3 equipos'});
-        }
-  return out.sort((a,b)=>b.cp-a.cp).slice(0,6);
+  const combos=(k)=>{ const res=[],rec=(s,acc)=>{ if(acc.length===k){res.push(acc.slice());return;} for(let i=s;i<pool.length;i++){acc.push(pool[i]);rec(i+1,acc);acc.pop();} }; rec(0,[]); return res; };
+  [3,4].forEach(k=>{ if(pool.length>=k) combos(k).forEach(legs=>{
+    const cp=legs.reduce((p,l)=>p*l.prob,1);          // prob. combinada (patas independientes)
+    const dec=legs.reduce((p,l)=>p*l.dec,1);           // cuota decimal combinada (real donde hay)
+    const realOdds=legs.every(l=>l.price!=null);       // ¿todas tienen cuota de casa?
+    out.push({legs,cp,dec,edge:cp-1/dec,realOdds,type:`${k} patas`});
+  });});
+  return out.sort((a,b)=>b.edge-a.edge||b.cp-a.cp).slice(0,6);
 }
 
 function renderParlays(parlays) {
-  if(!parlays.length){$('parlays-area').innerHTML='<div class="empty">No hay picks ≥58% para armar parlays.</div>';return;}
-  $('parlays-area').innerHTML=parlays.map((p,i)=>{
-    const impl=1/p.cp;
-    const odds=impl>=2?`+${Math.round((impl-1)*100)}`:String(Math.round(-100/(impl-1)));
-    const pay=Math.round((impl-1)*100);
+  if(!parlays.length){$('parlays-area').innerHTML='<div class="empty">No hay suficientes picks de valor (se necesitan ≥3 partidos con pick sólido).</div>';return;}
+  $('parlays-area').innerHTML=`<div style="font-size:10px;color:var(--text3);margin-bottom:10px">1 pata por partido (sin correlación) · ordenados por <b>valor</b> (edge) · pago con cuota real cuando existe.</div>`+parlays.map((p,i)=>{
+    const dec=p.dec, odds=dec>=2?`+${Math.round((dec-1)*100)}`:String(Math.round(-100/(dec-1))), pay=Math.round((dec-1)*100);
+    const eC=p.edge>0?'var(--gtx)':'var(--text3)';
     return `<div class="card">
       <div class="card-hdr" style="background:var(--gbg)">
-        <span style="color:var(--gtx);font-weight:700">🔗 Parlay ${i+1} · ${p.type}</span>
+        <span style="color:var(--gtx);font-weight:700">🔗 Parlay ${i+1} · ${p.type}${p.realOdds?'':' · cuota estimada'}</span>
         <span style="color:var(--gtx);font-size:16px;font-weight:700">${odds}</span>
       </div>
       <div style="padding:8px 12px">
@@ -1017,7 +1021,7 @@ function renderParlays(parlays) {
         </div>`).join('')}
       </div>
       <div style="padding:6px 12px;background:var(--bg3);display:flex;justify-content:space-between;font-size:11px">
-        <span style="color:var(--text2)">Prob: ${pct(p.cp)} · ${impl.toFixed(2)}x</span>
+        <span style="color:var(--text2)">Prob: ${pct(p.cp)} · ${dec.toFixed(2)}x · <span style="color:${eC};font-weight:700">edge ${p.edge>=0?'+':''}${(p.edge*100).toFixed(1)}%</span></span>
         <span style="color:var(--gtx);font-weight:700">$100 → $${pay+100}</span>
       </div>
     </div>`;

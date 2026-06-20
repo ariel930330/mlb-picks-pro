@@ -233,6 +233,7 @@ body{background:radial-gradient(1200px 600px at 70% -10%,#f7f9fc,var(--bg)) fixe
     <button class="tab-btn" onclick="showTab('batters')"><i class="ti ti-run"></i>Bateadores</button>
     <button class="tab-btn" onclick="showTab('history');loadHistory()"><i class="ti ti-history"></i>Historial</button>
     <button class="tab-btn" onclick="showTab('model');loadModelTab()"><i class="ti ti-brain"></i>Modelo IA</button>
+    <button class="tab-btn" onclick="showTab('valid');loadValidation()"><i class="ti ti-target"></i>Validación</button>
   </div>
 
   <div class="tab-content">
@@ -326,6 +327,21 @@ body{background:radial-gradient(1200px 600px at 70% -10%,#f7f9fc,var(--bg)) fixe
       </div>
     </div>
 
+    <!-- VALIDACIÓN -->
+    <div class="tab-pane" id="tab-valid">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+        <div>
+          <div style="font-size:13px;font-weight:700">Validación del modelo</div>
+          <div style="font-size:11px;color:var(--text2)">¿Cuando digo X%, gano X%? · ¿Le gano al cierre? (CLV)</div>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn-sm" onclick="loadValidation()">🔄 Recargar</button>
+          <button class="btn-sm owner-only" onclick="captureClose()" title="Captura las cuotas de cierre del día para medir CLV (córrelo cerca del inicio de los juegos)">📸 Capturar cierre</button>
+        </div>
+      </div>
+      <div id="valid-area"><div class="empty">Cargando…</div></div>
+    </div>
+
   </div>
 </div>
 
@@ -403,6 +419,8 @@ const teamLogo  = id => id?`https://www.mlbstatic.com/team-logos/${id}.svg`:'';
 const playerImg = id => id?`https://midfield.mlbstatic.com/v1/people/${id}/spots/120`:'';
 const IMG_FALLBACK = "this.style.visibility='hidden'";
 const ABBR2ID = {LAA:108,AZ:109,ARI:109,BAL:110,BOS:111,CHC:112,CIN:113,CLE:114,COL:115,DET:116,HOU:117,KC:118,LAD:119,WSH:120,WAS:120,NYM:121,OAK:133,ATH:133,PIT:134,SD:135,SDP:135,SEA:136,SF:137,SFG:137,STL:138,TB:139,TBR:139,TEX:140,TOR:141,MIN:142,PHI:143,ATL:144,CWS:145,CHW:145,MIA:146,NYY:147,MIL:158};
+// Abreviatura -> nombre completo (para buscar cuotas por equipo en The Odds API)
+const TEAM_FULL = {LAA:'Los Angeles Angels',AZ:'Arizona Diamondbacks',ARI:'Arizona Diamondbacks',BAL:'Baltimore Orioles',BOS:'Boston Red Sox',CHC:'Chicago Cubs',CIN:'Cincinnati Reds',CLE:'Cleveland Guardians',COL:'Colorado Rockies',DET:'Detroit Tigers',HOU:'Houston Astros',KC:'Kansas City Royals',LAD:'Los Angeles Dodgers',WSH:'Washington Nationals',WAS:'Washington Nationals',NYM:'New York Mets',OAK:'Athletics',ATH:'Athletics',PIT:'Pittsburgh Pirates',SD:'San Diego Padres',SDP:'San Diego Padres',SEA:'Seattle Mariners',SF:'San Francisco Giants',SFG:'San Francisco Giants',STL:'St. Louis Cardinals',TB:'Tampa Bay Rays',TBR:'Tampa Bay Rays',TEX:'Texas Rangers',TOR:'Toronto Blue Jays',MIN:'Minnesota Twins',PHI:'Philadelphia Phillies',ATL:'Atlanta Braves',CWS:'Chicago White Sox',CHW:'Chicago White Sox',MIA:'Miami Marlins',NYY:'New York Yankees',MIL:'Milwaukee Brewers'};
 
 // ── Model weights (trained) ───────────────────────────────────────────────────
 const DEFAULT_W = {w_hp:.7257,w_ap:-.6703,w_ho:.5365,w_ao:-.4919,w_hb:.2767,w_ab:-.2566,w_str:.0,w_hfa:.0823};
@@ -549,8 +567,8 @@ function computePicks(data) {
     const bHome=blend(hwp,fairHome), bAway=1-bHome;
     const eHome=bHome-fairHome, eAway=bAway-fairAway;
     picks.push(eHome>=eAway
-      ? {cat:'Money Line',main:`${home} ML ${amFmt(priceHome)}`,sub:`Modelo ${pct(hwp)} → ${pct(bHome)} vs Mercado ${pct(fairHome)}`,prob:bHome,edge:+eHome.toFixed(3),mkt:true,price:priceHome}
-      : {cat:'Money Line',main:`${away} ML ${amFmt(priceAway)}`,sub:`Modelo ${pct(awp)} → ${pct(bAway)} vs Mercado ${pct(fairAway)}`,prob:bAway,edge:+eAway.toFixed(3),mkt:true,price:priceAway});
+      ? {cat:'Money Line',main:`${home} ML ${amFmt(priceHome)}`,sub:`Modelo ${pct(hwp)} → ${pct(bHome)} vs Mercado ${pct(fairHome)}`,prob:bHome,edge:+eHome.toFixed(3),mkt:true,price:priceHome,fair:fairHome}
+      : {cat:'Money Line',main:`${away} ML ${amFmt(priceAway)}`,sub:`Modelo ${pct(awp)} → ${pct(bAway)} vs Mercado ${pct(fairAway)}`,prob:bAway,edge:+eAway.toFixed(3),mkt:true,price:priceAway,fair:fairAway});
   } else {
     picks.push(favHome
       ? {cat:'Money Line',main:`${home} ML ${p2ml(hwp)}`,sub:`Modelo: ${pct(hwp)}`,prob:hwp,edge:+(hwp-BREAKEVEN).toFixed(3)}
@@ -562,8 +580,8 @@ function computePicks(data) {
     const line=odds.total.point, mOver=normOver(total,totalSigma,line), bOver=blend(mOver,odds.total.fairOver);
     const eOver=bOver-odds.total.fairOver, eUnder=(1-bOver)-odds.total.fairUnder;
     picks.push(eOver>=eUnder
-      ? {cat:'Total del partido',main:`OVER ${line} ${amFmt(odds.total.priceOver)}`,sub:`Proy ${total} · Modelo ${pct(mOver)} → ${pct(bOver)} vs Mercado ${pct(odds.total.fairOver)}`,prob:bOver,edge:+eOver.toFixed(3),mkt:true,price:odds.total.priceOver}
-      : {cat:'Total del partido',main:`UNDER ${line} ${amFmt(odds.total.priceUnder)}`,sub:`Proy ${total} · Modelo ${pct(1-mOver)} → ${pct(1-bOver)} vs Mercado ${pct(odds.total.fairUnder)}`,prob:1-bOver,edge:+eUnder.toFixed(3),mkt:true,price:odds.total.priceUnder});
+      ? {cat:'Total del partido',main:`OVER ${line} ${amFmt(odds.total.priceOver)}`,sub:`Proy ${total} · Modelo ${pct(mOver)} → ${pct(bOver)} vs Mercado ${pct(odds.total.fairOver)}`,prob:bOver,edge:+eOver.toFixed(3),mkt:true,price:odds.total.priceOver,fair:odds.total.fairOver}
+      : {cat:'Total del partido',main:`UNDER ${line} ${amFmt(odds.total.priceUnder)}`,sub:`Proy ${total} · Modelo ${pct(1-mOver)} → ${pct(1-bOver)} vs Mercado ${pct(odds.total.fairUnder)}`,prob:1-bOver,edge:+eUnder.toFixed(3),mkt:true,price:odds.total.priceUnder,fair:odds.total.fairUnder});
   } else {
     picks.push({cat:'Total del partido',main:`${totalPick?'OVER':'UNDER'} ${totalLine} runs`,sub:`Proyección: ${total} runs · PF ${pf}`,prob:totalProb,edge:+(totalProb-BREAKEVEN).toFixed(3)});
   }
@@ -576,7 +594,7 @@ function computePicks(data) {
     const bCover=blend(mCover,fairCover);
     const price=homeFav?odds.spread.priceHome:odds.spread.priceAway;
     const pt=homeFav?odds.spread.homePoint:odds.spread.awayPoint;
-    picks.push({cat:'Run Line',main:`${homeFav?home:away} ${pt} ${amFmt(price)}`,sub:`Modelo ${pct(mCover)} → ${pct(bCover)} vs Mercado ${pct(fairCover)}`,prob:bCover,edge:+(bCover-fairCover).toFixed(3),mkt:true,price});
+    picks.push({cat:'Run Line',main:`${homeFav?home:away} ${pt} ${amFmt(price)}`,sub:`Modelo ${pct(mCover)} → ${pct(bCover)} vs Mercado ${pct(fairCover)}`,prob:bCover,edge:+(bCover-fairCover).toFixed(3),mkt:true,price,fair:fairCover});
   } else {
     picks.push({cat:'Run Line -1.5',main:`${favHome?home:away} -1.5`,sub:`${pct(rlProb)} prob ganar por 2+`,prob:rlProb,edge:+(rlProb-BREAKEVEN).toFixed(3)});
   }
@@ -917,6 +935,7 @@ async function savePredictions(date, games) {
       home_ml:g.homeML||'', away_ml:g.awayML||'',
       top_pick_cat:top.cat||'', top_pick_main:top.main||'',
       top_pick_prob:+(top.prob||0).toFixed(4), top_pick_edge:+(top.edge||0).toFixed(4),
+      top_pick_price: top.price??null, top_pick_fair: top.fair!=null?+top.fair.toFixed(4):null,
       all_picks_json: JSON.stringify(g.picks.map(p=>({cat:p.cat,main:p.main,prob:p.prob,edge:p.edge,conf:p.conf}))),
     };
     const {data:ex} = await sb.from('predictions').select('id,result').eq('game_date',date).eq('away',g.away).eq('home',g.home);
@@ -1189,6 +1208,98 @@ async function markResult(id, result, btn) {
   const {error} = await sb.from('predictions').update({result: newResult}).eq('id', id);
   if(error) { alert('Error: ' + error.message); return; }
   loadHistory();
+}
+
+// ── Validación: calibración (predicho vs real) + CLV ───────────────────────
+async function loadValidation(){
+  $('valid-area').innerHTML='<div class="loading"><div class="spin"></div>Cargando…</div>';
+  const {data:rows,error}=await sb.from('predictions').select('*').limit(2000);
+  if(error){ $('valid-area').innerHTML=`<div class="error-box">${error.message}</div>`; return; }
+  const graded=(rows||[]).filter(r=>r.result==='win'||r.result==='loss');
+  // Calibración por bin de probabilidad del pick
+  const bins=[[.50,.55],[.55,.60],[.60,.65],[.65,.70],[.70,.80],[.80,1.01]];
+  const cal=bins.map(([lo,hi])=>{
+    const inb=graded.filter(r=>{const p=r.top_pick_prob||0;return p>=lo&&p<hi;});
+    const w=inb.filter(r=>r.result==='win').length, n=inb.length;
+    return {lo,hi,n,actual:n?w/n:null,pred:n?inb.reduce((s,r)=>s+(r.top_pick_prob||0),0)/n:0};
+  });
+  let brier=0,ece=0; const tot=graded.length;
+  graded.forEach(r=>{const p=r.top_pick_prob||0,o=r.result==='win'?1:0;brier+=(p-o)**2;});
+  brier=tot?brier/tot:null;
+  cal.forEach(b=>{ if(b.n&&b.actual!=null) ece+=Math.abs(b.pred-b.actual)*b.n; });
+  ece=tot?ece/tot:null;
+  // CLV
+  const withClv=(rows||[]).filter(r=>r.clv!=null);
+  const avgClv=withClv.length?withClv.reduce((s,r)=>s+r.clv,0)/withClv.length:null;
+  const beat=withClv.filter(r=>r.clv>0).length;
+
+  const metric=(lbl,val,note)=>`<div class="stat-card"><div class="stat-label">${lbl}</div><div class="stat-val" style="font-size:20px">${val}</div><div style="font-size:9px;color:var(--text3);margin-top:2px">${note}</div></div>`;
+  const calRows=cal.map(b=>{
+    const diff=b.actual!=null?(b.actual-b.pred):null;
+    const dc=diff==null?'var(--text3)':Math.abs(diff)<.04?'var(--gtx)':diff<0?'var(--rtx)':'var(--atx)';
+    const barP=Math.round(b.pred*100), barA=b.actual!=null?Math.round(b.actual*100):0;
+    return `<tr>
+      <td style="font-weight:700">${Math.round(b.lo*100)}–${Math.round(b.hi*100>100?100:b.hi*100)}%</td>
+      <td>${b.n}</td>
+      <td>${b.n?Math.round(b.pred*100)+'%':'—'}</td>
+      <td style="font-weight:700">${b.actual!=null?Math.round(b.actual*100)+'%':'—'}</td>
+      <td style="color:${dc};font-weight:700">${diff!=null?(diff>=0?'+':'')+Math.round(diff*100)+'%':'—'}</td>
+      <td style="min-width:120px"><div style="position:relative;height:8px;background:var(--bg3);border-radius:4px">
+        <div style="position:absolute;left:0;top:0;height:8px;width:${barA}%;background:var(--green);border-radius:4px;opacity:.7"></div>
+        <div style="position:absolute;left:${barP}%;top:-2px;width:2px;height:12px;background:var(--gold)"></div></div></td>
+    </tr>`;
+  }).join('');
+
+  $('valid-area').innerHTML=`
+    <div class="stats-bar" style="grid-template-columns:repeat(auto-fit,minmax(150px,1fr))">
+      ${metric('Calificadas',tot,'win/loss para medir')}
+      ${metric('Brier score',brier!=null?brier.toFixed(3):'—','más bajo = mejor (0.25 = volado)')}
+      ${metric('Error calibración',ece!=null?(ece*100).toFixed(1)+'%':'—','<2% bien · >5% mal')}
+      ${metric('CLV promedio',avgClv!=null?(avgClv>=0?'+':'')+(avgClv*100).toFixed(1)+'%':'—',withClv.length?`${beat}/${withClv.length} le ganaron al cierre`:'captura el cierre')}
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="card-hdr"><span class="card-hdr-title">📊 Calibración — ¿cuando digo X%, gano X%?</span></div>
+      <div style="overflow-x:auto"><table class="htable">
+        <thead><tr><th>Prob. dicha</th><th>n</th><th>Predicho</th><th>Real</th><th>Dif</th><th>real ▓ · predicho │</th></tr></thead>
+        <tbody>${calRows}</tbody></table></div>
+      <div style="padding:8px 12px;font-size:10px;color:var(--text3)">Si el modelo está bien calibrado, <b>Predicho ≈ Real</b> en cada fila. Si "Real" es mucho menor que "Predicho" (Dif roja), el modelo es <b>sobreconfiado</b>. ${tot<50?'⚠ Pocas muestras: necesitas ~100+ para que sea fiable.':''}</div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="card-hdr"><span class="card-hdr-title">🎯 CLV (Closing Line Value)</span></div>
+      <div style="padding:10px 12px;font-size:11px;color:var(--text2)">
+        El CLV mide si "apostaste" a mejor número que el de <b>cierre</b> (el mejor predictor de un modelo que sirve).
+        Corre <b>📸 Capturar cierre</b> cerca del inicio de los juegos del día.
+        ${withClv.length?`<br><br>Promedio: <b style="color:${avgClv>=0?'var(--gtx)':'var(--rtx)'}">${(avgClv>=0?'+':'')+(avgClv*100).toFixed(1)}%</b> en ${withClv.length} picks · ${beat} le ganaron al cierre. <b>CLV positivo sostenido = el modelo aporta valor real</b>, aunque ganes/pierdas a corto plazo.`:'<br><br>Aún sin datos de cierre capturados.'}
+      </div>
+    </div>`;
+}
+
+// Prob. justa del mercado (al cierre) para el lado del pick guardado
+function closeFairFor(row,o){
+  const cat=row.top_pick_cat||'', tok=(row.top_pick_main||'').trim().split(/\s+/);
+  if(cat==='Money Line'&&o?.ml) return tok[0]===row.home?o.ml.fairHome:o.ml.fairAway;
+  if(cat==='Total del partido'&&o?.total) return tok[0]==='OVER'?o.total.fairOver:o.total.fairUnder;
+  if(cat.startsWith('Run Line')&&o?.spread) return tok[0]===row.home?o.spread.fairHomeCover:o.spread.fairAwayCover;
+  return null;
+}
+async function captureClose(){
+  if(!requireAuth()) return;
+  const date=$('date-pick').value;
+  $('valid-area').insertAdjacentHTML('afterbegin','<div class="loading" id="cap-msg"><div class="spin"></div>Capturando cuotas de cierre…</div>');
+  const {map}=await getOdds(date);
+  const {data:rows}=await sb.from('predictions').select('*').eq('game_date',date);
+  let n=0;
+  for(const r of (rows||[])){
+    if(r.top_pick_fair==null) continue;
+    const o=pickOdds(map, TEAM_FULL[r.home]||r.home, TEAM_FULL[r.away]||r.away, null);
+    const cf=o?closeFairFor(r,o):null;
+    if(cf==null) continue;
+    await sb.from('predictions').update({close_fair:+cf.toFixed(4), clv:+(cf-r.top_pick_fair).toFixed(4)}).eq('id',r.id);
+    n++;
+  }
+  $('cap-msg')?.remove();
+  alert(`📸 Cierre capturado para ${n} picks · CLV actualizado`);
+  loadValidation();
 }
 
 // ── Auto-grading: califica desde el marcador final de MLB ──────────────────

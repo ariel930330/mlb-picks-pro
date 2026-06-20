@@ -38,8 +38,18 @@ create table if not exists public.predictions (
   top_pick_prob   numeric,
   top_pick_edge   numeric,
   all_picks_json  text,
-  result          text          -- 'win' | 'loss' | 'push' | null
+  result          text,         -- 'win' | 'loss' | 'push' | null
+  top_pick_price  numeric,      -- cuota americana a la que se "apostó"
+  top_pick_fair   numeric,      -- prob. justa del mercado (sin vig) al apostar
+  close_fair      numeric,      -- prob. justa del mercado al CIERRE (capturada luego)
+  clv             numeric       -- Closing Line Value = close_fair - top_pick_fair
 );
+
+-- Por si la tabla ya existía: agrega las columnas nuevas (idempotente) ---------
+alter table public.predictions add column if not exists top_pick_price numeric;
+alter table public.predictions add column if not exists top_pick_fair  numeric;
+alter table public.predictions add column if not exists close_fair      numeric;
+alter table public.predictions add column if not exists clv             numeric;
 
 create table if not exists public.model_weights (
   id           bigint primary key,

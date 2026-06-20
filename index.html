@@ -1013,7 +1013,7 @@ function renderBatters(batData) {
     (g.awayBatters||[]).slice(0,battersPerTeam).forEach(b=>{const r=mk(b,g.awayOppScore??.5,g.homePitcher); if(r){r.team=g.away;rows.push(r);}});
     (g.homeBatters||[]).slice(0,battersPerTeam).forEach(b=>{const r=mk(b,g.homeOppScore??.5,g.awayPitcher); if(r){r.team=g.home;rows.push(r);}});
   });
-  rows.sort((a,b)=>b.hitP-a.hitP);
+  rows.sort((a,b)=> a.team.localeCompare(b.team) || b.hitP-a.hitP);   // agrupados por equipo; mejor P(Hit) primero
   if(!rows.length){$('batters-area').innerHTML='<div class="empty">Corre el análisis primero.</div>';return;}
   const opt=n=>`<option value="${n}"${battersPerTeam===n?' selected':''}>${n}</option>`;
   $('batters-area').innerHTML=`

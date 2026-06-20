@@ -881,7 +881,7 @@ async function runAnalysis() {
 
   try {
     const yr = +date.slice(0,4);   // año de la temporada según la fecha elegida (no el actual)
-    const sched = await mlb(`/schedule?sportId=1&date=${date}&hydrate=probablePitcher,team,venue,status`);
+    const sched = await mlb(`/schedule?sportId=1&date=${date}&hydrate=probablePitcher,team,venue,status,lineups`);
     const games = (sched.dates||[]).flatMap(d=>d.games||[]).filter(g=>g.status?.abstractGameState!=='Final');
 
     if(!games.length){$('picks-area').innerHTML='<div class="empty">No hay partidos para esta fecha.</div>';return;}
@@ -913,6 +913,13 @@ async function runAnalysis() {
       const _hOps=sf(hTSt?.hitting?.ops,.72), _aOps=sf(aTSt?.hitting?.ops,.72);
       const homeForm=hRecOPS?cl(hRecOPS/_hOps,.92,1.08):1, awayForm=aRecOPS?cl(aRecOPS/_aOps,.92,1.08):1;
 
+      // Alineación confirmada (si ya se publicó, ~1-3 h antes del juego)
+      const hLine=(g.lineups?.homePlayers||[]).map(p=>p.id), aLine=(g.lineups?.awayPlayers||[]).map(p=>p.id);
+      const hConf=hLine.length>=8, aConf=aLine.length>=8;
+      // Penalización si faltan titulares top-4 (por OPS) en la alineación
+      const lineupF=(top,line,conf)=>{ if(!conf) return 1; const set=new Set(line); const miss=top.slice(0,4).filter(b=>!set.has(b.id)).length; return cl(1-miss*.015,.94,1); };
+      const homeLineupF=lineupF(hBat,hLine,hConf), awayLineupF=lineupF(aBat,aLine,aConf);
+
       const gd = computePicks({
         away: g.teams.away.team.abbreviation,
         home: g.teams.home.team.abbreviation,
@@ -925,7 +932,7 @@ async function runAnalysis() {
         awayRecent: aWL, homeRecent: hWL,
         awayInj: aInj, homeInj: hInj, wx, kprops,
         homeSplit: hSplit, awaySplit: aSplit, homePHand: hHand, awayPHand: aHand,
-        homeForm, awayForm,
+        homeForm: homeForm*homeLineupF, awayForm: awayForm*awayLineupF,
         odds: pickOdds(oddsMap, g.teams.home.team.name, g.teams.away.team.name, g.gameDate),
       });
       gd.gamePk    = g.gamePk;
@@ -942,6 +949,7 @@ async function runAnalysis() {
         awayOppScore:gd.features?.hps??.5,   // bateadores visitantes enfrentan al pitcher LOCAL
         homeOppScore:gd.features?.aps??.5,   // bateadores locales enfrentan al pitcher VISITANTE
         awayPlatoon, homePlatoon, awayOppHand:hHand, homeOppHand:aHand,
+        awayLineup:aConf?aLine:null, homeLineup:hConf?hLine:null,   // IDs de titulares confirmados
         pf:gd.pf||1, wx:gd.wx||null});
     }
 
@@ -1189,8 +1197,9 @@ function renderBatters(batData) {
       const evHR  =bp?.hr  ?evalProp(poissonOver(expHR,bp.hr.line),  bp.hr)  :null;
       return {id:b.id,name:b.name,pos:b.pos,pitcher:oppPitcher,oppHand,tag,hitP,expTB,hrbiR,expBB,expHR,evHits,evTB,evHR};
     };
-    (g.awayBatters||[]).forEach(b=>{const r=mk(b,g.awayOppScore??.5,g.homePitcher,g.awayPlatoon,g.awayOppHand); if(r){r.team=g.away;rows.push(r);}});
-    (g.homeBatters||[]).forEach(b=>{const r=mk(b,g.homeOppScore??.5,g.awayPitcher,g.homePlatoon,g.homeOppHand); if(r){r.team=g.home;rows.push(r);}});
+    const aSet=g.awayLineup?new Set(g.awayLineup):null, hSet=g.homeLineup?new Set(g.homeLineup):null;
+    (g.awayBatters||[]).forEach(b=>{ if(aSet&&!aSet.has(b.id)) return; const r=mk(b,g.awayOppScore??.5,g.homePitcher,g.awayPlatoon,g.awayOppHand); if(r){r.team=g.away;r.conf=!!aSet;rows.push(r);} });
+    (g.homeBatters||[]).forEach(b=>{ if(hSet&&!hSet.has(b.id)) return; const r=mk(b,g.homeOppScore??.5,g.awayPitcher,g.homePlatoon,g.homeOppHand); if(r){r.team=g.home;r.conf=!!hSet;rows.push(r);} });
   });
   if(!rows.length){$('batters-area').innerHTML='<div class="empty">Corre el análisis primero.</div>';return;}
 
@@ -1208,13 +1217,13 @@ function renderBatters(batData) {
       <span style="min-width:18px;height:18px;border-radius:50%;background:var(--bg);color:var(--gold);font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center">${i+1}</span>
       <img class="headshot-sm" src="${playerImg(r.id)}" onerror="${IMG_FALLBACK}">
       <div style="flex:1;min-width:0">
-        <div style="font-weight:700;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.name}</div>
+        <div style="font-weight:700;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.name}${r.conf?' <span style="color:var(--gtx);font-size:9px;font-weight:700">✓</span>':''}</div>
         <div style="font-size:9px;color:var(--text2);display:flex;align-items:center;gap:3px"><img class="logo-xs" src="${teamLogo(ABBR2ID[r.team])}" onerror="${IMG_FALLBACK}">${r.team} · vs ${(r.pitcher||'').split(' ').slice(-1)[0]||'—'}${r.oppHand?` (${r.oppHand})`:''} <span style="color:${r.tag.c};font-weight:700">${r.tag.t}</span></div>
       </div>
       <div style="text-align:right"><span style="font-size:16px;font-weight:700;color:var(--green)">${cat.fmt(r)}</span>${cat.tag?propTag(cat.tag(r)):''}</div>
     </div>`;
   $('batters-area').innerHTML=`
-    <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los 2 más probables de la jornada por categoría · proyecciones ajustadas por pitcher rival, estadio y clima${rows.some(r=>r.evHits||r.evTB||r.evHR)?' · <b>casa</b> = línea real con edge y stake':''}.</div>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los 2 más probables de la jornada por categoría · ajustado por pitcher rival, mano, estadio y clima${rows.some(r=>r.conf)?' · <b style="color:var(--gtx)">✓</b> = titular confirmado (alineación publicada)':' · alineaciones aún sin confirmar'}${rows.some(r=>r.evHits||r.evTB||r.evHR)?' · <b>casa</b> = línea real con edge y stake':''}.</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px">
       ${cats.map(cat=>{
         const top2=[...rows].sort((a,b)=>cat.metric(b)-cat.metric(a)).slice(0,2);

@@ -601,7 +601,7 @@ async function getTopBatters(id,yr) {
       const pa=parseInt(st.plateAppearances||0),k=parseInt(st.strikeOuts||0),bb=parseInt(st.baseOnBalls||0);
       const h=parseInt(st.hits||0),d2=parseInt(st.doubles||0),t=parseInt(st.triples||0),hr=parseInt(st.homeRuns||0);
       const woba=pa>0?+((bb*.69+(h-d2-t-hr)*.88+d2*1.21+t*1.57+hr*2.10)/pa).toFixed(3):0;
-      return {id:p.id,name:p.fullName||'?',pos,ba:parseFloat(st.avg||0),obp:parseFloat(st.obp||0),slg:parseFloat(st.slg||0),ops:parseFloat(st.ops||0),hr,rbi:parseInt(st.rbi||0),ab:parseInt(st.atBats||0),kpct:pa>0?+(k/pa*100).toFixed(1):0,woba};
+      return {id:p.id,name:p.fullName||'?',pos,ba:parseFloat(st.avg||0),obp:parseFloat(st.obp||0),slg:parseFloat(st.slg||0),ops:parseFloat(st.ops||0),hr,rbi:parseInt(st.rbi||0),runs:parseInt(st.runs||0),ab:parseInt(st.atBats||0),pa,h,bb,kpct:pa>0?+(k/pa*100).toFixed(1):0,woba};
     }).filter(p=>p.ab>=20&&!['P','SP','RP','TWP'].includes(p.pos)).sort((a,b)=>b.ops-a.ops).slice(0,9);
   }catch{return[];}
 }
@@ -773,7 +773,6 @@ async function getWeather(geo, date, gameISO) {
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let allGames=[], allBatters=[], allParlays=[], allBProps={};
-const TOP_BATTERS = 5;   // solo los mejores N bateadores de toda la jornada
 
 // ── Main analysis ─────────────────────────────────────────────────────────────
 async function runAnalysis() {
@@ -1051,56 +1050,62 @@ function renderPitchers(games) {
 function renderBatters(batData) {
   const rows=[];
   batData.forEach(g=>{
-    const wxF=wxFactor(g.wx), pf=g.pf||1;
-    // Ajusta P(Hit) y TB Exp por: calidad del pitcher rival + park factor + clima
+    const wxF=wxFactor(g.wx), pf=g.pf||1, envAdj=pf*wxF;
     const mk=(b,oppScore,oppPitcher)=>{
-      if(!b.ba||b.ba===0) return null;
-      const pAdj=cl(1-(oppScore-.5)*.6,.78,1.22);   // pitcher rival: as => baja; flojo => sube
-      const envAdj=pf*wxF;                          // entorno de carreras (estadio + temperatura)
-      const adjBA=cl(b.ba*pAdj*(1+(envAdj-1)*.3),.05,.6);   // BA poco sensible al park
-      const adjSLG=b.slg*pAdj*envAdj;                       // poder sí sensible al park/clima
+      if(!b.ba||b.ba===0||!b.pa) return null;
+      const pAdj=cl(1-(oppScore-.5)*.6,.78,1.22);          // pitcher rival: as => baja; flojo => sube
+      const adjBA=cl(b.ba*pAdj*(1+(envAdj-1)*.3),.05,.6);  // BA poco sensible al park
+      const adjSLG=b.slg*pAdj*envAdj;                      // poder sí sensible al park/clima
       const tag=oppScore>=.62?{t:'duro',c:'var(--rtx)'}:oppScore<=.40?{t:'favorable',c:'var(--gtx)'}:{t:'neutro',c:'var(--text3)'};
-      const hitP=1-Math.pow(1-adjBA,4.2), tbExp=+(adjSLG*3.7).toFixed(1);
-      // Comparación vs casa (props reales) si están disponibles para este bateador
+      const rate=v=>(v/b.pa)*4.2;                          // proyección por juego (~4.2 PA)
+      // Proyecciones del día (ajustadas por pitcher rival, estadio y clima)
+      const hitP=1-Math.pow(1-adjBA,4.2);                  // prob. de ≥1 hit
+      const expTB=adjSLG*3.7;                              // bases totales
+      const expH=adjBA*4.2;
+      const expR=rate(b.runs)*pAdj*(1+(envAdj-1)*.5);
+      const expRBI=rate(b.rbi)*pAdj*envAdj;
+      const hrbiR=expH+expR+expRBI;                        // H + R + RBI
+      const expBB=rate(b.bb)*pAdj;                         // bases por bolas (no sensible al park)
+      const expHR=(b.ab?b.hr/b.ab:0)*4.2*pAdj*envAdj;      // home runs
+      // Comparación vs casa (props reales) si están disponibles
       const bp=allBProps[normName(b.name)];
-      const expHits=adjBA*4.2, expTB=adjSLG*3.7, expHR=(b.ab?b.hr/b.ab:0)*4.2*pAdj*envAdj;
-      const evHits=bp?.hits?evalProp(poissonOver(expHits,bp.hits.line),bp.hits):null;
-      const evTB  =bp?.tb  ?evalProp(poissonOver(expTB,  bp.tb.line),  bp.tb)  :null;
-      const evHR  =bp?.hr  ?evalProp(poissonOver(expHR,  bp.hr.line),  bp.hr)  :null;
-      return {...b,pitcher:oppPitcher,tag,hitP,tbExp,evHits,evTB,evHR};
+      const evHits=bp?.hits?evalProp(poissonOver(expH,bp.hits.line),bp.hits):null;
+      const evTB  =bp?.tb  ?evalProp(poissonOver(expTB,bp.tb.line),  bp.tb)  :null;
+      const evHR  =bp?.hr  ?evalProp(poissonOver(expHR,bp.hr.line),  bp.hr)  :null;
+      return {id:b.id,name:b.name,pos:b.pos,pitcher:oppPitcher,tag,hitP,expTB,hrbiR,expBB,expHR,evHits,evTB,evHR};
     };
-    (g.awayBatters||[]).forEach(b=>{const r=mk(b,g.awayOppScore??.5,g.homePitcher); if(r){r.team=g.away;r.game=`${g.away} @ ${g.home}`;rows.push(r);}});
-    (g.homeBatters||[]).forEach(b=>{const r=mk(b,g.homeOppScore??.5,g.awayPitcher); if(r){r.team=g.home;r.game=`${g.away} @ ${g.home}`;rows.push(r);}});
+    (g.awayBatters||[]).forEach(b=>{const r=mk(b,g.awayOppScore??.5,g.homePitcher); if(r){r.team=g.away;rows.push(r);}});
+    (g.homeBatters||[]).forEach(b=>{const r=mk(b,g.homeOppScore??.5,g.awayPitcher); if(r){r.team=g.home;rows.push(r);}});
   });
   if(!rows.length){$('batters-area').innerHTML='<div class="empty">Corre el análisis primero.</div>';return;}
 
-  // Solo los mejores de toda la jornada (por P(Hit))
-  const display=[...rows].sort((a,b)=>b.hitP-a.hitP).slice(0,TOP_BATTERS);
-
-  const hasProps=display.some(r=>r.evHits||r.evTB||r.evHR);
-  const propTag=ev=>ev?`<div style="font-size:8px;font-weight:700;margin-top:1px;color:${ev.edge>0?'var(--gtx)':'var(--text3)'}">casa ${ev.over?'O':'U'}${ev.line} ${ev.edge>=0?'+':''}${(ev.edge*100).toFixed(0)}%${ev.stake>0?` · ${ev.stake}%`:''}</div>`:'';
+  const propTag=ev=>ev?`<span style="font-size:9px;font-weight:700;color:${ev.edge>0?'var(--gtx)':'var(--text3)'}"> · casa ${ev.over?'O':'U'}${ev.line} ${ev.edge>=0?'+':''}${(ev.edge*100).toFixed(0)}%${ev.stake>0?` ${ev.stake}%`:''}</span>`:'';
+  // Cada categoría: los 2 MÁS PROBABLES (mayor proyección)
+  const cats=[
+    {title:'⚾ Probabilidad de Hit', metric:r=>r.hitP,  fmt:r=>Math.round(r.hitP*100)+'%', tag:r=>r.evHits},
+    {title:'💥 Bases totales (TB)',  metric:r=>r.expTB, fmt:r=>r.expTB.toFixed(1),          tag:r=>r.evTB},
+    {title:'🔥 H + R + RBI',         metric:r=>r.hrbiR, fmt:r=>r.hrbiR.toFixed(2),           tag:null},
+    {title:'🚶 Bases por bolas (BB)',metric:r=>r.expBB, fmt:r=>r.expBB.toFixed(2),           tag:null},
+    {title:'🏟️ Home runs (HR)',      metric:r=>r.expHR, fmt:r=>r.expHR.toFixed(2),           tag:r=>r.evHR},
+  ];
+  const row=(r,i,cat)=>`
+    <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border)">
+      <span style="min-width:18px;height:18px;border-radius:50%;background:var(--bg);color:var(--gold);font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center">${i+1}</span>
+      <img class="headshot-sm" src="${playerImg(r.id)}" onerror="${IMG_FALLBACK}">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:700;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.name}</div>
+        <div style="font-size:9px;color:var(--text2);display:flex;align-items:center;gap:3px"><img class="logo-xs" src="${teamLogo(ABBR2ID[r.team])}" onerror="${IMG_FALLBACK}">${r.team} · vs ${(r.pitcher||'').split(' ').slice(-1)[0]||'—'} <span style="color:${r.tag.c};font-weight:700">${r.tag.t}</span></div>
+      </div>
+      <div style="text-align:right"><span style="font-size:16px;font-weight:700;color:var(--green)">${cat.fmt(r)}</span>${cat.tag?propTag(cat.tag(r)):''}</div>
+    </div>`;
   $('batters-area').innerHTML=`
-    <div style="font-size:10px;color:var(--text3);margin-bottom:8px">Top ${TOP_BATTERS} bateadores de la jornada por <b>P(Hit)</b> · ajustado por pitcher/estadio/clima${hasProps?' · <b>casa</b> = línea real (hits/TB/HR) con edge y stake':''}.</div>
-    <div style="overflow-x:auto;background:var(--bg2);border-radius:var(--r);border:1px solid var(--border)">
-    <table class="htable">
-      <thead><tr><th>Jugador</th><th>Equipo</th><th>vs Pitcher</th><th>Matchup</th><th>BA</th><th>OBP</th><th>SLG</th><th>OPS</th><th>wOBA</th><th>K%</th><th>HR</th><th>P(Hit)</th><th>TB Exp.</th></tr></thead>
-      <tbody>${display.map((r,i)=>{
-        const hp=r.hitP>=.74?'var(--green)':r.hitP>=.68?'var(--amber)':'var(--text2)';
-        return `<tr style="${i%2?'background:var(--bg)':''}">
-          <td><div style="display:flex;align-items:center;gap:8px"><img class="headshot-sm" src="${playerImg(r.id)}" onerror="${IMG_FALLBACK}"><div><strong>${r.name}</strong><div style="font-size:9px;color:var(--text3)">${r.pos}</div></div></div></td>
-          <td><span style="display:inline-flex;align-items:center;gap:4px;font-size:10px;padding:1px 6px;border-radius:3px;background:var(--bg3);font-weight:700"><img class="logo-xs" src="${teamLogo(ABBR2ID[r.team])}" onerror="${IMG_FALLBACK}">${r.team}</span></td>
-          <td style="font-size:10px;color:var(--text2)">${(r.pitcher||'').split(' ').slice(-1)[0]||'—'}</td>
-          <td style="font-size:10px;font-weight:700;color:${r.tag.c}">${r.tag.t}</td>
-          <td style="font-weight:700">${r.ba.toFixed(3)}</td>
-          <td>${r.obp.toFixed(3)}</td><td>${r.slg.toFixed(3)}</td><td>${r.ops.toFixed(3)}</td>
-          <td style="color:${r.woba>.320?'var(--green)':'var(--text)'}">${r.woba.toFixed(3)}</td>
-          <td style="color:${r.kpct>28?'var(--red)':'var(--text)'}">${r.kpct.toFixed(1)}%</td>
-          <td style="color:var(--amber)">${r.hr}${propTag(r.evHR)}</td>
-          <td><span style="padding:2px 7px;border-radius:4px;background:var(--bg3);color:${hp};font-weight:700;font-size:10px">${Math.round(r.hitP*100)}%</span>${propTag(r.evHits)}</td>
-          <td style="color:var(--green);font-weight:700">${r.tbExp}${propTag(r.evTB)}</td>
-        </tr>`;
-      }).join('')}</tbody>
-    </table></div>`;
+    <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los 2 más probables de la jornada por categoría · proyecciones ajustadas por pitcher rival, estadio y clima${rows.some(r=>r.evHits||r.evTB||r.evHR)?' · <b>casa</b> = línea real con edge y stake':''}.</div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px">
+      ${cats.map(cat=>{
+        const top2=[...rows].sort((a,b)=>cat.metric(b)-cat.metric(a)).slice(0,2);
+        return `<div class="card"><div class="card-hdr"><span class="card-hdr-title">${cat.title}</span></div>${top2.map((r,i)=>row(r,i,cat)).join('')}</div>`;
+      }).join('')}
+    </div>`;
 }
 
 // ── History ───────────────────────────────────────────────────────────────────

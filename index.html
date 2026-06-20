@@ -503,8 +503,9 @@ function computePicks(data) {
   // OPS vs la MANO del abridor rival (split L/R) × forma reciente; si no, OPS general
   const aOPS = sf(data.awaySplit?.['v'+data.homePHand] ?? awayStats?.hitting?.ops, .72)*(data.awayForm||1) - (awayInj?.length>=3?.02:(awayInj?.length>=1?.01:0));
   const hOPS = sf(data.homeSplit?.['v'+data.awayPHand] ?? homeStats?.hitting?.ops, .72)*(data.homeForm||1) - (homeInj?.length>=3?.02:(homeInj?.length>=1?.01:0));
-  const aBPE = sf(awayStats?.pitching?.era,4.0);
-  const hBPE = sf(homeStats?.pitching?.era,4.0);
+  // Bullpen: ERA real de los relevistas si existe; si no, ERA del equipo (proxy)
+  const aBPE = sf(data.awayBullpen ?? awayStats?.pitching?.era, 4.0);
+  const hBPE = sf(data.homeBullpen ?? homeStats?.pitching?.era, 4.0);
 
   const apIPr=ipOf(awayPitcher), hpIPr=ipOf(homePitcher);
   // Crudos (para mostrar en la pestaña Lanzadores)
@@ -652,6 +653,17 @@ async function getRecentGames(id,yr) {
     splits.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
     return splits.slice(0,15).map(s=>({isWin:(s.stat?.wins||0)>0}));
   }catch{return[];}
+}
+// ERA real del bullpen (solo relevistas: más apariciones de relevo que aperturas)
+async function getBullpenERA(id,yr) {
+  try{
+    const d=await mlb(`/stats?stats=season&group=pitching&season=${yr}&teamId=${id}&playerPool=All&limit=60&sportId=1`);
+    const ps=(d.stats||[]).flatMap(g=>g.splits||[]);
+    let er=0, ip=0;
+    ps.forEach(x=>{ const st=x.stat||{}, g=+st.gamesPlayed||0, gs=+st.gamesStarted||0, e=+st.earnedRuns||0, ipf=ipOf(st);
+      if((g-gs)>gs && ipf>0){ er+=e; ip+=ipf; } });   // relevista: más relevos que aperturas
+    return ip>0 ? +(er*9/ip).toFixed(2) : null;
+  }catch{return null;}
 }
 // OPS del equipo en los últimos ~30 días (forma reciente)
 async function getRecentOPS(id,yr) {
@@ -898,7 +910,7 @@ async function runAnalysis() {
       const hId=g.teams.home.team.id, aId=g.teams.away.team.id;
       const hpId=g.teams.home.probablePitcher?.id, apId=g.teams.away.probablePitcher?.id;
 
-      const [hpSt,apSt,hTSt,aTSt,hWL,aWL,hInj,aInj,hBat,aBat,wx,hSplit,aSplit,hHand,aHand,hRecOPS,aRecOPS] = await Promise.all([
+      const [hpSt,apSt,hTSt,aTSt,hWL,aWL,hInj,aInj,hBat,aBat,wx,hSplit,aSplit,hHand,aHand,hRecOPS,aRecOPS,hBull,aBull] = await Promise.all([
         getPitcherStats(hpId,yr), getPitcherStats(apId,yr),
         getTeamStats(hId,yr), getTeamStats(aId,yr),
         getRecentGames(hId,yr), getRecentGames(aId,yr),
@@ -908,6 +920,7 @@ async function runAnalysis() {
         getTeamSplitOPS(hId,yr), getTeamSplitOPS(aId,yr),
         getPitcherHand(hpId), getPitcherHand(apId),
         getRecentOPS(hId,yr), getRecentOPS(aId,yr),
+        getBullpenERA(hId,yr), getBullpenERA(aId,yr),
       ]);
       // Forma reciente: OPS de últimos 30 días ÷ OPS de temporada (acotado ±8%)
       const _hOps=sf(hTSt?.hitting?.ops,.72), _aOps=sf(aTSt?.hitting?.ops,.72);
@@ -933,6 +946,7 @@ async function runAnalysis() {
         awayInj: aInj, homeInj: hInj, wx, kprops,
         homeSplit: hSplit, awaySplit: aSplit, homePHand: hHand, awayPHand: aHand,
         homeForm: homeForm*homeLineupF, awayForm: awayForm*awayLineupF,
+        homeBullpen: hBull, awayBullpen: aBull,
         odds: pickOdds(oddsMap, g.teams.home.team.name, g.teams.away.team.name, g.gameDate),
       });
       gd.gamePk    = g.gamePk;

@@ -1155,7 +1155,7 @@ async function loadHistory() {
       <td>${r.game_date}</td>
       <td><strong>${r.away}</strong> @ <strong>${r.home}</strong></td>
       <td>${r.fav}</td>
-      <td style="font-weight:700">${Math.round((r.fav_prob||0)*100)}%</td>
+      <td style="font-weight:700" title="Probabilidad del pick mostrado">${Math.round((r.top_pick_prob||r.fav_prob||0)*100)}%</td>
       <td><span class="conf-pill conf-${r.confidence}">${r.confidence==='High'?'🟢 Alta':r.confidence==='Medium'?'🟡 Media':'🔴 Baja'}</span></td>
       <td style="font-size:10px;color:var(--text2);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.top_pick_main||'—'}</td>
       <td style="white-space:nowrap">

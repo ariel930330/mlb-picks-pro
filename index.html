@@ -500,8 +500,9 @@ function computePicks(data) {
   const {away,home,awayId,homeId,awayPitcherId,homePitcherId,awayPitcher,homePitcher,awayStats,homeStats,awayRecent,homeRecent,awayInj,homeInj,odds} = data;
   const pf = PF[homeId]||1.0;
 
-  const aOPS = sf(awayStats?.hitting?.ops,.72) - (awayInj?.length>=3?.02:(awayInj?.length>=1?.01:0));
-  const hOPS = sf(homeStats?.hitting?.ops,.72) - (homeInj?.length>=3?.02:(homeInj?.length>=1?.01:0));
+  // OPS vs la MANO del abridor rival (split L/R) si existe; si no, OPS general
+  const aOPS = sf(data.awaySplit?.['v'+data.homePHand] ?? awayStats?.hitting?.ops, .72) - (awayInj?.length>=3?.02:(awayInj?.length>=1?.01:0));
+  const hOPS = sf(data.homeSplit?.['v'+data.awayPHand] ?? homeStats?.hitting?.ops, .72) - (homeInj?.length>=3?.02:(homeInj?.length>=1?.01:0));
   const aBPE = sf(awayStats?.pitching?.era,4.0);
   const hBPE = sf(homeStats?.pitching?.era,4.0);
 
@@ -655,6 +656,20 @@ async function getRecentGames(id,yr) {
 async function getInjuries(id) {
   try{ const d=await mlb(`/teams/${id}/roster?rosterType=allInjuries`);
     return (d.roster||[]).filter(p=>!['P','RP','SP'].includes(p.position?.abbreviation)).map(p=>({name:p.person?.fullName})); }catch{return[];}
+}
+// Mano del lanzador ('L' | 'R')
+async function getPitcherHand(id) {
+  if(!id) return null;
+  try{ const d=await mlb(`/people/${id}`); return d.people?.[0]?.pitchHand?.code||null; }catch{return null;}
+}
+// OPS del equipo vs zurdos (vL) y vs derechos (vR)
+async function getTeamSplitOPS(id,yr) {
+  try{
+    const d=await mlb(`/teams/${id}/stats?stats=statSplits&group=hitting&season=${yr}&sitCodes=vr,vl&sportId=1`);
+    const sp=(d.stats||[]).flatMap(g=>g.splits||[]), out={};
+    sp.forEach(s=>{ const c=s.split?.code; if(c==='vr') out.vR=parseFloat(s.stat?.ops||0); if(c==='vl') out.vL=parseFloat(s.stat?.ops||0); });
+    return out;
+  }catch{return{};}
 }
 async function getTopBatters(id,yr) {
   try{
@@ -874,13 +889,15 @@ async function runAnalysis() {
       const hId=g.teams.home.team.id, aId=g.teams.away.team.id;
       const hpId=g.teams.home.probablePitcher?.id, apId=g.teams.away.probablePitcher?.id;
 
-      const [hpSt,apSt,hTSt,aTSt,hWL,aWL,hInj,aInj,hBat,aBat,wx] = await Promise.all([
+      const [hpSt,apSt,hTSt,aTSt,hWL,aWL,hInj,aInj,hBat,aBat,wx,hSplit,aSplit,hHand,aHand] = await Promise.all([
         getPitcherStats(hpId,yr), getPitcherStats(apId,yr),
         getTeamStats(hId,yr), getTeamStats(aId,yr),
         getRecentGames(hId,yr), getRecentGames(aId,yr),
         getInjuries(hId), getInjuries(aId),
         getTopBatters(hId,yr), getTopBatters(aId,yr),
         getWeather(VENUE_GEO[hId], date, g.gameDate),
+        getTeamSplitOPS(hId,yr), getTeamSplitOPS(aId,yr),
+        getPitcherHand(hpId), getPitcherHand(apId),
       ]);
 
       const gd = computePicks({
@@ -894,17 +911,23 @@ async function runAnalysis() {
         awayStats: aTSt, homeStats: hTSt,
         awayRecent: aWL, homeRecent: hWL,
         awayInj: aInj, homeInj: hInj, wx, kprops,
+        homeSplit: hSplit, awaySplit: aSplit, homePHand: hHand, awayPHand: aHand,
         odds: pickOdds(oddsMap, g.teams.home.team.name, g.teams.away.team.name, g.gameDate),
       });
       gd.gamePk    = g.gamePk;
       gd.time      = g.gameDate;
       gd.topBatters= {away:aBat,home:hBat};
       results.push(gd);
+      // Platoon (hand) por equipo: OPS vs la mano del rival ÷ OPS general
+      const hOverall=sf(hTSt?.hitting?.ops,.72), aOverall=sf(aTSt?.hitting?.ops,.72);
+      const awayPlatoon=(hHand&&aSplit['v'+hHand])?aSplit['v'+hHand]/aOverall:1;   // bat. visitantes vs mano del pitcher local
+      const homePlatoon=(aHand&&hSplit['v'+aHand])?hSplit['v'+aHand]/hOverall:1;   // bat. locales vs mano del pitcher visitante
       batchBatters.push({away:g.teams.away.team.abbreviation,home:g.teams.home.team.abbreviation,
         awayBatters:aBat,homeBatters:hBat,
         awayPitcher:gd.pitchers.away.name,homePitcher:gd.pitchers.home.name,
         awayOppScore:gd.features?.hps??.5,   // bateadores visitantes enfrentan al pitcher LOCAL
         homeOppScore:gd.features?.aps??.5,   // bateadores locales enfrentan al pitcher VISITANTE
+        awayPlatoon, homePlatoon, awayOppHand:hHand, homeOppHand:aHand,
         pf:gd.pf||1, wx:gd.wx||null});
     }
 
@@ -1128,11 +1151,12 @@ function renderBatters(batData) {
   const rows=[];
   batData.forEach(g=>{
     const wxF=wxFactor(g.wx), pf=g.pf||1, envAdj=pf*wxF;
-    const mk=(b,oppScore,oppPitcher)=>{
+    const mk=(b,oppScore,oppPitcher,plat,oppHand)=>{
       if(!b.ba||b.ba===0||!b.pa) return null;
       const pAdj=cl(1-(oppScore-.5)*.6,.78,1.22);          // pitcher rival: as => baja; flojo => sube
-      const adjBA=cl(b.ba*pAdj*(1+(envAdj-1)*.3),.05,.6);  // BA poco sensible al park
-      const adjSLG=b.slg*pAdj*envAdj;                      // poder sí sensible al park/clima
+      const pl=cl(plat||1,.85,1.15);                       // platoon vs la mano del rival (acotado)
+      const adjBA=cl(b.ba*pAdj*pl*(1+(envAdj-1)*.3),.05,.6);  // BA poco sensible al park
+      const adjSLG=b.slg*pAdj*pl*envAdj;                   // poder sí sensible al park/clima/mano
       const tag=oppScore>=.62?{t:'duro',c:'var(--rtx)'}:oppScore<=.40?{t:'favorable',c:'var(--gtx)'}:{t:'neutro',c:'var(--text3)'};
       const rate=v=>(v/b.pa)*4.2;                          // proyección por juego (~4.2 PA)
       // Proyecciones del día (ajustadas por pitcher rival, estadio y clima)
@@ -1149,10 +1173,10 @@ function renderBatters(batData) {
       const evHits=bp?.hits?evalProp(poissonOver(expH,bp.hits.line),bp.hits):null;
       const evTB  =bp?.tb  ?evalProp(poissonOver(expTB,bp.tb.line),  bp.tb)  :null;
       const evHR  =bp?.hr  ?evalProp(poissonOver(expHR,bp.hr.line),  bp.hr)  :null;
-      return {id:b.id,name:b.name,pos:b.pos,pitcher:oppPitcher,tag,hitP,expTB,hrbiR,expBB,expHR,evHits,evTB,evHR};
+      return {id:b.id,name:b.name,pos:b.pos,pitcher:oppPitcher,oppHand,tag,hitP,expTB,hrbiR,expBB,expHR,evHits,evTB,evHR};
     };
-    (g.awayBatters||[]).forEach(b=>{const r=mk(b,g.awayOppScore??.5,g.homePitcher); if(r){r.team=g.away;rows.push(r);}});
-    (g.homeBatters||[]).forEach(b=>{const r=mk(b,g.homeOppScore??.5,g.awayPitcher); if(r){r.team=g.home;rows.push(r);}});
+    (g.awayBatters||[]).forEach(b=>{const r=mk(b,g.awayOppScore??.5,g.homePitcher,g.awayPlatoon,g.awayOppHand); if(r){r.team=g.away;rows.push(r);}});
+    (g.homeBatters||[]).forEach(b=>{const r=mk(b,g.homeOppScore??.5,g.awayPitcher,g.homePlatoon,g.homeOppHand); if(r){r.team=g.home;rows.push(r);}});
   });
   if(!rows.length){$('batters-area').innerHTML='<div class="empty">Corre el análisis primero.</div>';return;}
 
@@ -1171,7 +1195,7 @@ function renderBatters(batData) {
       <img class="headshot-sm" src="${playerImg(r.id)}" onerror="${IMG_FALLBACK}">
       <div style="flex:1;min-width:0">
         <div style="font-weight:700;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.name}</div>
-        <div style="font-size:9px;color:var(--text2);display:flex;align-items:center;gap:3px"><img class="logo-xs" src="${teamLogo(ABBR2ID[r.team])}" onerror="${IMG_FALLBACK}">${r.team} · vs ${(r.pitcher||'').split(' ').slice(-1)[0]||'—'} <span style="color:${r.tag.c};font-weight:700">${r.tag.t}</span></div>
+        <div style="font-size:9px;color:var(--text2);display:flex;align-items:center;gap:3px"><img class="logo-xs" src="${teamLogo(ABBR2ID[r.team])}" onerror="${IMG_FALLBACK}">${r.team} · vs ${(r.pitcher||'').split(' ').slice(-1)[0]||'—'}${r.oppHand?` (${r.oppHand})`:''} <span style="color:${r.tag.c};font-weight:700">${r.tag.t}</span></div>
       </div>
       <div style="text-align:right"><span style="font-size:16px;font-weight:700;color:var(--green)">${cat.fmt(r)}</span>${cat.tag?propTag(cat.tag(r)):''}</div>
     </div>`;

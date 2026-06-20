@@ -500,9 +500,9 @@ function computePicks(data) {
   const {away,home,awayId,homeId,awayPitcherId,homePitcherId,awayPitcher,homePitcher,awayStats,homeStats,awayRecent,homeRecent,awayInj,homeInj,odds} = data;
   const pf = PF[homeId]||1.0;
 
-  // OPS vs la MANO del abridor rival (split L/R) si existe; si no, OPS general
-  const aOPS = sf(data.awaySplit?.['v'+data.homePHand] ?? awayStats?.hitting?.ops, .72) - (awayInj?.length>=3?.02:(awayInj?.length>=1?.01:0));
-  const hOPS = sf(data.homeSplit?.['v'+data.awayPHand] ?? homeStats?.hitting?.ops, .72) - (homeInj?.length>=3?.02:(homeInj?.length>=1?.01:0));
+  // OPS vs la MANO del abridor rival (split L/R) × forma reciente; si no, OPS general
+  const aOPS = sf(data.awaySplit?.['v'+data.homePHand] ?? awayStats?.hitting?.ops, .72)*(data.awayForm||1) - (awayInj?.length>=3?.02:(awayInj?.length>=1?.01:0));
+  const hOPS = sf(data.homeSplit?.['v'+data.awayPHand] ?? homeStats?.hitting?.ops, .72)*(data.homeForm||1) - (homeInj?.length>=3?.02:(homeInj?.length>=1?.01:0));
   const aBPE = sf(awayStats?.pitching?.era,4.0);
   const hBPE = sf(homeStats?.pitching?.era,4.0);
 
@@ -652,6 +652,15 @@ async function getRecentGames(id,yr) {
     splits.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
     return splits.slice(0,15).map(s=>({isWin:(s.stat?.wins||0)>0}));
   }catch{return[];}
+}
+// OPS del equipo en los últimos ~30 días (forma reciente)
+async function getRecentOPS(id,yr) {
+  try{
+    const end=new Date().toISOString().slice(0,10);
+    const start=new Date(Date.now()-30*864e5).toISOString().slice(0,10);
+    const d=await mlb(`/teams/${id}/stats?stats=byDateRange&group=hitting&startDate=${start}&endDate=${end}&season=${yr}&sportId=1`);
+    return parseFloat(d.stats?.[0]?.splits?.[0]?.stat?.ops||0)||null;
+  }catch{return null;}
 }
 async function getInjuries(id) {
   try{ const d=await mlb(`/teams/${id}/roster?rosterType=allInjuries`);
@@ -889,7 +898,7 @@ async function runAnalysis() {
       const hId=g.teams.home.team.id, aId=g.teams.away.team.id;
       const hpId=g.teams.home.probablePitcher?.id, apId=g.teams.away.probablePitcher?.id;
 
-      const [hpSt,apSt,hTSt,aTSt,hWL,aWL,hInj,aInj,hBat,aBat,wx,hSplit,aSplit,hHand,aHand] = await Promise.all([
+      const [hpSt,apSt,hTSt,aTSt,hWL,aWL,hInj,aInj,hBat,aBat,wx,hSplit,aSplit,hHand,aHand,hRecOPS,aRecOPS] = await Promise.all([
         getPitcherStats(hpId,yr), getPitcherStats(apId,yr),
         getTeamStats(hId,yr), getTeamStats(aId,yr),
         getRecentGames(hId,yr), getRecentGames(aId,yr),
@@ -898,7 +907,11 @@ async function runAnalysis() {
         getWeather(VENUE_GEO[hId], date, g.gameDate),
         getTeamSplitOPS(hId,yr), getTeamSplitOPS(aId,yr),
         getPitcherHand(hpId), getPitcherHand(apId),
+        getRecentOPS(hId,yr), getRecentOPS(aId,yr),
       ]);
+      // Forma reciente: OPS de últimos 30 días ÷ OPS de temporada (acotado ±8%)
+      const _hOps=sf(hTSt?.hitting?.ops,.72), _aOps=sf(aTSt?.hitting?.ops,.72);
+      const homeForm=hRecOPS?cl(hRecOPS/_hOps,.92,1.08):1, awayForm=aRecOPS?cl(aRecOPS/_aOps,.92,1.08):1;
 
       const gd = computePicks({
         away: g.teams.away.team.abbreviation,
@@ -912,6 +925,7 @@ async function runAnalysis() {
         awayRecent: aWL, homeRecent: hWL,
         awayInj: aInj, homeInj: hInj, wx, kprops,
         homeSplit: hSplit, awaySplit: aSplit, homePHand: hHand, awayPHand: aHand,
+        homeForm, awayForm,
         odds: pickOdds(oddsMap, g.teams.home.team.name, g.teams.away.team.name, g.gameDate),
       });
       gd.gamePk    = g.gamePk;

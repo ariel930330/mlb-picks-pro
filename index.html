@@ -1302,18 +1302,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Load weights
   loadModelTab();
 
-  // Restaurar el último análisis COMPLETO (local). Si no hay, intenta los picks de hoy desde Supabase.
-  if(!restoreCache()) restoreToday();
+  // Restaurar el último análisis COMPLETO: local (instantáneo) -> nube (otra PC) -> picks de Supabase.
+  if(!restoreCache()){ if(!await restoreCloud()) restoreToday(); }
 });
 
-// Guarda/restaura el análisis completo en localStorage (todas las pestañas, sin re-consultar APIs)
-function cacheAnalysis(date){
-  try{ localStorage.setItem('last_analysis', JSON.stringify({date, games:allGames, batters:allBatters, parlays:allParlays, bprops:allBProps})); }catch(e){ console.warn('cache:',e.message); }
-}
-function restoreCache(){
-  let c; try{ c=JSON.parse(localStorage.getItem('last_analysis')||'null'); }catch{ return false; }
-  if(!c||!Array.isArray(c.games)||!c.games.length) return false;
-  allGames=c.games; allBatters=c.batters||[]; allParlays=c.parlays||[]; allBProps=c.bprops||{};
+// Aplica un análisis restaurado a todas las pestañas
+function applyRestored(c, src){
+  allGames=c.games||[]; allBatters=c.batters||[]; allParlays=c.parlays||[]; allBProps=c.bprops||{};
   if(c.date) $('date-pick').value=c.date;
   renderPicks(allGames); renderParlays(allParlays); renderPitchers(allGames); renderBatters(allBatters);
   const high=allGames.flatMap(g=>g.picks||[]).filter(p=>p.conf==='High').length;
@@ -1322,8 +1317,32 @@ function restoreCache(){
   $('stats-bar').style.display='grid';
   txt('s-games',allGames.length); txt('s-high',high); txt('s-med',med);
   txt('s-overs',overs); txt('s-parlays',allParlays.length);
-  $('run-status').textContent=`📂 ${allGames.length} partidos restaurados (${c.date||''}) · presiona Analizar para actualizar`;
-  return true;
+  $('run-status').textContent=`📂 ${allGames.length} partidos restaurados ${src} (${c.date||''}) · presiona Analizar para actualizar`;
+}
+
+// Guarda el análisis completo: en localStorage (esta PC) y en Supabase (cualquier PC)
+function cacheAnalysis(date){
+  const payload={date, games:allGames, batters:allBatters, parlays:allParlays, bprops:allBProps};
+  try{ localStorage.setItem('last_analysis', JSON.stringify(payload)); }catch(e){ console.warn('cache:',e.message); }
+  saveAnalysisCloud(date, payload);
+}
+async function saveAnalysisCloud(date, payload){
+  if(!isOwner()) return;   // escritura solo del dueño (RLS)
+  try{ await sb.from('analysis_cache').upsert({game_date:date, payload:JSON.stringify(payload), updated_at:new Date().toISOString()},{onConflict:'game_date'}); }catch(e){ console.warn('cloud cache:',e.message); }
+}
+function restoreCache(){
+  let c; try{ c=JSON.parse(localStorage.getItem('last_analysis')||'null'); }catch{ return false; }
+  if(!c||!Array.isArray(c.games)||!c.games.length) return false;
+  applyRestored(c,'(local)'); return true;
+}
+async function restoreCloud(){
+  try{
+    const {data,error}=await sb.from('analysis_cache').select('payload').order('updated_at',{ascending:false}).limit(1);
+    if(error||!data?.length) return false;
+    const c=JSON.parse(data[0].payload);
+    if(!c?.games?.length) return false;
+    applyRestored(c,'(nube)'); return true;
+  }catch{ return false; }
 }
 
 async function restoreToday() {

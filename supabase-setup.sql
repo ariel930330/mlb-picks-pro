@@ -47,11 +47,22 @@ create table if not exists public.model_weights (
   train_iter   bigint
 );
 
+-- Caché del análisis COMPLETO (para restaurar desde cualquier dispositivo) -----
+create table if not exists public.analysis_cache (
+  game_date  text primary key,    -- fecha analizada (YYYY-MM-DD)
+  payload    text,                -- JSON con games/batters/parlays/bprops
+  updated_at timestamptz default now()
+);
+
 -- 1) Activar RLS --------------------------------------------------------------
-alter table public.predictions   enable row level security;
-alter table public.model_weights enable row level security;
+alter table public.predictions     enable row level security;
+alter table public.model_weights   enable row level security;
+alter table public.analysis_cache  enable row level security;
 
 -- 2) Borrar políticas previas (idempotente) -----------------------------------
+drop policy if exists "cache public read"          on public.analysis_cache;
+drop policy if exists "cache auth write"           on public.analysis_cache;
+drop policy if exists "cache auth update"          on public.analysis_cache;
 drop policy if exists "predictions public read"    on public.predictions;
 drop policy if exists "predictions auth write"     on public.predictions;
 drop policy if exists "predictions auth update"    on public.predictions;
@@ -92,6 +103,21 @@ create policy "weights auth write"
 
 create policy "weights auth update"
   on public.model_weights for update
+  to authenticated
+  using (true) with check (true);
+
+-- 5) analysis_cache: lectura pública, escritura solo autenticado ---------------
+create policy "cache public read"
+  on public.analysis_cache for select
+  using (true);
+
+create policy "cache auth write"
+  on public.analysis_cache for insert
+  to authenticated
+  with check (true);
+
+create policy "cache auth update"
+  on public.analysis_cache for update
   to authenticated
   using (true) with check (true);
 

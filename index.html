@@ -430,6 +430,11 @@ let trainIter = 13070;
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const sf = (v, d=4.5) => { const n=parseFloat(v); return isNaN(n)?d:n; };
 const cl = (v,a=0,b=1) => Math.max(a,Math.min(b,v));
+// Regresión a la media: mezcla la tasa observada (n muestras) con la liga (peso=prior).
+// Muestras chicas se acercan a la liga (un .400 en 30 turnos NO es .400 real).
+const regress = (rate,n,lg,prior) => (rate*n + lg*prior)/(n+prior);
+// Promedios de liga (MLB ~2024) para regresar
+const LG = {ba:.243,obp:.312,slg:.399,hr:.033, era:4.10,fip:4.10,k9:8.6,bb9:3.1};
 const sig = x => 1/(1+Math.exp(-Math.max(-20,Math.min(20,x))));
 const p2ml = p => { p=cl(p,.01,.99); return p>=.5?String(Math.round(-p/(1-p)*100)):'+'+Math.round((1-p)/p*100); };
 const pct  = p => Math.round(p*100)+'%';
@@ -482,10 +487,10 @@ const stakePct = (prob,price) => +Math.min(STAKE_CAP, KELLY_FRAC*kelly(prob,pric
 const BLEND_MKT = 0.70;
 const blend = (model, market) => BLEND_MKT*market + (1-BLEND_MKT)*model;
 
+const ipOf = st => { const ip=sf(st?.inningsPitched,0), f=Math.floor(ip); return f+Math.round((ip-f)*10)/3; };  // "110.1" -> 110.33
 function calcFIP(st, era=4.5) {
-  const hr=sf(st.homeRuns,0),bb=sf(st.baseOnBalls,0),hbp=sf(st.hitByPitch,0),k=sf(st.strikeOuts,0),ip=sf(st.inningsPitched,0);
-  const full=Math.floor(ip), partial=Math.round((ip-full)*10);
-  const ipd = full+partial/3;
+  const hr=sf(st.homeRuns,0),bb=sf(st.baseOnBalls,0),hbp=sf(st.hitByPitch,0),k=sf(st.strikeOuts,0);
+  const ipd = ipOf(st);
   if(ipd<5) return era;
   return Math.max(1,Math.min(8,((13*hr)+(3*(bb+hbp))-(2*k))/ipd+3.10));
 }
@@ -500,10 +505,17 @@ function computePicks(data) {
   const aBPE = sf(awayStats?.pitching?.era,4.0);
   const hBPE = sf(homeStats?.pitching?.era,4.0);
 
-  const apERA=sf(awayPitcher?.era,4.5), hpERA=sf(homePitcher?.era,4.5);
-  const apFIP=calcFIP(awayPitcher||{},apERA), hpFIP=calcFIP(homePitcher||{},hpERA);
-  const apK9=sf(awayPitcher?.strikeoutsPer9Inn,8), hpK9=sf(homePitcher?.strikeoutsPer9Inn,8);
-  const apBB9=sf(awayPitcher?.walksPer9Inn,3.2), hpBB9=sf(homePitcher?.walksPer9Inn,3.2);
+  const apIPr=ipOf(awayPitcher), hpIPr=ipOf(homePitcher);
+  // Crudos (para mostrar en la pestaña Lanzadores)
+  const apERA0=sf(awayPitcher?.era,4.5), hpERA0=sf(homePitcher?.era,4.5);
+  const apFIP0=calcFIP(awayPitcher||{},apERA0), hpFIP0=calcFIP(homePitcher||{},hpERA0);
+  const apK90=sf(awayPitcher?.strikeoutsPer9Inn,8), hpK90=sf(homePitcher?.strikeoutsPer9Inn,8);
+  const apBB90=sf(awayPitcher?.walksPer9Inn,3.2), hpBB90=sf(homePitcher?.walksPer9Inn,3.2);
+  // Regresados a la media por innings lanzados (para el modelo: muestras chicas no inflan)
+  const apERA=regress(apERA0,apIPr,LG.era,50), hpERA=regress(hpERA0,hpIPr,LG.era,50);
+  const apFIP=regress(apFIP0,apIPr,LG.fip,40), hpFIP=regress(hpFIP0,hpIPr,LG.fip,40);
+  const apK9=regress(apK90,apIPr,LG.k9,30), hpK9=regress(hpK90,hpIPr,LG.k9,30);
+  const apBB9=regress(apBB90,apIPr,LG.bb9,30), hpBB9=regress(hpBB90,hpIPr,LG.bb9,30);
 
   const aps = cl(.35*(1-(apFIP-2)/4)+.25*(1-(apERA-2)/4)+.20*((apK9-5)/5)+.20*(1-(apBB9-1.5)/3.5));
   const hps = cl(.35*(1-(hpFIP-2)/4)+.25*(1-(hpERA-2)/4)+.20*((hpK9-5)/5)+.20*(1-(hpBB9-1.5)/3.5));
@@ -613,8 +625,8 @@ function computePicks(data) {
     awayWP:+awp.toFixed(4),homeWP:+hwp.toFixed(4),
     awayML:p2ml(awp),homeML:p2ml(hwp),
     total,totalLine,pf,
-    pitchers:{away:{id:awayPitcherId,name:data.awayPitcherName||'TBD',era:+apERA.toFixed(2),fip:+apFIP.toFixed(2),k9:+apK9.toFixed(1),kExp:apKExp,kLine:apKLine,kMkt:aKMkt},
-              home:{id:homePitcherId,name:data.homePitcherName||'TBD',era:+hpERA.toFixed(2),fip:+hpFIP.toFixed(2),k9:+hpK9.toFixed(1),kExp:hpKExp,kLine:hpKLine,kMkt:hKMkt}},
+    pitchers:{away:{id:awayPitcherId,name:data.awayPitcherName||'TBD',era:+apERA0.toFixed(2),fip:+apFIP0.toFixed(2),k9:+apK90.toFixed(1),kExp:apKExp,kLine:apKLine,kMkt:aKMkt},
+              home:{id:homePitcherId,name:data.homePitcherName||'TBD',era:+hpERA0.toFixed(2),fip:+hpFIP0.toFixed(2),k9:+hpK90.toFixed(1),kExp:hpKExp,kLine:hpKLine,kMkt:hKMkt}},
     picks:top3,allPicks:picks,
     features:{hps,aps,hos,aos,hbs,abs:abs2,str},
   };
@@ -651,8 +663,15 @@ async function getTopBatters(id,yr) {
       const st=s.stat||{},p=s.player||{},pos=s.position?.abbreviation||'?';
       const pa=parseInt(st.plateAppearances||0),k=parseInt(st.strikeOuts||0),bb=parseInt(st.baseOnBalls||0);
       const h=parseInt(st.hits||0),d2=parseInt(st.doubles||0),t=parseInt(st.triples||0),hr=parseInt(st.homeRuns||0);
+      const ab=parseInt(st.atBats||0);
       const woba=pa>0?+((bb*.69+(h-d2-t-hr)*.88+d2*1.21+t*1.57+hr*2.10)/pa).toFixed(3):0;
-      return {id:p.id,name:p.fullName||'?',pos,ba:parseFloat(st.avg||0),obp:parseFloat(st.obp||0),slg:parseFloat(st.slg||0),ops:parseFloat(st.ops||0),hr,rbi:parseInt(st.rbi||0),runs:parseInt(st.runs||0),ab:parseInt(st.atBats||0),pa,h,bb,kpct:pa>0?+(k/pa*100).toFixed(1):0,woba};
+      // Regresión a la media (prior 250 PA): tasas reales, no infladas por muestras chicas
+      const PR=250;
+      const baR =regress(parseFloat(st.avg||0),pa,LG.ba ,PR);
+      const obpR=regress(parseFloat(st.obp||0),pa,LG.obp,PR);
+      const slgR=regress(parseFloat(st.slg||0),pa,LG.slg,PR);
+      const hrR =regress(ab?hr/ab:0,ab,LG.hr,PR);   // HR por turno (regresado)
+      return {id:p.id,name:p.fullName||'?',pos,ba:baR,obp:obpR,slg:slgR,ops:+(obpR+slgR).toFixed(3),hr,hrRate:hrR,rbi:parseInt(st.rbi||0),runs:parseInt(st.runs||0),ab,pa,h,bb,kpct:pa>0?+(k/pa*100).toFixed(1):0,woba};
     }).filter(p=>p.ab>=20&&!['P','SP','RP','TWP'].includes(p.pos)).sort((a,b)=>b.ops-a.ops).slice(0,9);
   }catch{return[];}
 }
@@ -1124,7 +1143,7 @@ function renderBatters(batData) {
       const expRBI=rate(b.rbi)*pAdj*envAdj;
       const hrbiR=expH+expR+expRBI;                        // H + R + RBI
       const expBB=rate(b.bb)*pAdj;                         // bases por bolas (no sensible al park)
-      const expHR=(b.ab?b.hr/b.ab:0)*4.2*pAdj*envAdj;      // home runs
+      const expHR=(b.hrRate??(b.ab?b.hr/b.ab:0))*4.2*pAdj*envAdj;   // home runs (tasa regresada)
       // Comparación vs casa (props reales) si están disponibles
       const bp=allBProps[normName(b.name)];
       const evHits=bp?.hits?evalProp(poissonOver(expH,bp.hits.line),bp.hits):null;

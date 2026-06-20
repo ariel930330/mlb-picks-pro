@@ -878,6 +878,7 @@ async function runAnalysis() {
     txt('s-overs',overs); txt('s-parlays',allParlays.length);
     $('run-status').textContent=`✅ ${results.length} partidos analizados`+
       (getOddsKey()?(oddsCount?` · 📈 cuotas reales (${oddsCount} partidos)`+(oddsRemaining!=null?` · ${oddsRemaining} req restantes`:''):` · ⚠ sin cuotas (revisa API key o fecha)`):` · sin cuotas (edge vs -110)`);
+    cacheAnalysis(date);   // guarda el análisis completo para restaurarlo al refrescar
 
   } catch(e) {
     $('picks-area').innerHTML=`<div class="error-box"><i class="ti ti-alert-circle"></i> ${e.message}</div>`;
@@ -1301,9 +1302,29 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Load weights
   loadModelTab();
 
-  // Restore today's picks from Supabase
-  restoreToday();
+  // Restaurar el último análisis COMPLETO (local). Si no hay, intenta los picks de hoy desde Supabase.
+  if(!restoreCache()) restoreToday();
 });
+
+// Guarda/restaura el análisis completo en localStorage (todas las pestañas, sin re-consultar APIs)
+function cacheAnalysis(date){
+  try{ localStorage.setItem('last_analysis', JSON.stringify({date, games:allGames, batters:allBatters, parlays:allParlays, bprops:allBProps})); }catch(e){ console.warn('cache:',e.message); }
+}
+function restoreCache(){
+  let c; try{ c=JSON.parse(localStorage.getItem('last_analysis')||'null'); }catch{ return false; }
+  if(!c||!Array.isArray(c.games)||!c.games.length) return false;
+  allGames=c.games; allBatters=c.batters||[]; allParlays=c.parlays||[]; allBProps=c.bprops||{};
+  if(c.date) $('date-pick').value=c.date;
+  renderPicks(allGames); renderParlays(allParlays); renderPitchers(allGames); renderBatters(allBatters);
+  const high=allGames.flatMap(g=>g.picks||[]).filter(p=>p.conf==='High').length;
+  const med =allGames.flatMap(g=>g.picks||[]).filter(p=>p.conf==='Medium').length;
+  const overs=allGames.filter(g=>g.total>g.totalLine).length;
+  $('stats-bar').style.display='grid';
+  txt('s-games',allGames.length); txt('s-high',high); txt('s-med',med);
+  txt('s-overs',overs); txt('s-parlays',allParlays.length);
+  $('run-status').textContent=`📂 ${allGames.length} partidos restaurados (${c.date||''}) · presiona Analizar para actualizar`;
+  return true;
+}
 
 async function restoreToday() {
   const today = new Date().toISOString().slice(0,10);

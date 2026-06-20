@@ -334,9 +334,10 @@ body{background:radial-gradient(1200px 600px at 70% -10%,#f7f9fc,var(--bg)) fixe
           <div style="font-size:13px;font-weight:700">Validación del modelo</div>
           <div style="font-size:11px;color:var(--text2)">¿Cuando digo X%, gano X%? · ¿Le gano al cierre? (CLV)</div>
         </div>
-        <div style="display:flex;gap:8px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn-sm" onclick="loadValidation()">🔄 Recargar</button>
           <button class="btn-sm owner-only" onclick="captureClose()" title="Captura las cuotas de cierre del día para medir CLV (córrelo cerca del inicio de los juegos)">📸 Capturar cierre</button>
+          <button class="btn-sm owner-only" onclick="recalibrate()" title="Ajusta las probabilidades del modelo con tus resultados (Platt scaling)">🧠 Recalibrar</button>
         </div>
       </div>
       <div id="valid-area"><div class="empty">Cargando…</div></div>
@@ -486,6 +487,11 @@ const stakePct = (prob,price) => +Math.min(STAKE_CAP, KELLY_FRAC*kelly(prob,pric
 // Esto encoge los edges inflados (lo que difiere del mercado suele estar mal en el modelo).
 const BLEND_MKT = 0.70;
 const blend = (model, market) => BLEND_MKT*market + (1-BLEND_MKT)*model;
+// Recalibración aprendida del historial (Platt scaling): p_cal = sigmoid(a·logit(p)+b).
+// Identidad (a=1,b=0) hasta que el dueño recalibre con sus resultados.
+let CAL = {a:1, b:0};
+const logitP = p => { p=cl(p,.001,.999); return Math.log(p/(1-p)); };
+const calibrate = p => (CAL.a===1 && CAL.b===0) ? p : cl(sig(CAL.a*logitP(p)+CAL.b),.01,.99);
 
 const ipOf = st => { const ip=sf(st?.inningsPitched,0), f=Math.floor(ip); return f+Math.round((ip-f)*10)/3; };  // "110.1" -> 110.33
 function calcFIP(st, era=4.5) {
@@ -616,6 +622,8 @@ function computePicks(data) {
   picks.push({cat:'F5 Total',main:`${f5Pick?'OVER':'UNDER'} ${f5line} (F5)`,sub:`Proyección F5: ${f5total}`,prob:f5totalProb,edge:+(f5totalProb-BREAKEVEN).toFixed(3)});
   // Nota: los Ks de pitcher NO van como pick del partido; se muestran en la pestaña "Lanzadores".
 
+  // Recalibración aprendida del historial: corrige la prob. y recalcula el edge
+  picks.forEach(p=>{ p.prob=calibrate(p.prob); p.edge=+(p.prob-(p.fair!=null?p.fair:BREAKEVEN)).toFixed(3); });
   // Stake sugerido (medio-Kelly, % del bankroll) solo cuando hay cuota real y edge positivo
   picks.forEach(p=>{ p.stake = (p.price!=null && p.edge>0) ? stakePct(p.prob,p.price) : 0; });
   // Orden por VALOR (edge), no por probabilidad: los value bets primero
@@ -1342,7 +1350,8 @@ async function loadValidation(){
       <div style="overflow-x:auto"><table class="htable">
         <thead><tr><th>Prob. dicha</th><th>n</th><th>Predicho</th><th>Real</th><th>Dif</th><th>real ▓ · predicho │</th></tr></thead>
         <tbody>${calRows}</tbody></table></div>
-      <div style="padding:8px 12px;font-size:10px;color:var(--text3)">Si el modelo está bien calibrado, <b>Predicho ≈ Real</b> en cada fila. Si "Real" es mucho menor que "Predicho" (Dif roja), el modelo es <b>sobreconfiado</b>. ${tot<50?'⚠ Pocas muestras: necesitas ~100+ para que sea fiable.':''}</div>
+      <div style="padding:8px 12px;font-size:10px;color:var(--text3)">Si el modelo está bien calibrado, <b>Predicho ≈ Real</b> en cada fila. Si "Real" es mucho menor que "Predicho" (Dif roja), el modelo es <b>sobreconfiado</b>. ${tot<50?'⚠ Pocas muestras: necesitas ~100+ para que sea fiable.':''}
+        <br>Recalibración: ${CAL.a===1&&CAL.b===0?'<b>sin aplicar</b> (usa 🧠 Recalibrar con tu historial)':`<b style="color:var(--gtx)">activa</b> (a=${CAL.a}, b=${CAL.b})`}</div>
     </div>
     <div class="card" style="margin-top:12px">
       <div class="card-hdr"><span class="card-hdr-title">🎯 CLV (Closing Line Value)</span></div>
@@ -1381,6 +1390,28 @@ async function captureClose(){
   alert(`📸 Cierre capturado para ${n} picks · CLV actualizado`);
   loadValidation();
 }
+
+// Ajusta Platt scaling (a,b) por descenso de gradiente sobre (prob, resultado)
+function fitPlatt(rows){
+  const data=(rows||[]).filter(r=>(r.result==='win'||r.result==='loss')&&r.top_pick_prob).map(r=>({x:logitP(r.top_pick_prob),y:r.result==='win'?1:0}));
+  if(data.length<30) return null;
+  let a=1,b=0;
+  for(let it=0;it<800;it++){ let ga=0,gb=0; data.forEach(d=>{ const p=sig(a*d.x+b); ga+=(p-d.y)*d.x; gb+=(p-d.y); }); a-=.1*ga/data.length; b-=.1*gb/data.length; }
+  return {a:+a.toFixed(4),b:+b.toFixed(4),n:data.length};
+}
+// Recalibra el modelo con tu historial (Platt) y guarda los parámetros
+async function recalibrate(){
+  if(!requireAuth()) return;
+  const {data:rows}=await sb.from('predictions').select('top_pick_prob,result').limit(5000);
+  const fit=fitPlatt(rows);
+  if(!fit){ alert('Necesitas ~30+ picks calificados (✓/✗) para recalibrar.'); return; }
+  CAL={a:fit.a,b:fit.b};
+  localStorage.setItem('cal_ab',JSON.stringify(CAL));
+  try{ await sb.from('model_weights').upsert({id:2,weights_json:JSON.stringify(CAL),train_iter:fit.n},{onConflict:'id'}); }catch{}
+  alert(`✅ Recalibrado con ${fit.n} picks calificados\n  a=${fit.a} · b=${fit.b}\nLas próximas proyecciones aplican esta corrección.`);
+  loadValidation();
+}
+function resetCalibration(){ CAL={a:1,b:0}; localStorage.removeItem('cal_ab'); try{sb.from('model_weights').delete().eq('id',2);}catch{} loadValidation(); }
 
 // ── Auto-grading: califica desde el marcador final de MLB ──────────────────
 // Devuelve 'win' | 'loss' | 'push' | null (null = no calificable automáticamente)
@@ -1510,6 +1541,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Load weights
   loadModelTab();
+
+  // Cargar la recalibración (Platt) guardada: local -> nube
+  try{ const c=JSON.parse(localStorage.getItem('cal_ab')||'null'); if(c?.a) CAL=c; }catch{}
+  try{ const {data:cd}=await sb.from('model_weights').select('weights_json').eq('id',2); if(cd?.length){ const c=JSON.parse(cd[0].weights_json); if(c?.a) CAL=c; } }catch{}
 
   // Restaurar el último análisis COMPLETO: local (instantáneo) -> nube (otra PC) -> picks de Supabase.
   if(!restoreCache()){ if(!await restoreCloud()) restoreToday(); }

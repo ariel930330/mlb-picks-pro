@@ -100,9 +100,9 @@ const pitchersHTML=E('pitchers-area').innerHTML;
       <li><b>Bullpen real:</b> ERA de los relevistas, no la del equipo completa.</li>
       <li><b>Clima + viento direccional:</b> temperatura y el componente del viento hacia el jardín (sale = más carreras), con la orientación de cada estadio. Park factor incluido.</li>
       <li><b>BvP (bateador vs pitcher):</b> historial de carrera vs el abridor rival, regresado fuerte (opcional).</li>
-      <li><b>Recalibración aprendida:</b> el botón 🧠 Recalibrar ajusta las probabilidades con tu historial (Platt scaling).</li>
+      <li><b>Recalibración + reentrenamiento:</b> los botones 🧠 Recalibrar (Platt) y Reentrenar (regresión regularizada) ajustan el modelo con tu propio historial, sin sobre-ajustar.</li>
     </ul></div>
-    <div class="kbox">El modelo dejó de usar "stats crudas de temporada": ahora considera <b>muestra, mano, forma, alineación, bullpen, BvP y viento</b>, y se recalibra con tus resultados.</div>`),
+    <div class="kbox">El modelo dejó de usar "stats crudas de temporada": ahora considera <b>muestra, mano, forma, alineación, bullpen, BvP y viento</b>, y <b>aprende de tus resultados</b> (recalibra y reentrena).</div>`),
 
   sec('6','Valor real','Integración con el mercado',`
     <div class="pt"><ul>
@@ -147,7 +147,7 @@ const pitchersHTML=E('pitchers-area').innerHTML;
       <li><b>Edge sin cuotas = orientativo:</b> solo aplica cuando no hay cuotas; con cuotas el edge es real.</li>
       <li><b>Props limitados por el feed:</b> las casas postean Ks/props por tandas; algunos no aparecen al analizar temprano (limitación de la fuente).</li>
       <li><b>Aproximaciones menores:</b> la orientación de estadios (viento) es aproximada; los techos retráctiles se tratan como domo.</li>
-      <li><b>Recalibra, no reentrena:</b> ajusta la confianza del modelo con tu historial, pero los pesos base de la regresión siguen fijos.</li>
+      <li><b>Aprendizaje gradual:</b> recalibra (Platt) y reentrena (regularizado) con tu historial, pero ambos necesitan ~50-100+ juegos para moverse de forma fiable.</li>
     </ul></div>`),
 
   sec('13','Cómo usarlo','Guía paso a paso',`

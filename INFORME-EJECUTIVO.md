@@ -92,6 +92,10 @@ El modelo no usa stats crudas de temporada. Aplica:
 8. **Recalibración aprendida (Platt scaling):** el botón 🧠 Recalibrar ajusta las
    probabilidades del modelo con tu propio historial de resultados, corrigiendo la
    sobre/sub-confianza. Se aplica a todas las proyecciones futuras.
+9. **Reentrenamiento regularizado:** el botón "Reentrenar con mi historial" (Modelo IA)
+   ajusta los pesos base de la regresión hacia tus resultados, partiendo del modelo
+   entrenado (13,070 partidos) y empujándolos **suavemente** (regularización L2) para
+   no sobre-ajustar con muestras chicas.
 
 ---
 
@@ -157,9 +161,10 @@ El modelo no usa stats crudas de temporada. Aplica:
   algunos no aparecen al analizar temprano. (Limitación de la fuente, no de la app.)
 - **Aproximaciones menores:** la orientación de los estadios (para el viento) es
   aproximada; los techos retráctiles se tratan como domo (sin clima).
-- **Recalibra probabilidades, no reentrena pesos:** el botón 🧠 Recalibrar corrige la
-  confianza del modelo con tu historial (Platt scaling), pero los pesos base de la
-  regresión logística siguen fijos (no se reaprenden por completo).
+- **Aprendizaje limitado por tus datos:** el modelo se **recalibra** (Platt) y se
+  **reentrena** (regresión regularizada hacia el prior) con tu historial, pero ambos
+  necesitan acumular ~50-100+ juegos calificados para moverse de forma fiable. Con
+  pocos datos se quedan cerca del modelo base (a propósito, para no sobre-ajustar).
 
 ---
 

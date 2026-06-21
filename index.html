@@ -933,8 +933,15 @@ async function runAnalysis() {
     const yr = +date.slice(0,4);   // año de la temporada según la fecha elegida (no el actual)
     const sched = await mlb(`/schedule?sportId=1&date=${date}&hydrate=probablePitcher,team,venue,status,lineups`);
     const allG = (sched.dates||[]).flatMap(d=>d.games||[]);
-    // SOLO juegos que NO han empezado: en vivo/final dan cuotas que inflan edges falsos
-    const games = allG.filter(g=>g.status?.abstractGameState==='Preview');
+    // Incluir los que NO han comenzado a jugar (incl. calentamiento/pre-juego);
+    // excluir los ya en progreso (cuotas en vivo = edges falsos), finales y pospuestos.
+    const playable = g => {
+      const a=g.status?.abstractGameState, d=g.status?.detailedState||'';
+      if(a==='Final') return false;
+      if(/In Progress|Suspend|Postpon|Cancel|Game Over|Completed|Forfeit/i.test(d)) return false;
+      return true;   // Scheduled / Pre-Game / Warmup / Delayed Start / Preview
+    };
+    const games = allG.filter(playable);
     const started = allG.length - games.length;
 
     if(!games.length){$('picks-area').innerHTML=`<div class="empty">${allG.length?`Los ${allG.length} partidos de esta fecha ya empezaron o terminaron.<br>El modelo solo analiza juegos por comenzar (las cuotas en vivo dan edges falsos).`:'No hay partidos para esta fecha.'}</div>`;return;}

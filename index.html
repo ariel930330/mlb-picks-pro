@@ -160,9 +160,9 @@ body{background:radial-gradient(1200px 600px at 70% -10%,#f7f9fc,var(--bg)) fixe
 .stat-val{background:linear-gradient(135deg,var(--text),#3b4654);-webkit-background-clip:text;background-clip:text;color:transparent}
 .pick-stake{font-size:9px;color:var(--gtx);font-weight:700;margin-top:2px}
 .filterbar{display:flex;align-items:center;gap:6px;margin-bottom:12px;flex-wrap:wrap}
-.pf-btn{background:var(--bg2);color:var(--text2);border:1px solid var(--border);padding:5px 11px;border-radius:99px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;transition:background .12s,color .12s}
-.pf-btn.active{background:linear-gradient(135deg,var(--gold),var(--gold2));color:#fff;border-color:transparent;box-shadow:0 2px 8px rgba(224,128,8,.3)}
-.pf-btn:hover:not(.active){background:var(--bg4)}
+.pf-btn,.ps-btn{background:var(--bg2);color:var(--text2);border:1px solid var(--border);padding:5px 11px;border-radius:99px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;transition:background .12s,color .12s}
+.pf-btn.active,.ps-btn.active{background:linear-gradient(135deg,var(--gold),var(--gold2));color:#fff;border-color:transparent;box-shadow:0 2px 8px rgba(224,128,8,.3)}
+.pf-btn:hover:not(.active),.ps-btn:hover:not(.active){background:var(--bg4)}
 .badge.connected{box-shadow:0 1px 4px rgba(21,150,108,.2)}
 ::-webkit-scrollbar{width:10px;height:10px}::-webkit-scrollbar-thumb{background:#c7ced7;border-radius:8px;border:2px solid var(--bg)}::-webkit-scrollbar-track{background:transparent}
 
@@ -277,7 +277,10 @@ body{background:radial-gradient(1200px 600px at 70% -10%,#f7f9fc,var(--bg)) fixe
         <button class="pf-btn active" data-f="all"  onclick="setPickFilter('all')">Todos</button>
         <button class="pf-btn" data-f="ev"   onclick="setPickFilter('ev')">+EV (valor)</button>
         <button class="pf-btn" data-f="high" onclick="setPickFilter('high')">🟢 Alta conf.</button>
-        <button class="btn-sm" style="margin-left:auto" onclick="copyPicks()"><i class="ti ti-copy"></i> Copiar</button>
+        <span style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;margin-left:auto">Orden:</span>
+        <button class="ps-btn active" data-s="edge" onclick="setPickSort('edge')">Valor</button>
+        <button class="ps-btn" data-s="prob" onclick="setPickSort('prob')">Probabilidad</button>
+        <button class="btn-sm" onclick="copyPicks()"><i class="ti ti-copy"></i> Copiar</button>
       </div>
       <div id="picks-area"><div class="empty"><i class="ti ti-trophy" style="font-size:40px;opacity:.15;display:block;margin:0 auto 12px"></i>Selecciona fecha y presiona Analizar partidos</div></div>
     </div>
@@ -1066,19 +1069,29 @@ async function savePredictions(date, games) {
 
 // ── Render picks ──────────────────────────────────────────────────────────────
 let pickFilter='all';
+let pickSort = localStorage.getItem('pick_sort') || 'edge';   // 'edge' (valor) | 'prob' (probabilidad)
 function setPickFilter(f){
   pickFilter=f;
   document.querySelectorAll('.pf-btn').forEach(b=>b.classList.toggle('active',b.dataset.f===f));
   renderPicks(allGames);
 }
-function pickPasses(p){ return pickFilter==='ev' ? p.edge>0 : pickFilter==='high' ? p.conf==='High' : true; }
+function setPickSort(s){
+  pickSort=s; localStorage.setItem('pick_sort',s);
+  document.querySelectorAll('.ps-btn').forEach(b=>b.classList.toggle('active',b.dataset.s===s));
+  renderPicks(allGames);
+}
+function pickPasses(p){ return pickFilter==='ev' ? p.edge>0 : pickFilter==='high' ? (p.conf||confOf(p))==='High' : true; }
+const confOf = p => p.prob>=.58?'High':p.prob>=.53?'Medium':'Low';
+const pickSorter = () => pickSort==='prob' ? (a,b)=>b.prob-a.prob : (a,b)=>b.edge-a.edge;
 
 function renderPicks(games) {
   const confMap = {High:'high',Medium:'med',Low:'low'};
   const labelMap = {High:'🟢 ALTA',Medium:'🟡 MEDIA',Low:'🔴 BAJA'};
   $('filterbar').style.display = games.length ? 'flex' : 'none';
+  document.querySelectorAll('.ps-btn').forEach(b=>b.classList.toggle('active',b.dataset.s===pickSort));
   const html = games.map(g=>{
-    const picks = (g.picks||[]).filter(pickPasses);
+    // Los 3 mejores del juego según el orden elegido (valor o probabilidad)
+    const picks = (g.allPicks||g.picks||[]).filter(pickPasses).sort(pickSorter()).slice(0,3).map(p=>({...p,conf:confOf(p)}));
     if(!picks.length) return '';
     const awp=Math.round(g.awayWP*100), hwp=Math.round(g.homeWP*100);
     const barW=awp+'%';
@@ -1115,7 +1128,7 @@ function copyPicks(){
   if(!allGames.length){ alert('Corre el análisis primero.'); return; }
   const lines=[];
   allGames.forEach(g=>{
-    const picks=(g.picks||[]).filter(pickPasses);
+    const picks=(g.allPicks||g.picks||[]).filter(pickPasses).sort(pickSorter()).slice(0,3);
     if(!picks.length) return;
     lines.push(`⚾ ${g.away} @ ${g.home}`);
     picks.forEach(p=>lines.push(`  • ${p.cat}: ${p.main}  (${pct(p.prob)}, edge ${p.edge>=0?'+':''}${(p.edge*100).toFixed(1)}%${p.stake>0?`, apostar ${p.stake}%`:''})`));

@@ -98,9 +98,11 @@ const pitchersHTML=E('pitchers-area').innerHTML;
       <li><b>Forma reciente:</b> OPS de los últimos 30 días vs el de temporada (±8%).</li>
       <li><b>Alineación confirmada:</b> filtra a los titulares reales (✓) cuando se publica (~1-3 h antes) y penaliza si faltan estrellas.</li>
       <li><b>Bullpen real:</b> ERA de los relevistas, no la del equipo completa.</li>
-      <li><b>Clima + park factor:</b> temperatura/viento (estadios techados neutralizados) y factor de estadio.</li>
+      <li><b>Clima + viento direccional:</b> temperatura y el componente del viento hacia el jardín (sale = más carreras), con la orientación de cada estadio. Park factor incluido.</li>
+      <li><b>BvP (bateador vs pitcher):</b> historial de carrera vs el abridor rival, regresado fuerte (opcional).</li>
+      <li><b>Recalibración aprendida:</b> el botón 🧠 Recalibrar ajusta las probabilidades con tu historial (Platt scaling).</li>
     </ul></div>
-    <div class="kbox">El modelo dejó de usar "stats crudas de temporada": ahora considera <b>muestra, mano, forma, quién juega hoy y el bullpen real.</b></div>`),
+    <div class="kbox">El modelo dejó de usar "stats crudas de temporada": ahora considera <b>muestra, mano, forma, alineación, bullpen, BvP y viento</b>, y se recalibra con tus resultados.</div>`),
 
   sec('6','Valor real','Integración con el mercado',`
     <div class="pt"><ul>
@@ -142,10 +144,10 @@ const pitchersHTML=E('pitchers-area').innerHTML;
     <div class="kbox" style="border-left-color:#d23b2a"><b>Importante:</b> es una herramienta de <b>valor esperado</b>, no una garantía de ganar. A corto plazo, ganar/perder es azar.</div>
     <div class="pt"><ul>
       <li><b>El modelo aún no está probado:</b> la validación se llena con el uso; hasta tener ~100+ picks calificados no sabes si está bien calibrado.</li>
-      <li><b>Edge sin cuotas = orientativo</b> (no es valor real contra el mercado).</li>
-      <li><b>Props limitados por el feed:</b> las casas postean Ks/props por tandas (horas antes); algunos no aparecen al analizar temprano.</li>
-      <li><b>No considera:</b> historial bateador-vs-pitcher específico, viento direccional por estadio, ni clima en estadios con techo retráctil (tratados como domo).</li>
-      <li><b>Pesos del modelo estáticos:</b> no se reentrena solo con tus resultados.</li>
+      <li><b>Edge sin cuotas = orientativo:</b> solo aplica cuando no hay cuotas; con cuotas el edge es real.</li>
+      <li><b>Props limitados por el feed:</b> las casas postean Ks/props por tandas; algunos no aparecen al analizar temprano (limitación de la fuente).</li>
+      <li><b>Aproximaciones menores:</b> la orientación de estadios (viento) es aproximada; los techos retráctiles se tratan como domo.</li>
+      <li><b>Recalibra, no reentrena:</b> ajusta la confianza del modelo con tu historial, pero los pesos base de la regresión siguen fijos.</li>
     </ul></div>`),
 
   sec('13','Cómo usarlo','Guía paso a paso',`

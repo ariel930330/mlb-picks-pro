@@ -84,8 +84,14 @@ El modelo no usa stats crudas de temporada. Aplica:
    bateadores filtra a los **titulares reales** (✓) y el modelo penaliza si faltan
    estrellas.
 5. **Bullpen real:** ERA de los relevistas (no la del equipo completa).
-6. **Clima + park factor:** temperatura/viento (estadios techados neutralizados) y
-   factor de estadio (Coors infla, Petco deprime).
+6. **Clima + park factor:** temperatura y **viento direccional** (componente que sopla
+   hacia el jardín = más carreras; hacia home = menos), con la orientación de cada
+   estadio. Park factor (Coors infla, Petco deprime). Estadios techados neutralizados.
+7. **BvP (bateador vs pitcher):** historial de carrera de cada bateador vs el abridor
+   rival, regresado fuerte (opcional, por costo de API).
+8. **Recalibración aprendida (Platt scaling):** el botón 🧠 Recalibrar ajusta las
+   probabilidades del modelo con tu propio historial de resultados, corrigiendo la
+   sobre/sub-confianza. Se aplica a todas las proyecciones futuras.
 
 ---
 
@@ -145,12 +151,15 @@ El modelo no usa stats crudas de temporada. Aplica:
   ganar/perder es azar.
 - **El modelo aún no está probado.** La validación se llena con el uso; hasta tener
   ~100+ picks calificados, no sabes si está bien calibrado.
-- **Edge sin cuotas = orientativo** (no es valor real contra el mercado).
+- **Edge sin cuotas = orientativo** (solo aplica cuando no hay cuotas/key; con cuotas
+  el edge es real contra el mercado).
 - **Props limitados por el feed:** las casas postean Ks/props por tandas (horas antes);
-  algunos no aparecen al analizar temprano.
-- **No considera:** historial bateador-vs-pitcher específico, viento direccional por
-  estadio, ni clima en estadios con techo retráctil (tratados como domo).
-- **Pesos del modelo estáticos:** no se reentrena solo con tus resultados.
+  algunos no aparecen al analizar temprano. (Limitación de la fuente, no de la app.)
+- **Aproximaciones menores:** la orientación de los estadios (para el viento) es
+  aproximada; los techos retráctiles se tratan como domo (sin clima).
+- **Recalibra probabilidades, no reentrena pesos:** el botón 🧠 Recalibrar corrige la
+  confianza del modelo con tu historial (Platt scaling), pero los pesos base de la
+  regresión logística siguen fijos (no se reaprenden por completo).
 
 ---
 

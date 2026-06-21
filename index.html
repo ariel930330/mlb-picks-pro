@@ -321,10 +321,12 @@ body{background:radial-gradient(1200px 600px at 70% -10%,#f7f9fc,var(--bg)) fixe
       <div style="font-size:13px;font-weight:700;margin-bottom:4px">Pesos del modelo</div>
       <div style="font-size:11px;color:var(--text2);margin-bottom:16px">Entrenados con 13,070 partidos reales (2019–2024) · 58.4% accuracy</div>
       <div id="weight-sliders"></div>
-      <div style="display:flex;gap:8px;margin-top:12px">
-        <button class="btn" onclick="saveWeightsToCloud()"><i class="ti ti-device-floppy"></i>Guardar en Supabase</button>
-        <button class="btn-sm" onclick="resetWeights()">↺ Resetear a entrenados</button>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+        <button class="btn owner-only" onclick="retrainModel()" title="Ajusta los pesos hacia tus resultados, regularizado para no sobre-ajustar"><i class="ti ti-brain"></i>Reentrenar con mi historial</button>
+        <button class="btn-sm owner-only" onclick="saveWeightsToCloud()"><i class="ti ti-device-floppy"></i>Guardar</button>
+        <button class="btn-sm owner-only" onclick="resetWeights()">↺ Resetear a entrenados</button>
       </div>
+      <div style="font-size:10px;color:var(--text3);margin-top:6px">El reentrenamiento parte de los pesos entrenados (13,070 partidos) y los empuja <b>suavemente</b> hacia tus resultados. Necesita ~50+ juegos calificados; mientras más datos, más se mueve.</div>
       <div style="margin-top:16px;padding:12px 14px;background:var(--bg2);border-radius:var(--rs);border:1px solid var(--border);font-size:11px;color:var(--text2)">
         Iteraciones: <strong id="m-iters" style="color:var(--gold)">0</strong>
       </div>
@@ -1053,6 +1055,7 @@ async function savePredictions(date, games) {
       top_pick_cat:top.cat||'', top_pick_main:top.main||'',
       top_pick_prob:+(top.prob||0).toFixed(4), top_pick_edge:+(top.edge||0).toFixed(4),
       top_pick_price: top.price??null, top_pick_fair: top.fair!=null?+top.fair.toFixed(4):null,
+      features_json: g.features?JSON.stringify(g.features):null,   // para reentrenar el modelo
       all_picks_json: JSON.stringify(g.picks.map(p=>({cat:p.cat,main:p.main,prob:p.prob,edge:p.edge,conf:p.conf}))),
     };
     const {data:ex} = await sb.from('predictions').select('id,result').eq('game_date',date).eq('away',g.away).eq('home',g.home);
@@ -1491,8 +1494,12 @@ async function autoGrade() {
   for(const r of rows){
     const g=finals[`${r.game_date}|${r.away}|${r.home}`];
     if(!g || g.status?.abstractGameState!=='Final'){ pending++; continue; }
+    const hS=g.teams?.home?.score, aS=g.teams?.away?.score;
+    const upd={};
+    if(hS!=null&&aS!=null) upd.home_won = hS>aS?1:0;   // resultado real del ML (para reentrenar)
     const res=gradeTopPick(r,g);
-    if(res){ await sb.from('predictions').update({result:res}).eq('id',r.id); graded++; }
+    if(res){ upd.result=res; graded++; }
+    if(Object.keys(upd).length) await sb.from('predictions').update(upd).eq('id',r.id);
   }
   $('grading-msg')?.remove();
   alert(`✅ ${graded} calificadas automáticamente`+(pending?` · ${pending} aún sin marcador final`:'')+`\n(Ks y props se califican a mano)`);
@@ -1540,6 +1547,38 @@ function resetWeights() {
   W={...DEFAULT_W}; trainIter=13070;
   renderSliders(); txt('m-iters',13070);
   saveWeightsToCloud();
+}
+
+// Regresión logística regularizada hacia el prior (fine-tune que NO sobre-ajusta)
+function trainLogistic(samples, prior, lambda){
+  const fk=['hps','aps','hos','aos','hbs','abs','str'], wk=['w_hp','w_ap','w_ho','w_ao','w_hb','w_ab','w_str'];
+  const w={...prior}, n=samples.length, lr=Math.min(0.3, 0.5/(1+lambda));  // estable: lr·λ acotado
+  for(let it=0; it<3000; it++){
+    const grad={w_hfa:0}; wk.forEach(k=>grad[k]=0);
+    samples.forEach(s=>{
+      let z=w.w_hfa; fk.forEach((f,i)=>z+=w[wk[i]]*(s.f[f]||0));
+      const e=1/(1+Math.exp(-Math.max(-20,Math.min(20,z))))-s.y;
+      fk.forEach((f,i)=>grad[wk[i]]+=e*(s.f[f]||0)); grad.w_hfa+=e;
+    });
+    wk.forEach(k=>w[k]-=lr*(grad[k]/n + lambda*(w[k]-prior[k])));
+    w.w_hfa-=lr*(grad.w_hfa/n + lambda*(w.w_hfa-prior.w_hfa));
+  }
+  Object.keys(w).forEach(k=>w[k]=+w[k].toFixed(4));
+  return w;
+}
+// Reentrena los pesos con tu historial (regularizado hacia los pesos entrenados)
+async function retrainModel(){
+  if(!requireAuth()) return;
+  const {data:rows}=await sb.from('predictions').select('features_json,home_won').not('home_won','is',null).limit(5000);
+  const samples=(rows||[]).map(r=>{ try{return {f:JSON.parse(r.features_json||'{}'),y:r.home_won};}catch{return null;} }).filter(s=>s&&s.f&&s.f.hps!=null);
+  if(samples.length<50){ alert(`Necesitas ~50+ juegos con features y resultado.\nLlevas ${samples.length} (genera picks y usa Auto-calificar).`); return; }
+  // λ alto = se queda cerca del prior; baja al acumular datos (mín 0.2)
+  const lambda=Math.max(0.2, 200/samples.length);
+  W=trainLogistic(samples, DEFAULT_W, lambda);
+  trainIter=13070+samples.length;
+  renderSliders(); txt('m-iters',trainIter);
+  await saveWeightsToCloud();
+  alert(`✅ Reentrenado con ${samples.length} juegos (regularización λ=${lambda.toFixed(2)}).\nLos pesos se ajustaron suavemente hacia tus resultados sin sobre-ajustar.`);
 }
 
 // ── UI helpers ────────────────────────────────────────────────────────────────

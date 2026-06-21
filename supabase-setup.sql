@@ -50,6 +50,8 @@ alter table public.predictions add column if not exists top_pick_price numeric;
 alter table public.predictions add column if not exists top_pick_fair  numeric;
 alter table public.predictions add column if not exists close_fair      numeric;
 alter table public.predictions add column if not exists clv             numeric;
+alter table public.predictions add column if not exists features_json  text;     -- features del modelo (para reentrenar)
+alter table public.predictions add column if not exists home_won       integer;  -- 1 si ganó el local, 0 si no
 
 create table if not exists public.model_weights (
   id           bigint primary key,

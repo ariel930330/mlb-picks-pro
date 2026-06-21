@@ -932,10 +932,13 @@ async function runAnalysis() {
   try {
     const yr = +date.slice(0,4);   // año de la temporada según la fecha elegida (no el actual)
     const sched = await mlb(`/schedule?sportId=1&date=${date}&hydrate=probablePitcher,team,venue,status,lineups`);
-    const games = (sched.dates||[]).flatMap(d=>d.games||[]).filter(g=>g.status?.abstractGameState!=='Final');
+    const allG = (sched.dates||[]).flatMap(d=>d.games||[]);
+    // SOLO juegos que NO han empezado: en vivo/final dan cuotas que inflan edges falsos
+    const games = allG.filter(g=>g.status?.abstractGameState==='Preview');
+    const started = allG.length - games.length;
 
-    if(!games.length){$('picks-area').innerHTML='<div class="empty">No hay partidos para esta fecha.</div>';return;}
-    $('run-status').textContent=`Analizando ${games.length} partidos...`;
+    if(!games.length){$('picks-area').innerHTML=`<div class="empty">${allG.length?`Los ${allG.length} partidos de esta fecha ya empezaron o terminaron.<br>El modelo solo analiza juegos por comenzar (las cuotas en vivo dan edges falsos).`:'No hay partidos para esta fecha.'}</div>`;return;}
+    $('run-status').textContent=`Analizando ${games.length} partidos...`+(started?` (${started} ya empezaron, excluidos)`:'');
 
     const {map:oddsMap, kprops, bprops} = await getOdds(date);
     const oddsCount = Object.keys(oddsMap).length;
@@ -1030,7 +1033,7 @@ async function runAnalysis() {
     $('stats-bar').style.display='grid';
     txt('s-games',results.length); txt('s-high',high); txt('s-med',med);
     txt('s-overs',overs); txt('s-parlays',allParlays.length);
-    $('run-status').textContent=`✅ ${results.length} partidos analizados`+
+    $('run-status').textContent=`✅ ${results.length} partidos analizados`+(started?` · ${started} ya empezaron (excluidos)`:'')+
       (getOddsKey()?(oddsCount?` · 📈 cuotas reales (${oddsCount} partidos)`+(oddsRemaining!=null?` · ${oddsRemaining} req restantes`:''):` · ⚠ sin cuotas (revisa API key o fecha)`):` · sin cuotas (edge vs -110)`);
     cacheAnalysis(date);   // guarda el análisis completo para restaurarlo al refrescar
 

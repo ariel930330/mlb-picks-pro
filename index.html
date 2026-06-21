@@ -1314,10 +1314,16 @@ function renderBatters(batData) {
 }
 
 // ── History ───────────────────────────────────────────────────────────────────
+let histMinProb = +(localStorage.getItem('hist_minprob')||0.5);
+function setHistMinProb(v){ histMinProb=+v; localStorage.setItem('hist_minprob',v); loadHistory(); }
+const probOf = r => r.top_pick_prob ?? r.fav_prob ?? 0;
+
 async function loadHistory() {
   $('history-area').innerHTML='<div class="loading"><div class="spin"></div>Cargando desde Supabase...</div>';
-  const {data:rows,error} = await sb.from('predictions').select('*').order('game_date',{ascending:false}).limit(500);
+  const {data:all,error} = await sb.from('predictions').select('*').order('game_date',{ascending:false}).limit(500);
   if(error){$('history-area').innerHTML=`<div class="error-box">${error.message}</div>`;return;}
+  // Solo los de mayor probabilidad (umbral elegido)
+  const rows = (all||[]).filter(r=>probOf(r)>=histMinProb);
 
   const graded=rows.filter(r=>r.result), wins=graded.filter(r=>r.result==='win');
   const highG=graded.filter(r=>r.confidence==='High'), highW=highG.filter(r=>r.result==='win');
@@ -1330,9 +1336,13 @@ async function loadHistory() {
   txt('h-hacc', highG.length?Math.round(highW.length/highG.length*100)+'%':'—');
   txt('h-roi', roi!=null?(roi>=0?'+':'')+roi.toFixed(1)+'%':'—');
 
-  if(!rows.length){$('history-area').innerHTML='<div class="empty">No hay predicciones aún.<br>Corre el análisis y marca resultados con ✓ ✗</div>';return;}
+  const opt=(v,l)=>`<option value="${v}"${histMinProb===v?' selected':''}>${l}</option>`;
+  const ctrl=`<div style="display:flex;justify-content:flex-end;align-items:center;gap:6px;margin-bottom:8px;font-size:11px;color:var(--text2)">Prob. mínima:
+    <select onchange="setHistMinProb(this.value)" style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:4px 8px;font-size:11px;color:var(--text);font-family:inherit">${opt(0,'Todas')}${opt(.5,'≥ 50%')}${opt(.55,'≥ 55%')}${opt(.6,'≥ 60%')}${opt(.65,'≥ 65%')}</select></div>`;
 
-  $('history-area').innerHTML=`<div style="overflow-x:auto;background:var(--bg2);border-radius:var(--r);border:1px solid var(--border)">
+  if(!rows.length){$('history-area').innerHTML=ctrl+`<div class="empty">${(all||[]).length?'Ningún pick supera ese umbral de probabilidad. Baja el filtro.':'No hay predicciones aún.<br>Corre el análisis y marca resultados con ✓ ✗'}</div>`;return;}
+
+  $('history-area').innerHTML=ctrl+`<div style="overflow-x:auto;background:var(--bg2);border-radius:var(--r);border:1px solid var(--border)">
     <table class="htable"><thead><tr><th>Fecha</th><th>Partido</th><th>Favorito</th><th>Prob</th><th>Conf</th><th>Pick</th><th>Resultado</th></tr></thead>
     <tbody>${rows.map(r=>`<tr>
       <td>${r.game_date}</td>

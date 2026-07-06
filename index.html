@@ -278,8 +278,8 @@ body{background:radial-gradient(1200px 600px at 70% -10%,#f7f9fc,var(--bg)) fixe
         <button class="pf-btn" data-f="ev"   onclick="setPickFilter('ev')">+EV (valor)</button>
         <button class="pf-btn" data-f="high" onclick="setPickFilter('high')">🟢 Alta conf.</button>
         <span style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;margin-left:auto">Orden:</span>
-        <button class="ps-btn active" data-s="edge" onclick="setPickSort('edge')">Valor</button>
-        <button class="ps-btn" data-s="prob" onclick="setPickSort('prob')">Probabilidad</button>
+        <button class="ps-btn" data-s="edge" onclick="setPickSort('edge')">Valor</button>
+        <button class="ps-btn active" data-s="prob" onclick="setPickSort('prob')">Probabilidad</button>
         <button class="btn-sm" onclick="copyPicks()"><i class="ti ti-copy"></i> Copiar</button>
       </div>
       <div id="picks-area"><div class="empty"><i class="ti ti-trophy" style="font-size:40px;opacity:.15;display:block;margin:0 auto 12px"></i>Selecciona fecha y presiona Analizar partidos</div></div>
@@ -602,11 +602,9 @@ function computePicks(data) {
   // ── Money Line: prob. final = blend(modelo, mercado); edge = final − mercado ──
   if(odds?.ml){
     const {fairHome,fairAway,priceHome,priceAway}=odds.ml;
-    const bHome=blend(hwp,fairHome), bAway=1-bHome;
-    const eHome=bHome-fairHome, eAway=bAway-fairAway;
-    picks.push(eHome>=eAway
-      ? {cat:'Money Line',main:`${home} ML ${amFmt(priceHome)}`,sub:`Modelo ${pct(hwp)} → ${pct(bHome)} vs Mercado ${pct(fairHome)}`,prob:bHome,edge:+eHome.toFixed(3),mkt:true,price:priceHome,fair:fairHome}
-      : {cat:'Money Line',main:`${away} ML ${amFmt(priceAway)}`,sub:`Modelo ${pct(awp)} → ${pct(bAway)} vs Mercado ${pct(fairAway)}`,prob:bAway,edge:+eAway.toFixed(3),mkt:true,price:priceAway,fair:fairAway});
+    const bHome=blend(hwp,fairHome), bAway=1-bHome, homeSide=bHome>=bAway;   // lado MÁS PROBABLE
+    const prob=homeSide?bHome:bAway, fair=homeSide?fairHome:fairAway, price=homeSide?priceHome:priceAway, mRaw=homeSide?hwp:awp;
+    picks.push({cat:'Money Line',main:`${homeSide?home:away} ML ${amFmt(price)}`,sub:`Modelo ${pct(mRaw)} → ${pct(prob)} vs Mercado ${pct(fair)}`,prob,edge:+(prob-fair).toFixed(3),mkt:true,price,fair});
   } else {
     picks.push(favHome
       ? {cat:'Money Line',main:`${home} ML ${p2ml(hwp)}`,sub:`Modelo: ${pct(hwp)}`,prob:hwp,edge:+(hwp-BREAKEVEN).toFixed(3)}
@@ -616,10 +614,9 @@ function computePicks(data) {
   // ── Total: usa la línea del mercado y compara P(over) modelo vs mercado ──
   if(odds?.total){
     const line=odds.total.point, mOver=normOver(total,totalSigma,line), bOver=blend(mOver,odds.total.fairOver);
-    const eOver=bOver-odds.total.fairOver, eUnder=(1-bOver)-odds.total.fairUnder;
-    picks.push(eOver>=eUnder
-      ? {cat:'Total del partido',main:`OVER ${line} ${amFmt(odds.total.priceOver)}`,sub:`Proy ${total} · Modelo ${pct(mOver)} → ${pct(bOver)} vs Mercado ${pct(odds.total.fairOver)}`,prob:bOver,edge:+eOver.toFixed(3),mkt:true,price:odds.total.priceOver,fair:odds.total.fairOver}
-      : {cat:'Total del partido',main:`UNDER ${line} ${amFmt(odds.total.priceUnder)}`,sub:`Proy ${total} · Modelo ${pct(1-mOver)} → ${pct(1-bOver)} vs Mercado ${pct(odds.total.fairUnder)}`,prob:1-bOver,edge:+eUnder.toFixed(3),mkt:true,price:odds.total.priceUnder,fair:odds.total.fairUnder});
+    const overSide=bOver>=0.5;   // lado MÁS PROBABLE (over o under)
+    const prob=overSide?bOver:1-bOver, fair=overSide?odds.total.fairOver:odds.total.fairUnder, price=overSide?odds.total.priceOver:odds.total.priceUnder, mRaw=overSide?mOver:1-mOver;
+    picks.push({cat:'Total del partido',main:`${overSide?'OVER':'UNDER'} ${line} ${amFmt(price)}`,sub:`Proy ${total} · Modelo ${pct(mRaw)} → ${pct(prob)} vs Mercado ${pct(fair)}`,prob,edge:+(prob-fair).toFixed(3),mkt:true,price,fair});
   } else {
     picks.push({cat:'Total del partido',main:`${totalPick?'OVER':'UNDER'} ${totalLine} runs`,sub:`Proyección: ${total} runs · PF ${pf}`,prob:totalProb,edge:+(totalProb-BREAKEVEN).toFixed(3)});
   }
@@ -627,14 +624,20 @@ function computePicks(data) {
   // ── Run Line: usa el handicap real del mercado para el favorito ──
   if(odds?.spread){
     const homeFav=odds.spread.homePoint<0;
-    const mCover=homeFav?normOver(hMargin,RUN_SD,1.5):normOver(-hMargin,RUN_SD,1.5);
-    const fairCover=homeFav?odds.spread.fairHomeCover:odds.spread.fairAwayCover;
-    const bCover=blend(mCover,fairCover);
-    const price=homeFav?odds.spread.priceHome:odds.spread.priceAway;
-    const pt=homeFav?odds.spread.homePoint:odds.spread.awayPoint;
-    picks.push({cat:'Run Line',main:`${homeFav?home:away} ${pt} ${amFmt(price)}`,sub:`Modelo ${pct(mCover)} → ${pct(bCover)} vs Mercado ${pct(fairCover)}`,prob:bCover,edge:+(bCover-fairCover).toFixed(3),mkt:true,price,fair:fairCover});
+    const mCover=homeFav?normOver(hMargin,RUN_SD,1.5):normOver(-hMargin,RUN_SD,1.5);   // prob favorito cubre -1.5
+    const fairFav=homeFav?odds.spread.fairHomeCover:odds.spread.fairAwayCover;
+    const bFav=blend(mCover,fairFav), favSide=bFav>=0.5;   // ¿más probable el favorito -1.5 o el rival +1.5?
+    const favTeam=homeFav?home:away, dogTeam=homeFav?away:home;
+    const favPt=homeFav?odds.spread.homePoint:odds.spread.awayPoint, dogPt=homeFav?odds.spread.awayPoint:odds.spread.homePoint;
+    const favPr=homeFav?odds.spread.priceHome:odds.spread.priceAway, dogPr=homeFav?odds.spread.priceAway:odds.spread.priceHome;
+    const prob=favSide?bFav:1-bFav, fair=favSide?fairFav:1-fairFav, mRaw=favSide?mCover:1-mCover;
+    const team=favSide?favTeam:dogTeam, pt=favSide?favPt:dogPt, price=favSide?favPr:dogPr;
+    picks.push({cat:'Run Line',main:`${team} ${pt} ${amFmt(price)}`,sub:`Modelo ${pct(mRaw)} → ${pct(prob)} vs Mercado ${pct(fair)}`,prob,edge:+(prob-fair).toFixed(3),mkt:true,price,fair});
   } else {
-    picks.push({cat:'Run Line -1.5',main:`${favHome?home:away} -1.5`,sub:`${pct(rlProb)} prob ganar por 2+`,prob:rlProb,edge:+(rlProb-BREAKEVEN).toFixed(3)});
+    const dogSide=(1-rlProb)>=rlProb;   // el +1.5 suele ser más probable
+    picks.push(dogSide
+      ? {cat:'Run Line +1.5',main:`${favHome?away:home} +1.5`,sub:`${pct(1-rlProb)} no pierde por 2+`,prob:1-rlProb,edge:+((1-rlProb)-BREAKEVEN).toFixed(3)}
+      : {cat:'Run Line -1.5',main:`${favHome?home:away} -1.5`,sub:`${pct(rlProb)} gana por 2+`,prob:rlProb,edge:+(rlProb-BREAKEVEN).toFixed(3)});
   }
   picks.push({cat:'Primeras 5 Innings',main:`${f5fav} F5 ${p2ml(f5favP)}`,sub:`${pct(f5favP)} en F5`,prob:f5favP,edge:+(f5favP-BREAKEVEN).toFixed(3)});
   picks.push({cat:'F5 Total',main:`${f5Pick?'OVER':'UNDER'} ${f5line} (F5)`,sub:`Proyección F5: ${f5total}`,prob:f5totalProb,edge:+(f5totalProb-BREAKEVEN).toFixed(3)});
@@ -644,8 +647,8 @@ function computePicks(data) {
   picks.forEach(p=>{ p.prob=calibrate(p.prob); p.edge=+(p.prob-(p.fair!=null?p.fair:BREAKEVEN)).toFixed(3); });
   // Stake sugerido (medio-Kelly, % del bankroll) solo cuando hay cuota real y edge positivo
   picks.forEach(p=>{ p.stake = (p.price!=null && p.edge>0) ? stakePct(p.prob,p.price) : 0; });
-  // Orden por VALOR (edge), no por probabilidad: los value bets primero
-  picks.sort((a,b)=>b.edge-a.edge);
+  // Selección por PROBABILIDAD: las apuestas más probables del juego (cualquier mercado)
+  picks.sort((a,b)=>b.prob-a.prob);
   const top3=picks.slice(0,3).map(p=>({...p,conf:p.prob>=.58?'High':p.prob>=.53?'Medium':'Low'}));
 
   return {
@@ -1079,7 +1082,7 @@ async function savePredictions(date, games) {
 
 // ── Render picks ──────────────────────────────────────────────────────────────
 let pickFilter='all';
-let pickSort = localStorage.getItem('pick_sort') || 'edge';   // 'edge' (valor) | 'prob' (probabilidad)
+let pickSort = localStorage.getItem('pick_sort') || 'prob';   // 'prob' (probabilidad, default) | 'edge' (valor)
 function setPickFilter(f){
   pickFilter=f;
   document.querySelectorAll('.pf-btn').forEach(b=>b.classList.toggle('active',b.dataset.f===f));

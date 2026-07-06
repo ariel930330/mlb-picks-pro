@@ -641,6 +641,21 @@ function computePicks(data) {
   }
   picks.push({cat:'Primeras 5 Innings',main:`${f5fav} F5 ${p2ml(f5favP)}`,sub:`${pct(f5favP)} en F5`,prob:f5favP,edge:+(f5favP-BREAKEVEN).toFixed(3)});
   picks.push({cat:'F5 Total',main:`${f5Pick?'OVER':'UNDER'} ${f5line} (F5)`,sub:`Proyección F5: ${f5total}`,prob:f5totalProb,edge:+(f5totalProb-BREAKEVEN).toFixed(3)});
+
+  // ── Mercados extra (proyección del modelo, lado más probable) ──
+  const addP=(cat,main,sub,prob)=>picks.push({cat,main,sub,prob,edge:+(prob-BREAKEVEN).toFixed(3)});
+  // NRFI / YRFI (¿se anota en el 1er inning?)
+  const lam1=(hExp+aExp)/9*1.1, nrfi=cl(Math.exp(-lam1)*1.45,.35,.68);
+  addP('1er inning', nrfi>=.5?'NRFI (sin carrera 1er inn)':'YRFI (carrera 1er inn)', 'Proyección del 1er inning', nrfi>=.5?nrfi:1-nrfi);
+  // Team totals (carreras de cada equipo)
+  const ttP=(team,exp)=>{ const ln=Math.floor(exp)+.5, ov=poissonOver(exp,ln); addP('Total de equipo', `${team} ${ov>=.5?'OVER':'UNDER'} ${ln}`, `Proy ${exp.toFixed(1)} carreras`, ov>=.5?ov:1-ov); };
+  ttP(home,hExp); ttP(away,aExp);
+  // Run line alterna ±2.5
+  const favM=Math.abs(hMargin), favT=hMargin>=0?home:away, dogT=hMargin>=0?away:home, favBy3=normOver(favM,RUN_SD,2.5);
+  addP('Run Line alt', favBy3>=.5?`${favT} -2.5`:`${dogT} +2.5`, favBy3>=.5?'gana por 3+':'no pierde por 3+', favBy3>=.5?favBy3:1-favBy3);
+  // Total alterno (±1.5 de la línea, lado más probable)
+  const baseLn=odds?.total?odds.total.point:totalLine, altLn=total<baseLn?baseLn+1.5:baseLn-1.5, altOv=normOver(total,totalSigma,altLn);
+  addP('Total alt', `${altOv>=.5?'OVER':'UNDER'} ${altLn} runs`, `Proy ${total} runs`, altOv>=.5?altOv:1-altOv);
   // Nota: los Ks de pitcher NO van como pick del partido; se muestran en la pestaña "Lanzadores".
 
   // Recalibración aprendida del historial: corrige la prob. y recalcula el edge

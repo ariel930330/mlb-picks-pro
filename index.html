@@ -234,6 +234,7 @@ body{background:radial-gradient(1200px 600px at 70% -10%,#f7f9fc,var(--bg)) fixe
     <button class="tab-btn" onclick="showTab('history');loadHistory()"><i class="ti ti-history"></i>Historial</button>
     <button class="tab-btn" onclick="showTab('model');loadModelTab()"><i class="ti ti-brain"></i>Modelo IA</button>
     <button class="tab-btn" onclick="showTab('valid');loadValidation()"><i class="ti ti-target"></i>Validación</button>
+    <button class="tab-btn" onclick="showTab('props');loadProps()"><i class="ti ti-list-check"></i>Historial Props</button>
   </div>
 
   <div class="tab-content">
@@ -349,6 +350,22 @@ body{background:radial-gradient(1200px 600px at 70% -10%,#f7f9fc,var(--bg)) fixe
         </div>
       </div>
       <div id="valid-area"><div class="empty">Cargando…</div></div>
+    </div>
+
+    <!-- HISTORIAL PROPS -->
+    <div class="tab-pane" id="tab-props">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+        <div>
+          <div style="font-size:13px;font-weight:700">Historial de Props</div>
+          <div style="font-size:11px;color:var(--text2)">Pitchers (Ks) y bateadores (Hit/TB/HR/BB/H+R+RBI) · cómo van tus proyecciones</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn-sm" onclick="loadProps()">🔄 Recargar</button>
+          <button class="btn-sm owner-only" onclick="autoGradeProps()" title="Califica los props desde el boxscore final de MLB">⚡ Auto-calificar</button>
+          <button class="btn-sm owner-only" style="color:var(--rtx);border-color:var(--red)" onclick="clearProps()">🗑 Limpiar</button>
+        </div>
+      </div>
+      <div id="props-area"><div class="empty">Cargando…</div></div>
     </div>
 
   </div>
@@ -936,6 +953,7 @@ async function getWeather(geo, date, gameISO) {
 
 // ── State ─────────────────────────────────────────────────────────────────────
 let allGames=[], allBatters=[], allParlays=[], allBProps={};
+let propsPitcher=[], propsBatter=[];   // picks de props recolectados al renderizar (para guardar)
 
 // ── Main analysis ─────────────────────────────────────────────────────────────
 async function runAnalysis() {
@@ -1029,7 +1047,7 @@ async function runAnalysis() {
       const hOverall=sf(hTSt?.hitting?.ops,.72), aOverall=sf(aTSt?.hitting?.ops,.72);
       const awayPlatoon=(hHand&&aSplit['v'+hHand])?aSplit['v'+hHand]/aOverall:1;   // bat. visitantes vs mano del pitcher local
       const homePlatoon=(aHand&&hSplit['v'+aHand])?hSplit['v'+aHand]/hOverall:1;   // bat. locales vs mano del pitcher visitante
-      batchBatters.push({away:g.teams.away.team.abbreviation,home:g.teams.home.team.abbreviation,
+      batchBatters.push({away:g.teams.away.team.abbreviation,home:g.teams.home.team.abbreviation,gamePk:g.gamePk,
         awayBatters:aBat,homeBatters:hBat,
         awayPitcher:gd.pitchers.away.name,homePitcher:gd.pitchers.home.name,
         awayOppScore:gd.features?.hps??.5,   // bateadores visitantes enfrentan al pitcher LOCAL
@@ -1051,6 +1069,7 @@ async function runAnalysis() {
     renderParlays(allParlays);
     renderPitchers(results);
     renderBatters(batchBatters);
+    savePropPicks(date);   // guarda los picks de props (pitchers Ks + bateadores) para el historial
 
     const high=results.flatMap(g=>g.picks).filter(p=>p.conf==='High').length;
     const med =results.flatMap(g=>g.picks).filter(p=>p.conf==='Medium').length;
@@ -1071,6 +1090,25 @@ async function runAnalysis() {
 }
 
 // ── Supabase save ─────────────────────────────────────────────────────────────
+// Guarda los picks de props (pitchers Ks + bateadores) recolectados al renderizar
+async function savePropPicks(date){
+  if(!isOwner()) return;
+  const picks=[...propsPitcher.map(p=>({...p,kind:'pitcher'})),...propsBatter.map(p=>({...p,kind:'batter'}))].filter(p=>p.player_id&&p.gamePk);
+  if(!picks.length) return;
+  try{
+    const {data:existing}=await sb.from('prop_picks').select('id,player_id,market,result').eq('game_date',date);
+    const map={}; (existing||[]).forEach(e=>map[e.player_id+'|'+e.market]=e);
+    const toInsert=[];
+    for(const r of picks){
+      const row={game_date:date,game_pk:r.gamePk,kind:r.kind,player_id:r.player_id,player_name:r.player_name,team:r.team,market:r.market,target:r.target,side:r.side,prob:r.prob,proj:r.proj};
+      const ex=map[r.player_id+'|'+r.market];
+      if(ex){ if(!ex.result) await sb.from('prop_picks').update(row).eq('id',ex.id); }
+      else toInsert.push(row);
+    }
+    if(toInsert.length) await sb.from('prop_picks').insert(toInsert);
+  }catch(e){ console.warn('savePropPicks:',e.message); }
+}
+
 async function savePredictions(date, games) {
   for(const g of games){
     const top = g.picks[0];
@@ -1218,13 +1256,17 @@ function renderParlays(parlays) {
 // ── Pitchers ──────────────────────────────────────────────────────────────────
 function renderPitchers(games) {
   const pitchers = games.flatMap(g=>[
-    {...g.pitchers.away,team:g.away,teamId:g.awayId,opp:g.home,matchup:`${g.away} @ ${g.home}`},
-    {...g.pitchers.home,team:g.home,teamId:g.homeId,opp:g.away,matchup:`${g.away} @ ${g.home}`},
+    {...g.pitchers.away,team:g.away,teamId:g.awayId,opp:g.home,matchup:`${g.away} @ ${g.home}`,gamePk:g.gamePk},
+    {...g.pitchers.home,team:g.home,teamId:g.homeId,opp:g.away,matchup:`${g.away} @ ${g.home}`,gamePk:g.gamePk},
   ]).filter(p=>p.name!=='TBD').sort((a,b)=>b.k9-a.k9);
+  propsPitcher=[];   // recolectar picks de Ks para guardar
 
   $('pitchers-area').innerHTML=pitchers.map(p=>{
     const mkt=p.kMkt;
     let line, lineSrc, rec, recColor, badge, sub;
+    // Pick de Ks a guardar: línea real si existe, si no la del modelo; lado = over si proyección > línea
+    if(p.id){ const l=mkt?mkt.line:p.kLine, over=p.kExp>=l, pr=over?poissonOver(p.kExp,l):1-poissonOver(p.kExp,l);
+      propsPitcher.push({gamePk:p.gamePk,player_id:p.id,player_name:p.name,team:p.team,market:'Ks',target:l,side:over?'over':'under',prob:+pr.toFixed(3),proj:p.kExp}); }
     if(mkt){
       line=mkt.line; lineSrc='casa';
       if(line<3.5){
@@ -1297,20 +1339,21 @@ function renderBatters(batData) {
       return {id:b.id,name:b.name,pos:b.pos,pitcher:oppPitcher,oppHand,bvp:b.bvp,tag,hitP,expTB,hrbiR,expBB,expHR,evHits,evTB,evHR};
     };
     const aSet=g.awayLineup?new Set(g.awayLineup):null, hSet=g.homeLineup?new Set(g.homeLineup):null;
-    (g.awayBatters||[]).forEach(b=>{ if(aSet&&!aSet.has(b.id)) return; const r=mk(b,g.awayOppScore??.5,g.homePitcher,g.awayPlatoon,g.awayOppHand); if(r){r.team=g.away;r.conf=!!aSet;rows.push(r);} });
-    (g.homeBatters||[]).forEach(b=>{ if(hSet&&!hSet.has(b.id)) return; const r=mk(b,g.homeOppScore??.5,g.awayPitcher,g.homePlatoon,g.homeOppHand); if(r){r.team=g.home;r.conf=!!hSet;rows.push(r);} });
+    (g.awayBatters||[]).forEach(b=>{ if(aSet&&!aSet.has(b.id)) return; const r=mk(b,g.awayOppScore??.5,g.homePitcher,g.awayPlatoon,g.awayOppHand); if(r){r.team=g.away;r.gamePk=g.gamePk;r.conf=!!aSet;rows.push(r);} });
+    (g.homeBatters||[]).forEach(b=>{ if(hSet&&!hSet.has(b.id)) return; const r=mk(b,g.homeOppScore??.5,g.awayPitcher,g.homePlatoon,g.homeOppHand); if(r){r.team=g.home;r.gamePk=g.gamePk;r.conf=!!hSet;rows.push(r);} });
   });
   if(!rows.length){$('batters-area').innerHTML='<div class="empty">Corre el análisis primero.</div>';return;}
 
   const propTag=ev=>ev?`<span style="font-size:9px;font-weight:700;color:${ev.edge>0?'var(--gtx)':'var(--text3)'}"> · casa ${ev.over?'O':'U'}${ev.line} ${ev.edge>=0?'+':''}${(ev.edge*100).toFixed(0)}%${ev.stake>0?` ${ev.stake}%`:''}</span>`:'';
-  // Cada categoría: los 2 MÁS PROBABLES (mayor proyección)
+  // Cada categoría: los 2 MÁS PROBABLES (mayor proyección). mkt/target/prob para el historial.
   const cats=[
-    {title:'⚾ Probabilidad de Hit', metric:r=>r.hitP,  fmt:r=>Math.round(r.hitP*100)+'%', tag:r=>r.evHits},
-    {title:'💥 Bases totales (TB)',  metric:r=>r.expTB, fmt:r=>r.expTB.toFixed(1),          tag:r=>r.evTB},
-    {title:'🔥 H + R + RBI',         metric:r=>r.hrbiR, fmt:r=>r.hrbiR.toFixed(2),           tag:null},
-    {title:'🚶 Bases por bolas (BB)',metric:r=>r.expBB, fmt:r=>r.expBB.toFixed(2),           tag:null},
-    {title:'🏟️ Home runs (HR)',      metric:r=>r.expHR, fmt:r=>r.expHR.toFixed(2),           tag:r=>r.evHR},
+    {title:'⚾ Probabilidad de Hit', mkt:'Hit', target:.5, prob:r=>r.hitP,               metric:r=>r.hitP,  fmt:r=>Math.round(r.hitP*100)+'%', tag:r=>r.evHits},
+    {title:'💥 Bases totales (TB)',  mkt:'TB',  target:r=>r.evTB?.line??1.5, prob:r=>1-Math.exp(-r.expTB), metric:r=>r.expTB, fmt:r=>r.expTB.toFixed(1), tag:r=>r.evTB},
+    {title:'🔥 H + R + RBI',         mkt:'H+R+RBI', target:r=>Math.round(r.hrbiR), prob:null, metric:r=>r.hrbiR, fmt:r=>r.hrbiR.toFixed(2),      tag:null},
+    {title:'🚶 Bases por bolas (BB)',mkt:'BB',  target:.5, prob:r=>1-Math.exp(-r.expBB), metric:r=>r.expBB, fmt:r=>r.expBB.toFixed(2),         tag:null},
+    {title:'🏟️ Home runs (HR)',      mkt:'HR',  target:.5, prob:r=>1-Math.exp(-r.expHR), metric:r=>r.expHR, fmt:r=>r.expHR.toFixed(2),         tag:r=>r.evHR},
   ];
+  propsBatter=[];   // recolectar los top-2 de cada categoría para guardar
   const row=(r,i,cat)=>`
     <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border)">
       <span style="min-width:18px;height:18px;border-radius:50%;background:var(--bg);color:var(--gold);font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center">${i+1}</span>
@@ -1326,6 +1369,9 @@ function renderBatters(batData) {
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px">
       ${cats.map(cat=>{
         const top2=[...rows].sort((a,b)=>cat.metric(b)-cat.metric(a)).slice(0,2);
+        top2.forEach(r=>propsBatter.push({gamePk:r.gamePk,player_id:r.id,player_name:r.name,team:r.team,market:cat.mkt,
+          target:typeof cat.target==='function'?cat.target(r):cat.target, side:'over',
+          prob:cat.prob?+cat.prob(r).toFixed(3):null, proj:+cat.metric(r).toFixed(2)}));
         return `<div class="card"><div class="card-hdr"><span class="card-hdr-title">${cat.title}</span></div>${top2.map((r,i)=>row(r,i,cat)).join('')}</div>`;
       }).join('')}
     </div>`;
@@ -1564,6 +1610,83 @@ async function clearHistory() {
   if(error) { alert('❌ Error: ' + error.message + '\nCorre el SQL de permisos en Supabase.'); return; }
   alert('✅ Historial borrado');
   loadHistory();
+}
+
+// ── Historial de Props ──────────────────────────────────────────────────────
+async function loadProps(){
+  $('props-area').innerHTML='<div class="loading"><div class="spin"></div>Cargando…</div>';
+  const {data:rows,error}=await sb.from('prop_picks').select('*').order('game_date',{ascending:false}).limit(1500);
+  if(error){ $('props-area').innerHTML=`<div class="error-box">${error.message}</div>`; return; }
+  if(!rows?.length){ $('props-area').innerHTML='<div class="empty">Sin props aún.<br>Analiza una fecha (con sesión iniciada) para empezar a registrarlos.</div>'; return; }
+  const section=(title,list)=>{
+    const graded=list.filter(r=>r.result), wins=graded.filter(r=>r.result==='win');
+    const acc=graded.length?Math.round(wins.length/graded.length*100)+'%':'—';
+    const body=list.slice(0,400).map(r=>`<tr>
+      <td>${r.game_date}</td>
+      <td><div style="display:flex;align-items:center;gap:6px"><img class="headshot-sm" style="width:24px;height:24px" src="${playerImg(r.player_id)}" onerror="${IMG_FALLBACK}"><strong>${r.player_name||'?'}</strong></div></td>
+      <td><span style="font-size:10px;padding:1px 6px;border-radius:3px;background:var(--bg3);font-weight:700">${r.team||''}</span></td>
+      <td style="font-weight:700">${r.market}</td>
+      <td>${r.side==='over'?'+':''}${r.target}${r.market==='Ks'?'K':''}</td>
+      <td>${r.prob!=null?Math.round(r.prob*100)+'%':(r.proj!=null?r.proj:'—')}</td>
+      <td style="font-weight:700">${r.actual!=null?r.actual:'—'}</td>
+      <td>${r.result?(r.result==='win'?'<span style="color:var(--gtx);font-weight:700">✓</span>':'<span style="color:var(--rtx);font-weight:700">✗</span>'):'<span style="color:var(--text3)">pend.</span>'}</td>
+    </tr>`).join('');
+    return `<div class="card" style="margin-bottom:12px">
+      <div class="card-hdr"><span class="card-hdr-title">${title}</span><span style="font-size:11px;color:var(--text2)">${graded.length}/${list.length} calificados · acierto <b style="color:var(--gtx)">${acc}</b></span></div>
+      <div style="overflow-x:auto"><table class="htable"><thead><tr><th>Fecha</th><th>Jugador</th><th>Eq</th><th>Mercado</th><th>Pick</th><th>Prob/Proy</th><th>Real</th><th>✓/✗</th></tr></thead><tbody>${body}</tbody></table></div></div>`;
+  };
+  $('props-area').innerHTML=section('⚾ Pitchers · Ponches (Ks)',rows.filter(r=>r.kind==='pitcher'))+section('🏏 Bateadores',rows.filter(r=>r.kind==='batter'));
+}
+async function clearProps(){
+  if(!requireAuth()) return;
+  if(!confirm('¿Borrar TODO el historial de props?')) return;
+  const {error}=await sb.from('prop_picks').delete().gte('id',0);
+  if(error){ alert('Error: '+error.message); return; }
+  loadProps();
+}
+// Lee el boxscore final y devuelve stats por jugador
+async function boxscorePlayers(gamePk){
+  try{
+    const r=await fetch(MLB+`/game/${gamePk}/boxscore`); if(!r.ok) return null;
+    const d=await r.json(), out={};
+    ['home','away'].forEach(s=>Object.values(d.teams?.[s]?.players||{}).forEach(p=>{ if(p.person?.id) out[p.person.id]={bat:p.stats?.batting||{},pit:p.stats?.pitching||{}}; }));
+    return out;
+  }catch{return null;}
+}
+// Califica un prop contra las stats reales
+function gradeProp(p, players){
+  const pl=players[p.player_id]; if(!pl) return null;
+  const b=pl.bat, pt=pl.pit; let actual, win;
+  switch(p.market){
+    case 'Ks': actual=+pt.strikeOuts||0; if(pt.strikeOuts==null) return null; win=p.side==='over'?actual>p.target:actual<p.target; break;
+    case 'Hit': actual=+b.hits||0; if(b.atBats==null&&b.plateAppearances==null) return null; win=actual>=1; break;
+    case 'HR': actual=+b.homeRuns||0; if(b.atBats==null&&b.plateAppearances==null) return null; win=actual>=1; break;
+    case 'BB': actual=+b.baseOnBalls||0; if(b.plateAppearances==null) return null; win=actual>=1; break;
+    case 'TB': actual=+b.totalBases||0; if(b.atBats==null) return null; win=actual>p.target; break;
+    case 'H+R+RBI': actual=(+b.hits||0)+(+b.runs||0)+(+b.rbi||0); if(b.plateAppearances==null) return null; win=actual>=p.target; break;
+    default: return null;
+  }
+  return {actual, result: win?'win':'loss'};
+}
+async function autoGradeProps(){
+  if(!requireAuth()) return;
+  $('props-area').insertAdjacentHTML('afterbegin','<div class="loading" id="pg-msg"><div class="spin"></div>Calificando props desde boxscores…</div>');
+  const {data:rows}=await sb.from('prop_picks').select('*').is('result',null);
+  if(!rows?.length){ $('pg-msg')?.remove(); alert('No hay props sin calificar.'); return; }
+  // Solo juegos FINALES
+  const finals=new Set();
+  for(const d of [...new Set(rows.map(r=>r.game_date))]){
+    try{ const sc=await mlb(`/schedule?sportId=1&date=${d}`); (sc.dates||[]).flatMap(x=>x.games||[]).forEach(g=>{ if(g.status?.abstractGameState==='Final') finals.add(g.gamePk); }); }catch{}
+  }
+  const byGame={}; rows.forEach(r=>{ if(finals.has(r.game_pk)) (byGame[r.game_pk]=byGame[r.game_pk]||[]).push(r); });
+  let graded=0;
+  for(const pk of Object.keys(byGame)){
+    const players=await boxscorePlayers(pk); if(!players) continue;
+    for(const p of byGame[pk]){ const g=gradeProp(p,players); if(g){ await sb.from('prop_picks').update({actual:g.actual,result:g.result}).eq('id',p.id); graded++; } }
+  }
+  $('pg-msg')?.remove();
+  alert(`✅ ${graded} props calificados`+(rows.length-graded?` · ${rows.length-graded} aún sin marcador final o sin datos`:''));
+  loadProps();
 }
 
 // ── Model tab ─────────────────────────────────────────────────────────────────

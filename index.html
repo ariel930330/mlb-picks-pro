@@ -1144,6 +1144,12 @@ function setPickSort(s){
 function pickPasses(p){ return pickFilter==='ev' ? p.edge>0 : pickFilter==='high' ? (p.conf||confOf(p))==='High' : true; }
 const confOf = p => p.prob>=.58?'High':p.prob>=.53?'Medium':'Low';
 const pickSorter = () => pickSort==='prob' ? (a,b)=>b.prob-a.prob : (a,b)=>b.edge-a.edge;
+// Máxima variedad: el mejor pick de cada TIPO de mercado (sin repetir), hasta 5
+function selectGamePicks(g){
+  const byCat={};
+  (g.allPicks||g.picks||[]).filter(pickPasses).forEach(p=>{ const c=byCat[p.cat]; if(!c||pickSorter()(p,c)<0) byCat[p.cat]=p; });
+  return Object.values(byCat).sort(pickSorter()).slice(0,5);
+}
 
 function renderPicks(games) {
   const confMap = {High:'high',Medium:'med',Low:'low'};
@@ -1151,8 +1157,8 @@ function renderPicks(games) {
   $('filterbar').style.display = games.length ? 'flex' : 'none';
   document.querySelectorAll('.ps-btn').forEach(b=>b.classList.toggle('active',b.dataset.s===pickSort));
   const html = games.map(g=>{
-    // Los 3 mejores del juego según el orden elegido (valor o probabilidad)
-    const picks = (g.allPicks||g.picks||[]).filter(pickPasses).sort(pickSorter()).slice(0,3).map(p=>({...p,conf:confOf(p)}));
+    // Un pick por tipo de mercado (variedad), hasta 5, según el orden elegido
+    const picks = selectGamePicks(g).map(p=>({...p,conf:confOf(p)}));
     if(!picks.length) return '';
     const awp=Math.round(g.awayWP*100), hwp=Math.round(g.homeWP*100);
     const barW=awp+'%';
@@ -1189,7 +1195,7 @@ function copyPicks(){
   if(!allGames.length){ alert('Corre el análisis primero.'); return; }
   const lines=[];
   allGames.forEach(g=>{
-    const picks=(g.allPicks||g.picks||[]).filter(pickPasses).sort(pickSorter()).slice(0,3);
+    const picks=selectGamePicks(g);
     if(!picks.length) return;
     lines.push(`⚾ ${g.away} @ ${g.home}`);
     picks.forEach(p=>lines.push(`  • ${p.cat}: ${p.main}  (${pct(p.prob)}, edge ${p.edge>=0?'+':''}${(p.edge*100).toFixed(1)}%${p.stake>0?`, apostar ${p.stake}%`:''})`));

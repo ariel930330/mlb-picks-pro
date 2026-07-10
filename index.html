@@ -667,13 +667,8 @@ function computePicks(data) {
   // Team totals (carreras de cada equipo)
   const ttP=(team,exp)=>{ const ln=Math.floor(exp)+.5, ov=poissonOver(exp,ln); addP('Total de equipo', `${team} ${ov>=.5?'OVER':'UNDER'} ${ln}`, `Proy ${exp.toFixed(1)} carreras`, ov>=.5?ov:1-ov); };
   ttP(home,hExp); ttP(away,aExp);
-  // Run line alterna ±2.5
-  const favM=Math.abs(hMargin), favT=hMargin>=0?home:away, dogT=hMargin>=0?away:home, favBy3=normOver(favM,RUN_SD,2.5);
-  addP('Run Line alt', favBy3>=.5?`${favT} -2.5`:`${dogT} +2.5`, favBy3>=.5?'gana por 3+':'no pierde por 3+', favBy3>=.5?favBy3:1-favBy3);
-  // Total alterno (±1.5 de la línea, lado más probable)
-  const baseLn=odds?.total?odds.total.point:totalLine, altLn=total<baseLn?baseLn+1.5:baseLn-1.5, altOv=normOver(total,totalSigma,altLn);
-  addP('Total alt', `${altOv>=.5?'OVER':'UNDER'} ${altLn} runs`, `Proy ${total} runs`, altOv>=.5?altOv:1-altOv);
-  // Nota: los Ks de pitcher NO van como pick del partido; se muestran en la pestaña "Lanzadores".
+  // Nota: las líneas alternas (±2.5, total alterno) se quitaron: eran "trampas seguras" que acaparaban el top-3.
+  // Los Ks de pitcher NO van como pick del partido; se muestran en la pestaña "Lanzadores".
 
   // Recalibración aprendida del historial: corrige la prob. y recalcula el edge
   picks.forEach(p=>{ p.prob=calibrate(p.prob); p.edge=+(p.prob-(p.fair!=null?p.fair:BREAKEVEN)).toFixed(3); });

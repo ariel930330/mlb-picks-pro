@@ -562,8 +562,9 @@ function computePicks(data) {
   const hpERA=data.homePXera?+(0.55*hpERAr+0.45*data.homePXera).toFixed(2):hpERAr;
   const apFIP=regress(apFIP0,apIPr,LG.fip,40), hpFIP=regress(hpFIP0,hpIPr,LG.fip,40);
   const apK9r=regress(apK90,apIPr,LG.k9,30), hpK9r=regress(hpK90,hpIPr,LG.k9,30);
-  // Tendencia: mezcla 25% del K/9 de sus últimas salidas (forma reciente del abridor)
-  const apK9=data.awayPTrend?.75*apK9r+.25*data.awayPTrend:apK9r, hpK9=data.homePTrend?.75*hpK9r+.25*data.homePTrend:hpK9r;
+  // Tendencia: mezcla 25% del K/9 de sus últimas salidas · × matchup de repertorio vs el equipo rival
+  const apK9t=data.awayPTrend?.75*apK9r+.25*data.awayPTrend:apK9r, hpK9t=data.homePTrend?.75*hpK9r+.25*data.homePTrend:hpK9r;
+  const apK9=apK9t*(data.awayKMatch||1), hpK9=hpK9t*(data.homeKMatch||1);
   const apBB9=regress(apBB90,apIPr,LG.bb9,30), hpBB9=regress(hpBB90,hpIPr,LG.bb9,30);
 
   const aps = cl(.35*(1-(apFIP-2)/4)+.25*(1-(apERA-2)/4)+.20*((apK9-5)/5)+.20*(1-(apBB9-1.5)/3.5));
@@ -747,6 +748,37 @@ async function getStatcast(year){
   const [pitchers,batters]=await Promise.all([lb('pitcher',25),lb('batter',50)]);
   _statcast[year]={pitchers,batters};
   return _statcast[year];
+}
+// ── Repertorio vs K% (Statcast pitch arsenal) ───────────────────────────────
+// Arsenal del pitcher (uso por pitch) + whiff del equipo vs cada tipo de pitch.
+let _arsenal={};
+const ARS_ALIAS={AZ:'ARI',ARI:'AZ',CWS:'CHW',CHW:'CWS',WSH:'WSN',WSN:'WSH',SD:'SDP',SDP:'SD',SF:'SFG',SFG:'SF',TB:'TBR',TBR:'TB',KC:'KCR',KCR:'KC'};
+async function getPitchArsenal(year){
+  if(_arsenal[year]) return _arsenal[year];
+  const rows=async(type)=>{ try{
+    const r=await fetch(`https://baseballsavant.mlb.com/leaderboard/pitch-arsenal-stats?type=${type}&pitchType=&year=${year}&team=&min=50&csv=true`);
+    if(!r.ok) return []; const L=(await r.text()).trim().split('\n'); const cols=parseCSVLine(L[0]).map(c=>c.replace(/"/g,'').trim());
+    return L.slice(1).map(l=>{ const v=parseCSVLine(l), o={}; cols.forEach((c,i)=>o[c]=v[i]); return o; });
+  }catch(e){ console.warn('arsenal '+type+':',e.message); return []; } };
+  const [pR,bR]=await Promise.all([rows('pitcher'),rows('batter')]);
+  const pitchers={};   // id -> {pitch_type: usage%}
+  pR.forEach(r=>{ const id=+r.player_id,pt=r.pitch_type,u=parseFloat(r.pitch_usage); if(id&&pt&&u) (pitchers[id]=pitchers[id]||{})[pt]=u; });
+  const tAgg={}, lAgg={};   // whiff ponderado por # de pitches
+  bR.forEach(r=>{ const t=r.team_name_alt,pt=r.pitch_type,w=parseFloat(r.whiff_percent),n=parseFloat(r.pitches)||0; if(!t||!pt||isNaN(w)||!n) return;
+    ((tAgg[t]=tAgg[t]||{})[pt]=tAgg[t][pt]||{w:0,n:0}); tAgg[t][pt].w+=w*n; tAgg[t][pt].n+=n;
+    (lAgg[pt]=lAgg[pt]||{w:0,n:0}); lAgg[pt].w+=w*n; lAgg[pt].n+=n; });
+  const teamWhiff={}; for(const t in tAgg){ teamWhiff[t]={}; for(const pt in tAgg[t]) teamWhiff[t][pt]=tAgg[t][pt].w/tAgg[t][pt].n; }
+  const leagueWhiff={}; for(const pt in lAgg) leagueWhiff[pt]=lAgg[pt].w/lAgg[pt].n;
+  _arsenal[year]={pitchers,teamWhiff,leagueWhiff};
+  return _arsenal[year];
+}
+// Factor K del matchup: whiff del EQUIPO vs el arsenal del pitcher ÷ el de un equipo promedio. Acotado ±10%.
+function pitchMatchup(ars, pid, teamAbbr){
+  const arse=ars?.pitchers?.[pid], tw=ars?.teamWhiff?.[teamAbbr]||ars?.teamWhiff?.[ARS_ALIAS[teamAbbr]], lw=ars?.leagueWhiff;
+  if(!arse||!tw||!lw) return 1;
+  let num=0,den=0,u=0;
+  for(const pt in arse){ const us=arse[pt]; if(tw[pt]!=null&&lw[pt]!=null){ num+=us*tw[pt]; den+=us*lw[pt]; u+=us; } }
+  return (den>0&&u>=25)?cl(num/den,.90,1.10):1;
 }
 // Tendencia del pitcher: K/9 de sus últimas ~5 salidas (forma reciente)
 async function getPitcherTrend(id,yr) {
@@ -1039,6 +1071,7 @@ async function runAnalysis() {
     const oddsCount = Object.keys(oddsMap).length;
     allBProps = bprops || {};
     const SC = await getStatcast(yr);   // Statcast (xwOBA/xERA/xSLG) una sola vez
+    const ARS = await getPitchArsenal(yr);   // Repertorio (whiff por pitch) para el matchup de Ks
 
     const results=[];
     const batchBatters=[];
@@ -1098,6 +1131,8 @@ async function runAnalysis() {
         homeBullTired: hCtx?.reliefIP||0, awayBullTired: aCtx?.reliefIP||0,   // IP de relevo en su último juego
         awayTravel: aCtx?.awayStreak||0,                        // racha de juegos de visita del equipo visitante
         homePXera: SC.pitchers?.[hpId]?.xera, awayPXera: SC.pitchers?.[apId]?.xera,   // Statcast: xERA (contact suppression)
+        homeKMatch: pitchMatchup(ARS, hpId, g.teams.away.team.abbreviation),   // repertorio vs K% del rival
+        awayKMatch: pitchMatchup(ARS, apId, g.teams.home.team.abbreviation),
         odds: pickOdds(oddsMap, g.teams.home.team.name, g.teams.away.team.name, g.gameDate),
       });
       gd.gamePk    = g.gamePk;

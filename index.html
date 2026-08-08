@@ -1882,11 +1882,15 @@ function showTab(name) {
   event.currentTarget.classList.add('active');
 }
 
+// Fecha local (YYYY-MM-DD) según la zona horaria del equipo — NO usar toISOString()
+// (eso da UTC y en México se adelanta un día por la tarde/noche).
+function todayLocal(d){ d=d||new Date(); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', async () => {
   $('app').style.display='flex';
   const today=new Date();
-  $('date-pick').value=today.toISOString().slice(0,10);
+  $('date-pick').value=todayLocal(today);
   $('hdr-date').textContent=today.toLocaleDateString('es-MX',{weekday:'short',month:'short',day:'numeric'});
   $('odds-key').value=getOddsKey();
   $('kprops-chk').checked=getKProps();
@@ -1919,7 +1923,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 // Aplica un análisis restaurado a todas las pestañas
 function applyRestored(c, src){
   allGames=c.games||[]; allBatters=c.batters||[]; allParlays=c.parlays||[]; allBProps=c.bprops||{};
-  if(c.date) $('date-pick').value=c.date;
+  // Solo alinear el selector con el caché si ese análisis es de HOY; si es viejo,
+  // deja la fecha en el día actual para invitar a un análisis fresco.
+  if(c.date && c.date===todayLocal()) $('date-pick').value=c.date;
+  else $('date-pick').value=todayLocal();
   renderPicks(allGames); renderParlays(allParlays); renderPitchers(allGames); renderBatters(allBatters);
   const high=allGames.flatMap(g=>g.picks||[]).filter(p=>p.conf==='High').length;
   const med =allGames.flatMap(g=>g.picks||[]).filter(p=>p.conf==='Medium').length;
@@ -1956,7 +1963,7 @@ async function restoreCloud(){
 }
 
 async function restoreToday() {
-  const today = new Date().toISOString().slice(0,10);
+  const today = todayLocal();
   const {data:rows,error} = await sb.from('predictions')
     .select('*').eq('game_date',today).order('fav_prob',{ascending:false});
   if(error||!rows?.length) return;

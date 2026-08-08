@@ -316,6 +316,7 @@ body{background:radial-gradient(1200px 600px at 70% -10%,#f7f9fc,var(--bg)) fixe
         <div class="stat-card"><div class="stat-label">% Acierto</div><div class="stat-val" style="color:var(--green)" id="h-acc">—</div></div>
         <div class="stat-card"><div class="stat-label">Picks altos ✓</div><div class="stat-val" style="color:var(--gold)" id="h-hacc">—</div></div>
         <div class="stat-card"><div class="stat-label">ROI estimado</div><div class="stat-val" id="h-roi">—</div></div>
+        <div class="stat-card"><div class="stat-label">Ganancia (1u=$100)</div><div class="stat-val" id="h-units">—</div></div>
       </div>
       <div id="history-area"><div class="empty">Corre el análisis y marca resultados con ✓ ✗</div></div>
     </div>
@@ -1245,10 +1246,11 @@ function setPickSort(s){
 function pickPasses(p){ return pickFilter==='ev' ? p.edge>0 : pickFilter==='high' ? (p.conf||confOf(p))==='High' : true; }
 const confOf = p => p.prob>=.58?'High':p.prob>=.53?'Medium':'Low';
 const pickSorter = () => pickSort==='prob' ? (a,b)=>b.prob-a.prob : (a,b)=>b.edge-a.edge;
-// Máxima variedad: el mejor pick de cada TIPO de mercado (sin repetir), hasta 5
+// Máxima variedad: el mejor pick de cada TIPO de mercado (sin repetir), hasta 5.
+// Solo se conservan los de ALTA probabilidad (conf. High ≥ 58%); se descartan media/baja.
 function selectGamePicks(g){
   const byCat={};
-  (g.allPicks||g.picks||[]).filter(pickPasses).forEach(p=>{ const c=byCat[p.cat]; if(!c||pickSorter()(p,c)<0) byCat[p.cat]=p; });
+  (g.allPicks||g.picks||[]).filter(pickPasses).filter(p=>confOf(p)==='High').forEach(p=>{ const c=byCat[p.cat]; if(!c||pickSorter()(p,c)<0) byCat[p.cat]=p; });
   return Object.values(byCat).sort(pickSorter()).slice(0,5);
 }
 
@@ -1448,6 +1450,10 @@ function renderBatters(batData) {
     (g.homeBatters||[]).forEach(b=>{ if(hSet&&!hSet.has(b.id)) return; const r=mk(b,g.homeOppScore??.5,g.awayPitcher,g.homePlatoon,g.homeOppHand); if(r){r.team=g.home;r.gamePk=g.gamePk;r.conf=!!hSet;rows.push(r);} });
   });
   if(!rows.length){$('batters-area').innerHTML='<div class="empty">Corre el análisis primero.</div>';return;}
+  // Filtro: solo matchups FAVORABLES o bateadores de ALTA probabilidad (≥1 hit ≥ 68%).
+  // Se descartan los neutrales (y los "duro" que no lleguen a alta prob).
+  const pool = rows.filter(r=> r.tag.t==='favorable' || r.hitP>=0.68);
+  if(!pool.length){$('batters-area').innerHTML='<div class="empty">Ningún bateador con matchup favorable ni alta probabilidad en la jornada.</div>';return;}
 
   const propTag=ev=>ev?`<span style="font-size:9px;font-weight:700;color:${ev.edge>0?'var(--gtx)':'var(--text3)'}"> · casa ${ev.over?'O':'U'}${ev.line} ${ev.edge>=0?'+':''}${(ev.edge*100).toFixed(0)}%${ev.stake>0?` ${ev.stake}%`:''}</span>`:'';
   // Cada categoría: los 2 MÁS PROBABLES (mayor proyección). mkt/target/prob para el historial.
@@ -1470,10 +1476,10 @@ function renderBatters(batData) {
       <div style="text-align:right"><span style="font-size:16px;font-weight:700;color:var(--green)">${cat.fmt(r)}</span>${cat.tag?propTag(cat.tag(r)):''}</div>
     </div>`;
   $('batters-area').innerHTML=`
-    <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los 2 más probables de la jornada por categoría · ajustado por pitcher rival, mano, estadio y clima${rows.some(r=>r.conf)?' · <b style="color:var(--gtx)">✓</b> = titular confirmado (alineación publicada)':' · alineaciones aún sin confirmar'}${rows.some(r=>r.evHits||r.evTB||r.evHR)?' · <b>casa</b> = línea real con edge y stake':''}.</div>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los 2 más probables de la jornada por categoría · <b>solo matchups favorables o de alta probabilidad</b> · ajustado por pitcher rival, mano, estadio y clima${rows.some(r=>r.conf)?' · <b style="color:var(--gtx)">✓</b> = titular confirmado (alineación publicada)':' · alineaciones aún sin confirmar'}${rows.some(r=>r.evHits||r.evTB||r.evHR)?' · <b>casa</b> = línea real con edge y stake':''}.</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px">
       ${cats.map(cat=>{
-        const top2=[...rows].sort((a,b)=>cat.metric(b)-cat.metric(a)).slice(0,2);
+        const top2=[...pool].sort((a,b)=>cat.metric(b)-cat.metric(a)).slice(0,2);
         top2.forEach(r=>propsBatter.push({gamePk:r.gamePk,player_id:r.id,player_name:r.name,team:r.team,market:cat.mkt,
           target:typeof cat.target==='function'?cat.target(r):cat.target, side:'over',
           prob:cat.prob?+cat.prob(r).toFixed(3):null, proj:+cat.metric(r).toFixed(2)}));
@@ -1499,11 +1505,19 @@ async function loadHistory() {
   const pushes=graded.filter(r=>r.result==='push');
   const losses=graded.filter(r=>r.result==='loss');
   const roi=graded.length>0?(wins.length*91-losses.length*100)/graded.length:null;
+  // Ganancia total: 1 unidad = $100 apostado por pick a -110 (gana $91, pierde $100)
+  const profit = graded.length>0 ? wins.length*91 - losses.length*100 : null;   // en dólares
+  const units  = profit!=null ? profit/100 : null;                              // en unidades
 
   txt('h-total',rows.length); txt('h-graded',graded.length);
   txt('h-acc', graded.length?Math.round(wins.length/graded.length*100)+'%':'—');
   txt('h-hacc', highG.length?Math.round(highW.length/highG.length*100)+'%':'—');
   txt('h-roi', roi!=null?(roi>=0?'+':'')+roi.toFixed(1)+'%':'—');
+  const uEl=$('h-units');
+  if(units!=null){
+    uEl.textContent=(units>=0?'+':'')+units.toFixed(1)+'u ('+(profit>=0?'+':'-')+'$'+Math.abs(profit).toLocaleString('en-US')+')';
+    uEl.style.color = profit>=0 ? 'var(--green)' : 'var(--red)';
+  } else { uEl.textContent='—'; uEl.style.color=''; }
 
   const opt=(v,l)=>`<option value="${v}"${histMinProb===v?' selected':''}>${l}</option>`;
   const ctrl=`<div style="display:flex;justify-content:flex-end;align-items:center;gap:6px;margin-bottom:8px;font-size:11px;color:var(--text2)">Prob. mínima:

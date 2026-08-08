@@ -555,8 +555,11 @@ function computePicks(data) {
   const apFIP0=calcFIP(awayPitcher||{},apERA0), hpFIP0=calcFIP(homePitcher||{},hpERA0);
   const apK90=sf(awayPitcher?.strikeoutsPer9Inn,8), hpK90=sf(homePitcher?.strikeoutsPer9Inn,8);
   const apBB90=sf(awayPitcher?.walksPer9Inn,3.2), hpBB90=sf(homePitcher?.walksPer9Inn,3.2);
-  // Regresados a la media por innings lanzados (para el modelo: muestras chicas no inflan)
-  const apERA=regress(apERA0,apIPr,LG.era,50), hpERA=regress(hpERA0,hpIPr,LG.era,50);
+  // Regresados a la media por innings lanzados; luego mezclados con xERA de Statcast
+  // (si el ERA está inflado/desinflado respecto al contacto real, se corrige hacia el xERA).
+  const apERAr=regress(apERA0,apIPr,LG.era,50), hpERAr=regress(hpERA0,hpIPr,LG.era,50);
+  const apERA=data.awayPXera?+(0.55*apERAr+0.45*data.awayPXera).toFixed(2):apERAr;
+  const hpERA=data.homePXera?+(0.55*hpERAr+0.45*data.homePXera).toFixed(2):hpERAr;
   const apFIP=regress(apFIP0,apIPr,LG.fip,40), hpFIP=regress(hpFIP0,hpIPr,LG.fip,40);
   const apK9r=regress(apK90,apIPr,LG.k9,30), hpK9r=regress(hpK90,hpIPr,LG.k9,30);
   // Tendencia: mezcla 25% del K/9 de sus últimas salidas (forma reciente del abridor)
@@ -722,6 +725,28 @@ async function getBvP(batterId,pitcherId) {
     const ab=+st.atBats||0; if(ab<1) return null;
     return { ab, h:+st.hits||0, hr:+st.homeRuns||0, ops:parseFloat(st.ops||0)||0 };
   }catch{return null;}
+}
+// ── Statcast (Baseball Savant, permite CORS) ────────────────────────────────
+// xwOBA/xERA/xBA/xSLG: calidad REAL de contacto (suppressing contact, due de regresión)
+let _statcast={};
+function parseCSVLine(line){ const out=[]; let cur='',q=false; for(const c of line){ if(c==='"')q=!q; else if(c===','&&!q){out.push(cur);cur='';} else cur+=c; } out.push(cur); return out.map(x=>x.trim()); }
+async function getStatcast(year){
+  if(_statcast[year]) return _statcast[year];
+  const lb=async(type,min)=>{
+    try{
+      const r=await fetch(`https://baseballsavant.mlb.com/leaderboard/expected_statistics?type=${type}&year=${year}&position=&team=&min=${min}&csv=true`);
+      if(!r.ok) return {};
+      const lines=(await r.text()).trim().split('\n'); if(lines.length<2) return {};
+      const cols=parseCSVLine(lines[0]).map(c=>c.replace(/"/g,'').trim());
+      const ix=n=>cols.indexOf(n), iId=ix('player_id'),iXw=ix('est_woba'),iW=ix('woba'),iXb=ix('est_ba'),iXs=ix('est_slg'),iXe=ix('xera');
+      const out={};
+      for(let i=1;i<lines.length;i++){ const c=parseCSVLine(lines[i]); const id=+c[iId]; if(id) out[id]={xwoba:parseFloat(c[iXw])||null,woba:parseFloat(c[iW])||null,xba:iXb>=0?parseFloat(c[iXb])||null:null,xslg:iXs>=0?parseFloat(c[iXs])||null:null,xera:iXe>=0?parseFloat(c[iXe])||null:null}; }
+      return out;
+    }catch(e){ console.warn('statcast '+type+':',e.message); return {}; }
+  };
+  const [pitchers,batters]=await Promise.all([lb('pitcher',25),lb('batter',50)]);
+  _statcast[year]={pitchers,batters};
+  return _statcast[year];
 }
 // Tendencia del pitcher: K/9 de sus últimas ~5 salidas (forma reciente)
 async function getPitcherTrend(id,yr) {
@@ -1013,6 +1038,7 @@ async function runAnalysis() {
     const {map:oddsMap, kprops, bprops} = await getOdds(date);
     const oddsCount = Object.keys(oddsMap).length;
     allBProps = bprops || {};
+    const SC = await getStatcast(yr);   // Statcast (xwOBA/xERA/xSLG) una sola vez
 
     const results=[];
     const batchBatters=[];
@@ -1051,6 +1077,8 @@ async function runAnalysis() {
         const attach=async(bats,oppPid)=>{ await Promise.all(bats.slice(0,5).map(async b=>{ b.bvp=await getBvP(b.id,oppPid); })); };
         await Promise.all([attach(hBat,apId), attach(aBat,hpId)]);   // local batea vs abridor visitante; visitante vs abridor local
       }
+      // Statcast a cada bateador (xBA/xSLG = calidad real de contacto)
+      [...hBat,...aBat].forEach(b=>{ const s=SC.batters?.[b.id]; if(s){ b.xba=s.xba; b.xslg=s.xslg; } });
 
       const gd = computePicks({
         away: g.teams.away.team.abbreviation,
@@ -1069,6 +1097,7 @@ async function runAnalysis() {
         homePTrend: hTrend, awayPTrend: aTrend,                  // K/9 reciente del abridor
         homeBullTired: hCtx?.reliefIP||0, awayBullTired: aCtx?.reliefIP||0,   // IP de relevo en su último juego
         awayTravel: aCtx?.awayStreak||0,                        // racha de juegos de visita del equipo visitante
+        homePXera: SC.pitchers?.[hpId]?.xera, awayPXera: SC.pitchers?.[apId]?.xera,   // Statcast: xERA (contact suppression)
         odds: pickOdds(oddsMap, g.teams.home.team.name, g.teams.away.team.name, g.gameDate),
       });
       gd.gamePk    = g.gamePk;
@@ -1356,8 +1385,11 @@ function renderBatters(batData) {
       const pl=cl(plat||1,.85,1.15);                       // platoon vs la mano del rival (acotado)
       // BvP: ratio vs su OPS, regresado fuerte (prior 40 AB) -> solo mueve con muestra grande
       const bvpF=(b.bvp&&b.bvp.ops&&b.ops)?cl(regress(b.bvp.ops/b.ops,b.bvp.ab,1,50),.92,1.10):1;
-      const adjBA=cl(b.ba*pAdj*pl*bvpF*(1+(envAdj-1)*.3),.05,.6);  // BA poco sensible al park
-      const adjSLG=b.slg*pAdj*pl*bvpF*envAdj;              // poder sí sensible al park/clima/mano/BvP
+      // Statcast: mezcla xBA/xSLG (calidad real de contacto; corrige suerte / due de regresión)
+      const baBase =b.xba !=null?0.6*b.ba +0.4*b.xba :b.ba;
+      const slgBase=b.xslg!=null?0.6*b.slg+0.4*b.xslg:b.slg;
+      const adjBA=cl(baBase*pAdj*pl*bvpF*(1+(envAdj-1)*.3),.05,.6);  // BA poco sensible al park
+      const adjSLG=slgBase*pAdj*pl*bvpF*envAdj;            // poder sí sensible al park/clima/mano/BvP
       const tag=oppScore>=.62?{t:'duro',c:'var(--rtx)'}:oppScore<=.40?{t:'favorable',c:'var(--gtx)'}:{t:'neutro',c:'var(--text3)'};
       const rate=v=>(v/b.pa)*4.2;                          // proyección por juego (~4.2 PA)
       // Proyecciones del día (ajustadas por pitcher rival, estadio y clima)

@@ -1362,10 +1362,21 @@ function renderPitchers(games) {
   const pitchers = games.flatMap(g=>[
     {...g.pitchers.away,team:g.away,teamId:g.awayId,opp:g.home,matchup:`${g.away} @ ${g.home}`,gamePk:g.gamePk},
     {...g.pitchers.home,team:g.home,teamId:g.homeId,opp:g.away,matchup:`${g.away} @ ${g.home}`,gamePk:g.gamePk},
-  ]).filter(p=>p.name!=='TBD').sort((a,b)=>b.k9-a.k9);
-  propsPitcher=[];   // recolectar picks de Ks para guardar
+  ]).filter(p=>p.name!=='TBD');
+  // Probabilidad del lado recomendado (lean) para rankear los mejores Ks de la jornada
+  const leanProb = p => {
+    if(!p.id) return 0;
+    const l = p.kMkt ? p.kMkt.line : p.kLine;
+    if(p.kMkt && l<3.5) return 0;                 // salida corta/opener: el modelo no aplica
+    const over = p.kExp>=l;
+    return over ? poissonOver(p.kExp,l) : 1-poissonOver(p.kExp,l);
+  };
+  // Solo los 5 abridores con mayor probabilidad de la jornada
+  const topPitchers = pitchers.map(p=>({p,prob:leanProb(p)})).sort((a,b)=>b.prob-a.prob).slice(0,5).map(x=>x.p);
+  propsPitcher=[];   // recolectar picks de Ks a guardar (solo del top mostrado)
 
-  $('pitchers-area').innerHTML=pitchers.map(p=>{
+  if(!topPitchers.length){ $('pitchers-area').innerHTML='<div class="empty">Corre el análisis primero.</div>'; return; }
+  $('pitchers-area').innerHTML=`<div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los <b>5 abridores con mayor probabilidad</b> de ponches (lado recomendado) de la jornada.</div>`+topPitchers.map(p=>{
     const mkt=p.kMkt;
     let line, lineSrc, rec, recColor, badge, sub;
     // Pick de Ks a guardar: línea real si existe, si no la del modelo; lado = over si proyección > línea

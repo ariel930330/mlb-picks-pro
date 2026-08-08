@@ -1370,7 +1370,8 @@ function renderPitchers(games) {
     let line, lineSrc, rec, recColor, badge, sub;
     // Pick de Ks a guardar: línea real si existe, si no la del modelo; lado = over si proyección > línea
     if(p.id){ const l=mkt?mkt.line:p.kLine, over=p.kExp>=l, pr=over?poissonOver(p.kExp,l):1-poissonOver(p.kExp,l);
-      propsPitcher.push({gamePk:p.gamePk,player_id:p.id,player_name:p.name,team:p.team,market:'Ks',target:l,side:over?'over':'under',prob:+pr.toFixed(3),proj:p.kExp}); }
+      // Solo guardar el pick de Ks si el modelo tiene un lean claro (evita guardar TODOS los abridores)
+      if(pr>=0.5) propsPitcher.push({gamePk:p.gamePk,player_id:p.id,player_name:p.name,team:p.team,market:'Ks',target:l,side:over?'over':'under',prob:+pr.toFixed(3),proj:p.kExp}); }
     if(mkt){
       line=mkt.line; lineSrc='casa';
       if(line<3.5){
@@ -1754,7 +1755,19 @@ async function loadProps(){
       <div class="card-hdr"><span class="card-hdr-title">${title}</span><span style="font-size:11px;color:var(--text2)">${graded.length}/${list.length} calificados · acierto <b style="color:var(--gtx)">${acc}</b></span></div>
       <div style="overflow-x:auto"><table class="htable"><thead><tr><th>Fecha</th><th>Jugador</th><th>Eq</th><th>Mercado</th><th>Pick</th><th>Prob/Proy</th><th>Real</th><th>✓/✗</th></tr></thead><tbody>${body}</tbody></table></div></div>`;
   };
-  $('props-area').innerHTML=section('⚾ Pitchers · Ponches (Ks)',rows.filter(r=>r.kind==='pitcher'))+section('🏏 Bateadores',rows.filter(r=>r.kind==='batter'));
+  // Solo los picks que el sistema realmente recomendó (no todos los jugadores).
+  // Para cada día+mercado, deja los N de mayor probabilidad (o proyección) — igual
+  // que las pestañas: top-2 por categoría en bateadores, top-3 Ks en pitchers.
+  const topPerMarket=(list,n)=>{
+    const grp={};
+    list.forEach(r=>{ const k=(r.game_date||'')+'|'+(r.market||''); (grp[k]=grp[k]||[]).push(r); });
+    const out=[];
+    Object.values(grp).forEach(arr=>{ arr.sort((a,b)=>(b.prob??b.proj??0)-(a.prob??a.proj??0)); out.push(...arr.slice(0,n)); });
+    return out.sort((a,b)=> (a.game_date<b.game_date?1:a.game_date>b.game_date?-1:0));
+  };
+  const pit = topPerMarket(rows.filter(r=>r.kind==='pitcher' && (r.prob??0)>=0.5), 3);
+  const bat = topPerMarket(rows.filter(r=>r.kind==='batter'), 2);
+  $('props-area').innerHTML=section('⚾ Pitchers · Ponches (Ks)',pit)+section('🏏 Bateadores',bat);
 }
 async function clearProps(){
   if(!requireAuth()) return;

@@ -664,8 +664,15 @@ function computePicks(data) {
       ? {cat:'Run Line +1.5',main:`${favHome?away:home} +1.5`,sub:`${pct(1-rlProb)} no pierde por 2+`,prob:1-rlProb,edge:+((1-rlProb)-BREAKEVEN).toFixed(3)}
       : {cat:'Run Line -1.5',main:`${favHome?home:away} -1.5`,sub:`${pct(rlProb)} gana por 2+`,prob:rlProb,edge:+(rlProb-BREAKEVEN).toFixed(3)});
   }
-  picks.push({cat:'Primeras 5 Innings',main:`${f5fav} F5 ${p2ml(f5favP)}`,sub:`${pct(f5favP)} en F5`,prob:f5favP,edge:+(f5favP-BREAKEVEN).toFixed(3)});
+  picks.push({cat:'ML F5',main:`${f5fav} F5 ${p2ml(f5favP)}`,sub:`${pct(f5favP)} gana las primeras 5`,prob:f5favP,edge:+(f5favP-BREAKEVEN).toFixed(3)});
   picks.push({cat:'F5 Total',main:`${f5Pick?'OVER':'UNDER'} ${f5line} (F5)`,sub:`Proyección F5: ${f5total}`,prob:f5totalProb,edge:+(f5totalProb-BREAKEVEN).toFixed(3)});
+  // Spread F5 (hándicap ±0.5 de las primeras 5): favorito -0.5 = gana F5; dog +0.5 = gana o empata F5.
+  // El diferencial de 5 innings escala la SD por sqrt(5/9) respecto al juego completo.
+  const F5_SD=RUN_SD*Math.sqrt(5/9), f5hMargin=F5_SD*probit(f5hwp), f5favHome=f5hwp>=.5;
+  const f5cover=f5favHome?normOver(f5hMargin,F5_SD,0.5):normOver(-f5hMargin,F5_SD,0.5);   // prob. favorito -0.5
+  picks.push(f5cover>=.5
+    ? {cat:'Spread F5',main:`${f5fav} -0.5 (F5)`,sub:`${pct(f5cover)} gana las primeras 5`,prob:f5cover,edge:+(f5cover-BREAKEVEN).toFixed(3)}
+    : {cat:'Spread F5',main:`${f5favHome?away:home} +0.5 (F5)`,sub:`${pct(1-f5cover)} gana o empata F5`,prob:1-f5cover,edge:+((1-f5cover)-BREAKEVEN).toFixed(3)});
 
   // ── Mercados extra (proyección del modelo, lado más probable) ──
   const addP=(cat,main,sub,prob)=>picks.push({cat,main,sub,prob,edge:+(prob-BREAKEVEN).toFixed(3)});

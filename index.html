@@ -541,12 +541,13 @@ function computePicks(data) {
   const {away,home,awayId,homeId,awayPitcherId,homePitcherId,awayPitcher,homePitcher,awayStats,homeStats,awayRecent,homeRecent,awayInj,homeInj,odds} = data;
   const pf = PF[homeId]||1.0;
 
-  // OPS vs la MANO del abridor rival (split L/R) × forma reciente; si no, OPS general
-  const aOPS = sf(data.awaySplit?.['v'+data.homePHand] ?? awayStats?.hitting?.ops, .72)*(data.awayForm||1) - (awayInj?.length>=3?.02:(awayInj?.length>=1?.01:0));
+  // OPS vs la MANO del abridor rival (split L/R) × forma reciente; menos lesiones y fatiga de viaje
+  const travelPen = Math.min(.015, Math.max(0,(data.awayTravel||0)-5)*.004);   // gira larga => ofensiva algo cansada
+  const aOPS = sf(data.awaySplit?.['v'+data.homePHand] ?? awayStats?.hitting?.ops, .72)*(data.awayForm||1) - (awayInj?.length>=3?.02:(awayInj?.length>=1?.01:0)) - travelPen;
   const hOPS = sf(data.homeSplit?.['v'+data.awayPHand] ?? homeStats?.hitting?.ops, .72)*(data.homeForm||1) - (homeInj?.length>=3?.02:(homeInj?.length>=1?.01:0));
-  // Bullpen: ERA real de los relevistas si existe; si no, ERA del equipo (proxy)
-  const aBPE = sf(data.awayBullpen ?? awayStats?.pitching?.era, 4.0);
-  const hBPE = sf(data.homeBullpen ?? homeStats?.pitching?.era, 4.0);
+  // Bullpen: ERA real de relevistas + penalización si lanzaron mucho en su último juego (fatiga)
+  const aBPE = sf(data.awayBullpen ?? awayStats?.pitching?.era, 4.0) + Math.min(.6, Math.max(0,(data.awayBullTired||0)-3)*.15);
+  const hBPE = sf(data.homeBullpen ?? homeStats?.pitching?.era, 4.0) + Math.min(.6, Math.max(0,(data.homeBullTired||0)-3)*.15);
 
   const apIPr=ipOf(awayPitcher), hpIPr=ipOf(homePitcher);
   // Crudos (para mostrar en la pestaña Lanzadores)
@@ -557,7 +558,9 @@ function computePicks(data) {
   // Regresados a la media por innings lanzados (para el modelo: muestras chicas no inflan)
   const apERA=regress(apERA0,apIPr,LG.era,50), hpERA=regress(hpERA0,hpIPr,LG.era,50);
   const apFIP=regress(apFIP0,apIPr,LG.fip,40), hpFIP=regress(hpFIP0,hpIPr,LG.fip,40);
-  const apK9=regress(apK90,apIPr,LG.k9,30), hpK9=regress(hpK90,hpIPr,LG.k9,30);
+  const apK9r=regress(apK90,apIPr,LG.k9,30), hpK9r=regress(hpK90,hpIPr,LG.k9,30);
+  // Tendencia: mezcla 25% del K/9 de sus últimas salidas (forma reciente del abridor)
+  const apK9=data.awayPTrend?.75*apK9r+.25*data.awayPTrend:apK9r, hpK9=data.homePTrend?.75*hpK9r+.25*data.homePTrend:hpK9r;
   const apBB9=regress(apBB90,apIPr,LG.bb9,30), hpBB9=regress(hpBB90,hpIPr,LG.bb9,30);
 
   const aps = cl(.35*(1-(apFIP-2)/4)+.25*(1-(apERA-2)/4)+.20*((apK9-5)/5)+.20*(1-(apBB9-1.5)/3.5));
@@ -719,6 +722,35 @@ async function getBvP(batterId,pitcherId) {
     const ab=+st.atBats||0; if(ab<1) return null;
     return { ab, h:+st.hits||0, hr:+st.homeRuns||0, ops:parseFloat(st.ops||0)||0 };
   }catch{return null;}
+}
+// Tendencia del pitcher: K/9 de sus últimas ~5 salidas (forma reciente)
+async function getPitcherTrend(id,yr) {
+  if(!id) return null;
+  try{
+    const d=await mlb(`/people/${id}/stats?stats=gameLog&group=pitching&season=${yr}&sportId=1`);
+    const gl=(d.stats||[]).flatMap(g=>g.splits||[]).filter(s=>(+s.stat?.gamesStarted||0)>0);
+    gl.sort((a,b)=>(b.date||'').localeCompare(a.date||''));
+    let k=0, ip=0; gl.slice(0,5).forEach(s=>{ k+=+s.stat?.strikeOuts||0; ip+=ipOf({inningsPitched:s.stat?.inningsPitched}); });
+    return ip>=8 ? +(k*9/ip).toFixed(2) : null;   // K/9 reciente
+  }catch{return null;}
+}
+// Contexto del equipo: racha de juegos de VISITA (viaje) e IP del BULLPEN en su último juego (fatiga)
+async function getTeamCtx(teamId,date,yr) {
+  try{
+    const start=new Date(new Date(date).getTime()-10*864e5).toISOString().slice(0,10);
+    const end=new Date(new Date(date).getTime()-864e5).toISOString().slice(0,10);
+    const d=await mlb(`/schedule?sportId=1&teamId=${teamId}&startDate=${start}&endDate=${end}`);
+    const games=(d.dates||[]).flatMap(x=>x.games||[]).filter(g=>g.status?.abstractGameState==='Final').sort((a,b)=>(a.gameDate||'').localeCompare(b.gameDate||''));
+    let awayStreak=0;
+    for(let i=games.length-1;i>=0;i--){ if(games[i].teams?.away?.team?.id===teamId) awayStreak++; else break; }
+    let reliefIP=0; const lastPk=games.length?games[games.length-1].gamePk:null;
+    if(lastPk){ try{
+      const r=await fetch(MLB+`/game/${lastPk}/boxscore`); const bd=await r.json();
+      const side=bd.teams?.home?.team?.id===teamId?'home':'away';
+      Object.values(bd.teams?.[side]?.players||{}).forEach(p=>{ const pit=p.stats?.pitching; if(pit?.inningsPitched&&(+pit.gamesStarted||0)===0) reliefIP+=ipOf({inningsPitched:pit.inningsPitched}); });
+    }catch{} }
+    return {awayStreak, reliefIP:+reliefIP.toFixed(1)};
+  }catch{return {awayStreak:0, reliefIP:0};}
 }
 // ERA real del bullpen (solo relevistas: más apariciones de relevo que aperturas)
 async function getBullpenERA(id,yr) {
@@ -989,7 +1021,7 @@ async function runAnalysis() {
       const hId=g.teams.home.team.id, aId=g.teams.away.team.id;
       const hpId=g.teams.home.probablePitcher?.id, apId=g.teams.away.probablePitcher?.id;
 
-      const [hpSt,apSt,hTSt,aTSt,hWL,aWL,hInj,aInj,hBat,aBat,wx,hSplit,aSplit,hHand,aHand,hRecOPS,aRecOPS,hBull,aBull] = await Promise.all([
+      const [hpSt,apSt,hTSt,aTSt,hWL,aWL,hInj,aInj,hBat,aBat,wx,hSplit,aSplit,hHand,aHand,hRecOPS,aRecOPS,hBull,aBull,hTrend,aTrend,hCtx,aCtx] = await Promise.all([
         getPitcherStats(hpId,yr), getPitcherStats(apId,yr),
         getTeamStats(hId,yr), getTeamStats(aId,yr),
         getRecentGames(hId,yr), getRecentGames(aId,yr),
@@ -1000,6 +1032,8 @@ async function runAnalysis() {
         getPitcherHand(hpId), getPitcherHand(apId),
         getRecentOPS(hId,yr), getRecentOPS(aId,yr),
         getBullpenERA(hId,yr), getBullpenERA(aId,yr),
+        getPitcherTrend(hpId,yr), getPitcherTrend(apId,yr),   // tendencia (K/9 últimas salidas)
+        getTeamCtx(hId,date,yr), getTeamCtx(aId,date,yr),     // viaje + fatiga de bullpen
       ]);
       // Forma reciente: OPS de últimos 30 días ÷ OPS de temporada (acotado ±8%)
       const _hOps=sf(hTSt?.hitting?.ops,.72), _aOps=sf(aTSt?.hitting?.ops,.72);
@@ -1032,6 +1066,9 @@ async function runAnalysis() {
         homeSplit: hSplit, awaySplit: aSplit, homePHand: hHand, awayPHand: aHand,
         homeForm: homeForm*homeLineupF, awayForm: awayForm*awayLineupF,
         homeBullpen: hBull, awayBullpen: aBull,
+        homePTrend: hTrend, awayPTrend: aTrend,                  // K/9 reciente del abridor
+        homeBullTired: hCtx?.reliefIP||0, awayBullTired: aCtx?.reliefIP||0,   // IP de relevo en su último juego
+        awayTravel: aCtx?.awayStreak||0,                        // racha de juegos de visita del equipo visitante
         odds: pickOdds(oddsMap, g.teams.home.team.name, g.teams.away.team.name, g.gameDate),
       });
       gd.gamePk    = g.gamePk;

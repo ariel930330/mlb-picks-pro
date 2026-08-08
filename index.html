@@ -1501,18 +1501,15 @@ function renderBatters(batData) {
 }
 
 // ── History ───────────────────────────────────────────────────────────────────
-let histMinProb = +(localStorage.getItem('hist_minprob')||0.5);
-function setHistMinProb(v){ histMinProb=+v; localStorage.setItem('hist_minprob',v); loadHistory(); }
 let histConf = localStorage.getItem('hist_conf')||'high';   // 'high' = solo alta confianza, 'all' = todas
 function setHistConf(v){ histConf=v; localStorage.setItem('hist_conf',v); loadHistory(); }
-const probOf = r => r.top_pick_prob ?? r.fav_prob ?? 0;
 
 async function loadHistory() {
   $('history-area').innerHTML='<div class="loading"><div class="spin"></div>Cargando desde Supabase...</div>';
   const {data:all,error} = await sb.from('predictions').select('*').order('game_date',{ascending:false}).limit(500);
   if(error){$('history-area').innerHTML=`<div class="error-box">${error.message}</div>`;return;}
-  // Solo los de mayor probabilidad (umbral elegido) y, si aplica, solo confianza ALTA
-  const rows = (all||[]).filter(r=>probOf(r)>=histMinProb).filter(r=> histConf==='all' ? true : r.confidence==='High');
+  // Filtro por confianza (solo ALTA por defecto)
+  const rows = (all||[]).filter(r=> histConf==='all' ? true : r.confidence==='High');
 
   const graded=rows.filter(r=>r.result), wins=graded.filter(r=>r.result==='win');
   const highG=graded.filter(r=>r.confidence==='High'), highW=highG.filter(r=>r.result==='win');
@@ -1533,13 +1530,10 @@ async function loadHistory() {
     uEl.style.color = profit>=0 ? 'var(--green)' : 'var(--red)';
   } else { uEl.textContent='—'; uEl.style.color=''; }
 
-  const opt=(v,l)=>`<option value="${v}"${histMinProb===v?' selected':''}>${l}</option>`;
   const optc=(v,l)=>`<option value="${v}"${histConf===v?' selected':''}>${l}</option>`;
   const selStyle=`background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:4px 8px;font-size:11px;color:var(--text);font-family:inherit`;
   const ctrl=`<div style="display:flex;justify-content:flex-end;align-items:center;gap:6px;margin-bottom:8px;font-size:11px;color:var(--text2)">Confianza:
-    <select onchange="setHistConf(this.value)" style="${selStyle}">${optc('high','🟢 Solo Alta')}${optc('all','Todas')}</select>
-    <span style="margin-left:8px">Prob. mínima:</span>
-    <select onchange="setHistMinProb(this.value)" style="${selStyle}">${opt(0,'Todas')}${opt(.5,'≥ 50%')}${opt(.55,'≥ 55%')}${opt(.6,'≥ 60%')}${opt(.65,'≥ 65%')}</select></div>`;
+    <select onchange="setHistConf(this.value)" style="${selStyle}">${optc('high','🟢 Solo Alta')}${optc('all','Todas')}</select></div>`;
 
   if(!rows.length){$('history-area').innerHTML=ctrl+`<div class="empty">${(all||[]).length?'Ningún pick cumple los filtros (confianza / prob. mínima). Ajusta los filtros.':'No hay predicciones aún.<br>Corre el análisis y marca resultados con ✓ ✗'}</div>`;return;}
 

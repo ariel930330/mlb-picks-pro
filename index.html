@@ -1764,7 +1764,7 @@ async function loadProps(){
       <td><div style="display:flex;align-items:center;gap:6px"><img class="headshot-sm" style="width:24px;height:24px" src="${playerImg(r.player_id)}" onerror="${IMG_FALLBACK}"><strong>${r.player_name||'?'}</strong></div></td>
       <td><span style="font-size:10px;padding:1px 6px;border-radius:3px;background:var(--bg3);font-weight:700">${r.team||''}</span></td>
       <td style="font-weight:700">${r.market}</td>
-      <td>${r.side==='over'?'+':''}${r.target}${r.market==='Ks'?'K':''}</td>
+      <td style="white-space:nowrap"><b style="color:${r.side==='over'?'var(--gtx)':'var(--rtx)'}">${r.side==='over'?'Over':'Under'}</b> ${r.target}${r.market==='Ks'?'K':''}</td>
       <td>${r.prob!=null?Math.round(r.prob*100)+'%':(r.proj!=null?r.proj:'—')}</td>
       <td style="font-weight:700">${r.actual!=null?r.actual:'—'}</td>
       <td>${r.result?(r.result==='win'?'<span style="color:var(--gtx);font-weight:700">✓</span>':'<span style="color:var(--rtx);font-weight:700">✗</span>'):'<span style="color:var(--text3)">pend.</span>'}</td>

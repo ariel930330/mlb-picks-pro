@@ -553,12 +553,15 @@ function pitcherRating(m){
   const parts=[];
   const lo=(v,w,good,bad)=>{ if(v!=null&&isFinite(v)) parts.push({s:cl((bad-v)/(bad-good),0,1),w}); };  // menor = mejor
   const hi=(v,w,good,bad)=>{ if(v!=null&&isFinite(v)) parts.push({s:cl((v-bad)/(good-bad),0,1),w}); };  // mayor = mejor
-  lo(m.xfip, .22, 3.0, 5.0);      // xFIP (HR normalizado) — peso alto
-  lo(m.fip,  .20, 2.8, 5.2);      // FIP (sin balls in play)
-  lo(m.xera, .18, 2.8, 5.5);      // Statcast xERA (calidad de contacto), NO el ERA crudo
-  lo(m.xwoba,.20, .280, .360);    // xwOBA allowed
-  hi(m.kbb9, .15, 9, 2);          // K-BB por 9 (dominio: ponches menos boletos)
-  lo(m.hr9,  .05, 0.7, 1.8);      // HR/9 (peso menor)
+  lo(m.xfip, .20, 3.0, 5.0);      // xFIP (HR normalizado) — peso alto
+  lo(m.fip,  .16, 2.8, 5.2);      // FIP (sin balls in play)
+  lo(m.xera, .15, 2.8, 5.5);      // Statcast xERA (calidad de contacto), NO el ERA crudo
+  lo(m.xwoba,.16, .280, .360);    // xwOBA allowed
+  // Dominio: K-BB% real de Savant si está; si no, el proxy K-BB por 9
+  if(m.kbbpct!=null) hi(m.kbbpct,.13, 20, 2); else hi(m.kbb9,.13, 9, 2);
+  hi(m.whiff, .08, 32, 18);       // whiff% (swing-and-miss)
+  hi(m.chase, .06, 35, 25);       // chase% (swings fuera de zona inducidos)
+  lo(m.hr9,   .06, 0.7, 1.8);     // HR/9 (peso menor)
   const tw=parts.reduce((a,p)=>a+p.w,0)||1;
   return cl(parts.reduce((a,p)=>a+p.s*p.w,0)/tw, .02, .98);
 }
@@ -599,9 +602,10 @@ function computePicks(data) {
   const apHR9=regress(apIPr>0?sf(awayPitcher?.homeRuns,0)/apIPr*9:LG_HR9,apIPr,LG_HR9,40);
   const hpHR9=regress(hpIPr>0?sf(homePitcher?.homeRuns,0)/hpIPr*9:LG_HR9,hpIPr,LG_HR9,40);
 
-  // Componente del abridor: lo manejan FIP/xFIP + Statcast (xERA/xwOBA) + K-BB; el ERA crudo NO domina.
-  const aps = pitcherRating({fip:apFIP,xfip:apXFIP,xera:data.awayPXera,xwoba:data.awayPXwoba,kbb9:apK9r-apBB9,hr9:apHR9});
-  const hps = pitcherRating({fip:hpFIP,xfip:hpXFIP,xera:data.homePXera,xwoba:data.homePXwoba,kbb9:hpK9r-hpBB9,hr9:hpHR9});
+  // Componente del abridor: lo manejan FIP/xFIP + Statcast (xERA/xwOBA) + K-BB% + whiff/chase; el ERA crudo NO domina.
+  const aD=data.awayPDisc, hD=data.homePDisc;
+  const aps = pitcherRating({fip:apFIP,xfip:apXFIP,xera:data.awayPXera,xwoba:data.awayPXwoba,kbb9:apK9r-apBB9,kbbpct:aD?.kbb,whiff:aD?.whiff,chase:aD?.chase,hr9:apHR9});
+  const hps = pitcherRating({fip:hpFIP,xfip:hpXFIP,xera:data.homePXera,xwoba:data.homePXwoba,kbb9:hpK9r-hpBB9,kbbpct:hD?.kbb,whiff:hD?.whiff,chase:hD?.chase,hr9:hpHR9});
   const hos = cl((hOPS-.65)/.20);
   const aos = cl((aOPS-.65)/.20);
   const hbs = cl((hBPE-2.5)/-3.5+.5);
@@ -730,8 +734,8 @@ function computePicks(data) {
     awayWP:+awp.toFixed(4),homeWP:+hwp.toFixed(4),
     awayML:p2ml(awp),homeML:p2ml(hwp),
     total,totalLine,pf,
-    pitchers:{away:{id:awayPitcherId,name:data.awayPitcherName||'TBD',era:+apERA0.toFixed(2),fip:+apFIP0.toFixed(2),xfip:+apXFIP0.toFixed(2),xera:data.awayPXera?+(+data.awayPXera).toFixed(2):null,k9:+apK90.toFixed(1),kExp:apKExp,kLine:apKLine,kMkt:aKMkt,rating:+aps.toFixed(3)},
-              home:{id:homePitcherId,name:data.homePitcherName||'TBD',era:+hpERA0.toFixed(2),fip:+hpFIP0.toFixed(2),xfip:+hpXFIP0.toFixed(2),xera:data.homePXera?+(+data.homePXera).toFixed(2):null,k9:+hpK90.toFixed(1),kExp:hpKExp,kLine:hpKLine,kMkt:hKMkt,rating:+hps.toFixed(3)}},
+    pitchers:{away:{id:awayPitcherId,name:data.awayPitcherName||'TBD',era:+apERA0.toFixed(2),fip:+apFIP0.toFixed(2),xfip:+apXFIP0.toFixed(2),xera:data.awayPXera?+(+data.awayPXera).toFixed(2):null,whiff:aD?.whiff??null,chase:aD?.chase??null,k9:+apK90.toFixed(1),kExp:apKExp,kLine:apKLine,kMkt:aKMkt,rating:+aps.toFixed(3)},
+              home:{id:homePitcherId,name:data.homePitcherName||'TBD',era:+hpERA0.toFixed(2),fip:+hpFIP0.toFixed(2),xfip:+hpXFIP0.toFixed(2),xera:data.homePXera?+(+data.homePXera).toFixed(2):null,whiff:hD?.whiff??null,chase:hD?.chase??null,k9:+hpK90.toFixed(1),kExp:hpKExp,kLine:hpKLine,kMkt:hKMkt,rating:+hps.toFixed(3)}},
     picks:top3,allPicks:picks,
     features:{hps,aps,hos,aos,hbs,abs:abs2,str},
   };
@@ -811,6 +815,27 @@ async function getPitchArsenal(year){
   const leagueWhiff={}; for(const pt in lAgg) leagueWhiff[pt]=lAgg[pt].w/lAgg[pt].n;
   _arsenal[year]={pitchers,teamWhiff,leagueWhiff};
   return _arsenal[year];
+}
+// ── Plate discipline por abridor (Savant custom leaderboard) ────────────────────
+// whiff% (fallo por swing), chase% (swing fuera de zona), zone-contact, K% y BB%.
+let _disc={};
+async function getPitchDiscipline(year){
+  if(_disc[year]) return _disc[year];
+  try{
+    const sel='pa,pitches,k_percent,bb_percent,whiff_percent,swing_percent,oz_swing_percent,iz_contact_percent,f_strike_percent';
+    const r=await fetch(`https://baseballsavant.mlb.com/leaderboard/custom?year=${year}&type=pitcher&filter=&min=100&selections=${sel}&csv=true`);
+    if(!r.ok){ _disc[year]={}; return _disc[year]; }
+    const L=(await r.text()).trim().split('\n'); if(L.length<2){ _disc[year]={}; return _disc[year]; }
+    const cols=parseCSVLine(L[0]).map(c=>c.replace(/["﻿]/g,'').trim());
+    const ix=n=>cols.indexOf(n), iId=ix('player_id'),iK=ix('k_percent'),iBB=ix('bb_percent'),iWh=ix('whiff_percent'),iCh=ix('oz_swing_percent'),iZc=ix('iz_contact_percent'),iFs=ix('f_strike_percent');
+    const out={};
+    for(let i=1;i<L.length;i++){ const c=parseCSVLine(L[i]); const id=+c[iId]; if(!id) continue;
+      const k=parseFloat(c[iK]), bb=parseFloat(c[iBB]);
+      out[id]={k:isFinite(k)?k:null, bb:isFinite(bb)?bb:null, kbb:(isFinite(k)&&isFinite(bb))?+(k-bb).toFixed(1):null,
+        whiff:parseFloat(c[iWh])||null, chase:parseFloat(c[iCh])||null, zc:parseFloat(c[iZc])||null, fstrike:parseFloat(c[iFs])||null};
+    }
+    _disc[year]=out; return out;
+  }catch(e){ console.warn('discipline:',e.message); _disc[year]={}; return _disc[year]; }
 }
 // Factor K del matchup: whiff del EQUIPO vs el arsenal del pitcher ÷ el de un equipo promedio. Acotado ±10%.
 function pitchMatchup(ars, pid, teamAbbr){
@@ -1112,6 +1137,7 @@ async function runAnalysis() {
     allBProps = bprops || {};
     const SC = await getStatcast(yr);   // Statcast (xwOBA/xERA/xSLG) una sola vez
     const ARS = await getPitchArsenal(yr);   // Repertorio (whiff por pitch) para el matchup de Ks
+    const DISC = await getPitchDiscipline(yr);   // Plate discipline por abridor (whiff/chase/K-BB%)
 
     const results=[];
     const batchBatters=[];
@@ -1172,6 +1198,7 @@ async function runAnalysis() {
         awayTravel: aCtx?.awayStreak||0,                        // racha de juegos de visita del equipo visitante
         homePXera: SC.pitchers?.[hpId]?.xera, awayPXera: SC.pitchers?.[apId]?.xera,   // Statcast: xERA (contact suppression)
         homePXwoba: SC.pitchers?.[hpId]?.xwoba, awayPXwoba: SC.pitchers?.[apId]?.xwoba,   // Statcast: xwOBA allowed
+        homePDisc: DISC[hpId]||null, awayPDisc: DISC[apId]||null,   // plate discipline (whiff/chase/K-BB%)
         homeKMatch: pitchMatchup(ARS, hpId, g.teams.away.team.abbreviation),   // repertorio vs K% del rival
         awayKMatch: pitchMatchup(ARS, apId, g.teams.home.team.abbreviation),
         odds: pickOdds(oddsMap, g.teams.home.team.name, g.teams.away.team.name, g.gameDate),
@@ -1452,7 +1479,7 @@ function renderPitchers(games) {
         <span style="font-size:13px;font-weight:700;color:${recColor}">${badge}</span>
       </div>
       <div style="display:flex;gap:8px;padding:10px 12px;flex-wrap:wrap">
-        ${[['ERA',p.era],['FIP',p.fip],['xFIP',p.xfip],['xERA',p.xera??'—'],['K/9',p.k9],['Ks Exp.',p.kExp],[`Línea (${lineSrc})`,line]].map(([l,v])=>`
+        ${[['ERA',p.era],['FIP',p.fip],['xFIP',p.xfip],['xERA',p.xera??'—'],['Whiff%',p.whiff!=null?p.whiff:'—'],['Chase%',p.chase!=null?p.chase:'—'],['K/9',p.k9],['Ks Exp.',p.kExp],[`Línea (${lineSrc})`,line]].map(([l,v])=>`
           <div style="background:var(--bg3);border-radius:var(--rs);padding:6px 12px;text-align:center;min-width:60px">
             <div style="font-size:9px;color:var(--text3)">${l}</div>
             <div style="font-size:14px;font-weight:700;color:${['K/9','Ks Exp.'].includes(l)?'var(--green)':'var(--text)'}">${v}</div>

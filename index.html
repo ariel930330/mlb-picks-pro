@@ -256,6 +256,9 @@ body{background:radial-gradient(1200px 600px at 70% -10%,#f7f9fc,var(--bg)) fixe
         <label title="Historial bateador-vs-pitcher (muchas llamadas a la MLB API, gratis pero lento)." style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer">
           <input type="checkbox" id="bvp-chk" onchange="saveBvPOn(this.checked)" style="accent-color:var(--gold)"> BvP
         </label>
+        <label title="Splits de cada bateador vs zurdos/derechos (OPS/K%/BB%/ISO vs la mano del abridor). Más llamadas a la MLB API, gratis pero lento." style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer">
+          <input type="checkbox" id="splits-chk" onchange="saveSplitsOn(this.checked)" style="accent-color:var(--gold)"> Splits L/R
+        </label>
         <span id="run-status" style="font-size:11px;color:var(--text3)"></span>
       </div>
       <div class="legend">
@@ -574,18 +577,23 @@ function computePicks(data) {
   // Vulnerabilidad platoon del abridor: enfrenta MÁS bateadores de mano opuesta (ventaja platoon),
   // así que se pesa su OPS-permitido de esa mano vs su promedio neutro. Un abridor con split marcado
   // (débil vs la mano mayoritaria) sube la ofensiva rival; uno con split invertido la baja. Acotado ±6%.
-  const pPlatoonF = (sp,pHand)=>{
+  const pPlatoonF = (sp,pHand,hands)=>{
     if(!sp||sp.vL==null||sp.vR==null) return 1;
     const base=(sp.vL+sp.vR)/2; if(base<=0) return 1;
-    const w = pHand==='L' ? .62*sp.vR+.38*sp.vL : .62*sp.vL+.38*sp.vR;   // LHP ve más derechos; RHP más zurdos
+    let fL,fR;
+    if(hands&&hands.length){   // composición REAL de la alineación (switch = mano opuesta al pitcher)
+      let L=0,R=0; hands.forEach(h=>{ const eff = h==='S' ? (pHand==='L'?'R':'L') : h; eff==='L'?L++:R++; });
+      const n=L+R||1; fL=L/n; fR=R/n;
+    } else { fL = pHand==='L'?.38:.62; fR=1-fL; }   // fallback: ~62% de mano opuesta
+    const w = fL*sp.vL + fR*sp.vR;
     return cl(w/base, .94, 1.06);
   };
   // xwOBA de la alineación exacta vs el arsenal del abridor rival (amortiguado a la mitad, ~±6%)
   const xwOff = f => f!=null ? cl(1+(f-1)*.5,.94,1.06) : 1;
   // OPS vs la MANO del abridor rival (split L/R) × forma reciente × platoon del abridor × matchup de arsenal; menos lesiones y fatiga de viaje
   const travelPen = Math.min(.015, Math.max(0,(data.awayTravel||0)-5)*.004);   // gira larga => ofensiva algo cansada
-  const aOPS = sf(data.awaySplit?.['v'+data.homePHand] ?? awayStats?.hitting?.ops, .72)*(data.awayForm||1)*pPlatoonF(data.homePSplit,data.homePHand)*xwOff(data.awayOffXwF) - (awayInj?.length>=3?.02:(awayInj?.length>=1?.01:0)) - travelPen;
-  const hOPS = sf(data.homeSplit?.['v'+data.awayPHand] ?? homeStats?.hitting?.ops, .72)*(data.homeForm||1)*pPlatoonF(data.awayPSplit,data.awayPHand)*xwOff(data.homeOffXwF) - (homeInj?.length>=3?.02:(homeInj?.length>=1?.01:0));
+  const aOPS = sf(data.awaySplit?.['v'+data.homePHand] ?? awayStats?.hitting?.ops, .72)*(data.awayForm||1)*pPlatoonF(data.homePSplit,data.homePHand,data.awayHands)*xwOff(data.awayOffXwF) - (awayInj?.length>=3?.02:(awayInj?.length>=1?.01:0)) - travelPen;
+  const hOPS = sf(data.homeSplit?.['v'+data.awayPHand] ?? homeStats?.hitting?.ops, .72)*(data.homeForm||1)*pPlatoonF(data.awayPSplit,data.awayPHand,data.homeHands)*xwOff(data.homeOffXwF) - (homeInj?.length>=3?.02:(homeInj?.length>=1?.01:0));
   // Bullpen: ERA real de relevistas + penalización si lanzaron mucho en su último juego (fatiga)
   const aBPE = sf(data.awayBullpen ?? awayStats?.pitching?.era, 4.0) + Math.min(.6, Math.max(0,(data.awayBullTired||0)-3)*.15);
   const hBPE = sf(data.homeBullpen ?? homeStats?.pitching?.era, 4.0) + Math.min(.6, Math.max(0,(data.homeBullTired||0)-3)*.15);
@@ -949,6 +957,29 @@ async function getPitcherHand(id) {
   if(!id) return null;
   try{ const d=await mlb(`/people/${id}`); return d.people?.[0]?.pitchHand?.code||null; }catch{return null;}
 }
+// Mano de bateo (L/R/S) de varios jugadores en UNA sola llamada (cacheado)
+let _hands={};
+async function getPeopleHands(ids){
+  const need=[...new Set(ids.filter(id=>id&&_hands[id]===undefined))];
+  if(need.length){ try{
+    const d=await mlb(`/people?personIds=${need.join(',')}`);
+    (d.people||[]).forEach(p=>{ _hands[p.id]=p.batSide?.code||'R'; });
+  }catch{} need.forEach(id=>{ if(_hands[id]===undefined)_hands[id]='R'; }); }
+  const out={}; ids.forEach(id=>{ if(id) out[id]=_hands[id]||'R'; }); return out;
+}
+// Splits del BATEADOR vs zurdos (vL) y derechos (vR): OPS, wOBA≈OBP, K%, BB%, ISO
+async function getBatterSplits(id,yr){
+  if(!id) return null;
+  try{
+    const d=await mlb(`/people/${id}/stats?stats=statSplits&group=hitting&sitCodes=vl,vr&season=${yr}&sportId=1`);
+    const sp=(d.stats||[]).flatMap(x=>x.splits||[]);
+    const grab=code=>{ const s=sp.find(x=>x.split?.code===code); if(!s) return null; const t=s.stat||{};
+      const pa=+t.plateAppearances||0, k=+t.strikeOuts||0, bb=+t.baseOnBalls||0, slg=parseFloat(t.slg)||0, avg=parseFloat(t.avg)||0;
+      return {ops:parseFloat(t.ops)||null, obp:parseFloat(t.obp)||null, iso:+(slg-avg).toFixed(3), kpct:pa?+(k/pa*100).toFixed(1):null, bbpct:pa?+(bb/pa*100).toFixed(1):null, pa}; };
+    const vL=grab('vl'), vR=grab('vr');
+    return (vL||vR)?{vL,vR}:null;
+  }catch{return null;}
+}
 // OPS del equipo vs zurdos (vL) y vs derechos (vR)
 async function getTeamSplitOPS(id,yr) {
   try{
@@ -989,6 +1020,8 @@ const getBProps = () => localStorage.getItem('bprops_on')==='1';    // props de 
 const saveBProps = on => on?localStorage.setItem('bprops_on','1'):localStorage.removeItem('bprops_on');
 const getBvPOn  = () => localStorage.getItem('bvp_on')==='1';       // BvP APAGADO por defecto (muchas llamadas)
 const saveBvPOn = on => on?localStorage.setItem('bvp_on','1'):localStorage.removeItem('bvp_on');
+const getSplitsOn = () => localStorage.getItem('splits_on')==='1';  // splits del bateador vs L/R APAGADO por defecto
+const saveSplitsOn = on => on?localStorage.setItem('splits_on','1'):localStorage.removeItem('splits_on');
 
 // Evalúa una prop Over/Under: compara la prob. del modelo (over) contra el mercado sin vig
 // y devuelve el mejor lado con su edge y stake (medio-Kelly).
@@ -1224,6 +1257,16 @@ async function runAnalysis() {
       const hpLM=lineupMatchup(ARS, hpId, aLU);   // abridor LOCAL vs alineación VISITANTE
       const apLM=lineupMatchup(ARS, apId, hLU);   // abridor VISITANTE vs alineación LOCAL
 
+      // Mano de bateo (L/R/S) de la alineación y de los top: una sola llamada batcheada.
+      const HANDS=await getPeopleHands([...hLU,...aLU,...(hBat||[]).map(b=>b.id),...(aBat||[]).map(b=>b.id)]);
+      (hBat||[]).forEach(b=>b.hand=HANDS[b.id]); (aBat||[]).forEach(b=>b.hand=HANDS[b.id]);
+      const homeHands=hLU.map(id=>HANDS[id]).filter(Boolean), awayHands=aLU.map(id=>HANDS[id]).filter(Boolean);
+      // Splits del bateador vs L/R (xwOBA/OPS/K%/BB%/ISO), solo si el usuario lo activó (más llamadas)
+      if(getSplitsOn()){
+        const attachS=async bats=>{ await Promise.all((bats||[]).slice(0,9).map(async b=>{ b.split=await getBatterSplits(b.id,yr); })); };
+        await Promise.all([attachS(hBat),attachS(aBat)]);
+      }
+
       // BvP (bateador vs abridor rival) para los mejores de cada equipo, si está activado
       if(getBvPOn()){
         const attach=async(bats,oppPid)=>{ await Promise.all(bats.slice(0,5).map(async b=>{ b.bvp=await getBvP(b.id,oppPid); })); };
@@ -1253,6 +1296,7 @@ async function runAnalysis() {
         homePXwoba: SC.pitchers?.[hpId]?.xwoba, awayPXwoba: SC.pitchers?.[apId]?.xwoba,   // Statcast: xwOBA allowed
         homePDisc: DISC[hpId]||null, awayPDisc: DISC[apId]||null,   // plate discipline (whiff/chase/K-BB%)
         homePSplit: hPSplit, awayPSplit: aPSplit,   // OPS permitido del abridor vs L/R
+        homeHands, awayHands,   // manos de bateo de cada alineación (composición real platoon)
         // whiff vs la alineación exacta (si hay datos) o el fallback a nivel equipo
         homeKMatch: hpLM?.whiffF ?? pitchMatchup(ARS, hpId, g.teams.away.team.abbreviation),
         awayKMatch: apLM?.whiffF ?? pitchMatchup(ARS, apId, g.teams.home.team.abbreviation),
@@ -1556,7 +1600,9 @@ function renderBatters(batData) {
     const mk=(b,oppScore,oppPitcher,plat,oppHand)=>{
       if(!b.ba||b.ba===0||!b.pa) return null;
       const pAdj=cl(1-(oppScore-.5)*.6,.78,1.22);          // pitcher rival: as => baja; flojo => sube
-      const pl=cl(plat||1,.85,1.15);                       // platoon vs la mano del rival (acotado)
+      // Platoon: si hay split individual del bateador vs esa mano (OPS vs L/R), úsalo; si no, el del equipo
+      const bs = (b.split && oppHand) ? b.split['v'+oppHand] : null;
+      const pl = (bs && bs.ops && b.ops) ? cl(bs.ops/b.ops, .82, 1.20) : cl(plat||1,.85,1.15);
       // BvP: ratio vs su OPS, regresado fuerte (prior 40 AB) -> solo mueve con muestra grande
       const bvpF=(b.bvp&&b.bvp.ops&&b.ops)?cl(regress(b.bvp.ops/b.ops,b.bvp.ab,1,50),.92,1.10):1;
       // Statcast: mezcla xBA/xSLG (calidad real de contacto; corrige suerte / due de regresión)
@@ -1580,7 +1626,7 @@ function renderBatters(batData) {
       const evHits=bp?.hits?evalProp(poissonOver(expH,bp.hits.line),bp.hits):null;
       const evTB  =bp?.tb  ?evalProp(poissonOver(expTB,bp.tb.line),  bp.tb)  :null;
       const evHR  =bp?.hr  ?evalProp(poissonOver(expHR,bp.hr.line),  bp.hr)  :null;
-      return {id:b.id,name:b.name,pos:b.pos,pitcher:oppPitcher,oppHand,bvp:b.bvp,tag,hitP,expTB,hrbiR,expBB,expHR,evHits,evTB,evHR};
+      return {id:b.id,name:b.name,pos:b.pos,pitcher:oppPitcher,oppHand,hand:b.hand,split:bs,bvp:b.bvp,tag,hitP,expTB,hrbiR,expBB,expHR,evHits,evTB,evHR};
     };
     const aSet=g.awayLineup?new Set(g.awayLineup):null, hSet=g.homeLineup?new Set(g.homeLineup):null;
     (g.awayBatters||[]).forEach(b=>{ if(aSet&&!aSet.has(b.id)) return; const r=mk(b,g.awayOppScore??.5,g.homePitcher,g.awayPlatoon,g.awayOppHand); if(r){r.team=g.away;r.gamePk=g.gamePk;r.conf=!!aSet;rows.push(r);} });
@@ -1607,8 +1653,8 @@ function renderBatters(batData) {
       <span style="min-width:18px;height:18px;border-radius:50%;background:var(--bg);color:var(--gold);font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center">${i+1}</span>
       <img class="headshot-sm" src="${playerImg(r.id)}" onerror="${IMG_FALLBACK}">
       <div style="flex:1;min-width:0">
-        <div style="font-weight:700;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.name}${r.conf?' <span style="color:var(--gtx);font-size:9px;font-weight:700">✓</span>':''}</div>
-        <div style="font-size:9px;color:var(--text2);display:flex;align-items:center;gap:3px"><img class="logo-xs" src="${teamLogo(ABBR2ID[r.team])}" onerror="${IMG_FALLBACK}">${r.team} · vs ${(r.pitcher||'').split(' ').slice(-1)[0]||'—'}${r.oppHand?` (${r.oppHand})`:''} <span style="color:${r.tag.c};font-weight:700">${r.tag.t}</span>${r.bvp&&r.bvp.ab>=8?` <span style="color:var(--gold);font-weight:700">BvP ${r.bvp.h}-${r.bvp.ab}${r.bvp.hr?`, ${r.bvp.hr}HR`:''}</span>`:''}</div>
+        <div style="font-weight:700;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.name}${r.hand?` <span style="color:var(--text3);font-size:9px;font-weight:700">${r.hand}HB</span>`:''}${r.conf?' <span style="color:var(--gtx);font-size:9px;font-weight:700">✓</span>':''}</div>
+        <div style="font-size:9px;color:var(--text2);display:flex;align-items:center;gap:3px"><img class="logo-xs" src="${teamLogo(ABBR2ID[r.team])}" onerror="${IMG_FALLBACK}">${r.team} · vs ${(r.pitcher||'').split(' ').slice(-1)[0]||'—'}${r.oppHand?` (${r.oppHand})`:''} <span style="color:${r.tag.c};font-weight:700">${r.tag.t}</span>${r.split&&r.split.ops?` <span style="color:var(--blue);font-weight:700">v${r.oppHand} ${r.split.ops.toFixed(3)} OPS${r.split.kpct!=null?`, ${r.split.kpct}%K`:''}</span>`:''}${r.bvp&&r.bvp.ab>=8?` <span style="color:var(--gold);font-weight:700">BvP ${r.bvp.h}-${r.bvp.ab}${r.bvp.hr?`, ${r.bvp.hr}HR`:''}</span>`:''}</div>
       </div>
       <div style="text-align:right"><span style="font-size:16px;font-weight:700;color:var(--green)">${cat.fmt(r)}</span>${cat.tag?propTag(cat.tag(r)):''}</div>
     </div>`;
@@ -2045,6 +2091,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('kprops-chk').checked=getKProps();
   $('bprops-chk').checked=getBProps();
   $('bvp-chk').checked=getBvPOn();
+  $('splits-chk').checked=getSplitsOn();
 
   // Restaurar sesión (si el dueño ya inició sesión antes)
   const {data:sd} = await sb.auth.getSession();

@@ -536,6 +536,32 @@ function calcFIP(st, era=4.5) {
   if(ipd<5) return era;
   return Math.max(1,Math.min(8,((13*hr)+(3*(bb+hbp))-(2*k))/ipd+3.10));
 }
+// xFIP: como FIP pero NORMALIZA el componente de HR a la tasa de la liga (quita la suerte/park
+// en jonrones). Sin conteo de fly balls usamos HR esperados = IP/9 · HR9 de liga.
+const LG_HR9 = 1.15;
+function calcXFIP(st, era=4.5) {
+  const bb=sf(st.baseOnBalls,0),hbp=sf(st.hitByPitch,0),k=sf(st.strikeOuts,0);
+  const ipd = ipOf(st);
+  if(ipd<5) return era;
+  const expHR = ipd/9*LG_HR9;
+  return Math.max(1,Math.min(8,((13*expHR)+(3*(bb+hbp))-(2*k))/ipd+3.10));
+}
+// Rating del abridor (0..1, mayor = mejor). Lo MANEJAN FIP/xFIP + Statcast (xERA/xwOBA) y
+// K-BB; el ERA crudo NO entra (solo el xERA "esperado"). Cada métrica se normaliza y se
+// promedia SOLO con las disponibles (si falta Statcast, se reparte el peso).
+function pitcherRating(m){
+  const parts=[];
+  const lo=(v,w,good,bad)=>{ if(v!=null&&isFinite(v)) parts.push({s:cl((bad-v)/(bad-good),0,1),w}); };  // menor = mejor
+  const hi=(v,w,good,bad)=>{ if(v!=null&&isFinite(v)) parts.push({s:cl((v-bad)/(good-bad),0,1),w}); };  // mayor = mejor
+  lo(m.xfip, .22, 3.0, 5.0);      // xFIP (HR normalizado) — peso alto
+  lo(m.fip,  .20, 2.8, 5.2);      // FIP (sin balls in play)
+  lo(m.xera, .18, 2.8, 5.5);      // Statcast xERA (calidad de contacto), NO el ERA crudo
+  lo(m.xwoba,.20, .280, .360);    // xwOBA allowed
+  hi(m.kbb9, .15, 9, 2);          // K-BB por 9 (dominio: ponches menos boletos)
+  lo(m.hr9,  .05, 0.7, 1.8);      // HR/9 (peso menor)
+  const tw=parts.reduce((a,p)=>a+p.w,0)||1;
+  return cl(parts.reduce((a,p)=>a+p.s*p.w,0)/tw, .02, .98);
+}
 
 // ── Picks computation ─────────────────────────────────────────────────────────
 function computePicks(data) {
@@ -562,14 +588,20 @@ function computePicks(data) {
   const apERA=data.awayPXera?+(0.55*apERAr+0.45*data.awayPXera).toFixed(2):apERAr;
   const hpERA=data.homePXera?+(0.55*hpERAr+0.45*data.homePXera).toFixed(2):hpERAr;
   const apFIP=regress(apFIP0,apIPr,LG.fip,40), hpFIP=regress(hpFIP0,hpIPr,LG.fip,40);
+  const apXFIP0=calcXFIP(awayPitcher||{},apERA0), hpXFIP0=calcXFIP(homePitcher||{},hpERA0);
+  const apXFIP=regress(apXFIP0,apIPr,LG.fip,40), hpXFIP=regress(hpXFIP0,hpIPr,LG.fip,40);
   const apK9r=regress(apK90,apIPr,LG.k9,30), hpK9r=regress(hpK90,hpIPr,LG.k9,30);
   // Tendencia: mezcla 25% del K/9 de sus últimas salidas · × matchup de repertorio vs el equipo rival
   const apK9t=data.awayPTrend?.75*apK9r+.25*data.awayPTrend:apK9r, hpK9t=data.homePTrend?.75*hpK9r+.25*data.homePTrend:hpK9r;
   const apK9=apK9t*(data.awayKMatch||1), hpK9=hpK9t*(data.homeKMatch||1);
   const apBB9=regress(apBB90,apIPr,LG.bb9,30), hpBB9=regress(hpBB90,hpIPr,LG.bb9,30);
+  // HR/9 (regresado hacia la liga por innings)
+  const apHR9=regress(apIPr>0?sf(awayPitcher?.homeRuns,0)/apIPr*9:LG_HR9,apIPr,LG_HR9,40);
+  const hpHR9=regress(hpIPr>0?sf(homePitcher?.homeRuns,0)/hpIPr*9:LG_HR9,hpIPr,LG_HR9,40);
 
-  const aps = cl(.35*(1-(apFIP-2)/4)+.25*(1-(apERA-2)/4)+.20*((apK9-5)/5)+.20*(1-(apBB9-1.5)/3.5));
-  const hps = cl(.35*(1-(hpFIP-2)/4)+.25*(1-(hpERA-2)/4)+.20*((hpK9-5)/5)+.20*(1-(hpBB9-1.5)/3.5));
+  // Componente del abridor: lo manejan FIP/xFIP + Statcast (xERA/xwOBA) + K-BB; el ERA crudo NO domina.
+  const aps = pitcherRating({fip:apFIP,xfip:apXFIP,xera:data.awayPXera,xwoba:data.awayPXwoba,kbb9:apK9r-apBB9,hr9:apHR9});
+  const hps = pitcherRating({fip:hpFIP,xfip:hpXFIP,xera:data.homePXera,xwoba:data.homePXwoba,kbb9:hpK9r-hpBB9,hr9:hpHR9});
   const hos = cl((hOPS-.65)/.20);
   const aos = cl((aOPS-.65)/.20);
   const hbs = cl((hBPE-2.5)/-3.5+.5);
@@ -698,8 +730,8 @@ function computePicks(data) {
     awayWP:+awp.toFixed(4),homeWP:+hwp.toFixed(4),
     awayML:p2ml(awp),homeML:p2ml(hwp),
     total,totalLine,pf,
-    pitchers:{away:{id:awayPitcherId,name:data.awayPitcherName||'TBD',era:+apERA0.toFixed(2),fip:+apFIP0.toFixed(2),k9:+apK90.toFixed(1),kExp:apKExp,kLine:apKLine,kMkt:aKMkt},
-              home:{id:homePitcherId,name:data.homePitcherName||'TBD',era:+hpERA0.toFixed(2),fip:+hpFIP0.toFixed(2),k9:+hpK90.toFixed(1),kExp:hpKExp,kLine:hpKLine,kMkt:hKMkt}},
+    pitchers:{away:{id:awayPitcherId,name:data.awayPitcherName||'TBD',era:+apERA0.toFixed(2),fip:+apFIP0.toFixed(2),xfip:+apXFIP0.toFixed(2),xera:data.awayPXera?+(+data.awayPXera).toFixed(2):null,k9:+apK90.toFixed(1),kExp:apKExp,kLine:apKLine,kMkt:aKMkt,rating:+aps.toFixed(3)},
+              home:{id:homePitcherId,name:data.homePitcherName||'TBD',era:+hpERA0.toFixed(2),fip:+hpFIP0.toFixed(2),xfip:+hpXFIP0.toFixed(2),xera:data.homePXera?+(+data.homePXera).toFixed(2):null,k9:+hpK90.toFixed(1),kExp:hpKExp,kLine:hpKLine,kMkt:hKMkt,rating:+hps.toFixed(3)}},
     picks:top3,allPicks:picks,
     features:{hps,aps,hos,aos,hbs,abs:abs2,str},
   };
@@ -1139,6 +1171,7 @@ async function runAnalysis() {
         homeBullTired: hCtx?.reliefIP||0, awayBullTired: aCtx?.reliefIP||0,   // IP de relevo en su último juego
         awayTravel: aCtx?.awayStreak||0,                        // racha de juegos de visita del equipo visitante
         homePXera: SC.pitchers?.[hpId]?.xera, awayPXera: SC.pitchers?.[apId]?.xera,   // Statcast: xERA (contact suppression)
+        homePXwoba: SC.pitchers?.[hpId]?.xwoba, awayPXwoba: SC.pitchers?.[apId]?.xwoba,   // Statcast: xwOBA allowed
         homeKMatch: pitchMatchup(ARS, hpId, g.teams.away.team.abbreviation),   // repertorio vs K% del rival
         awayKMatch: pitchMatchup(ARS, apId, g.teams.home.team.abbreviation),
         odds: pickOdds(oddsMap, g.teams.home.team.name, g.teams.away.team.name, g.gameDate),
@@ -1419,7 +1452,7 @@ function renderPitchers(games) {
         <span style="font-size:13px;font-weight:700;color:${recColor}">${badge}</span>
       </div>
       <div style="display:flex;gap:8px;padding:10px 12px;flex-wrap:wrap">
-        ${[['ERA',p.era],['FIP',p.fip],['K/9',p.k9],['Ks Exp.',p.kExp],[`Línea (${lineSrc})`,line]].map(([l,v])=>`
+        ${[['ERA',p.era],['FIP',p.fip],['xFIP',p.xfip],['xERA',p.xera??'—'],['K/9',p.k9],['Ks Exp.',p.kExp],[`Línea (${lineSrc})`,line]].map(([l,v])=>`
           <div style="background:var(--bg3);border-radius:var(--rs);padding:6px 12px;text-align:center;min-width:60px">
             <div style="font-size:9px;color:var(--text3)">${l}</div>
             <div style="font-size:14px;font-weight:700;color:${['K/9','Ks Exp.'].includes(l)?'var(--green)':'var(--text)'}">${v}</div>

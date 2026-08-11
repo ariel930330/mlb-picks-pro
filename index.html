@@ -580,10 +580,12 @@ function computePicks(data) {
     const w = pHand==='L' ? .62*sp.vR+.38*sp.vL : .62*sp.vL+.38*sp.vR;   // LHP ve más derechos; RHP más zurdos
     return cl(w/base, .94, 1.06);
   };
-  // OPS vs la MANO del abridor rival (split L/R) × forma reciente × vulnerabilidad platoon del abridor; menos lesiones y fatiga de viaje
+  // xwOBA de la alineación exacta vs el arsenal del abridor rival (amortiguado a la mitad, ~±6%)
+  const xwOff = f => f!=null ? cl(1+(f-1)*.5,.94,1.06) : 1;
+  // OPS vs la MANO del abridor rival (split L/R) × forma reciente × platoon del abridor × matchup de arsenal; menos lesiones y fatiga de viaje
   const travelPen = Math.min(.015, Math.max(0,(data.awayTravel||0)-5)*.004);   // gira larga => ofensiva algo cansada
-  const aOPS = sf(data.awaySplit?.['v'+data.homePHand] ?? awayStats?.hitting?.ops, .72)*(data.awayForm||1)*pPlatoonF(data.homePSplit,data.homePHand) - (awayInj?.length>=3?.02:(awayInj?.length>=1?.01:0)) - travelPen;
-  const hOPS = sf(data.homeSplit?.['v'+data.awayPHand] ?? homeStats?.hitting?.ops, .72)*(data.homeForm||1)*pPlatoonF(data.awayPSplit,data.awayPHand) - (homeInj?.length>=3?.02:(homeInj?.length>=1?.01:0));
+  const aOPS = sf(data.awaySplit?.['v'+data.homePHand] ?? awayStats?.hitting?.ops, .72)*(data.awayForm||1)*pPlatoonF(data.homePSplit,data.homePHand)*xwOff(data.awayOffXwF) - (awayInj?.length>=3?.02:(awayInj?.length>=1?.01:0)) - travelPen;
+  const hOPS = sf(data.homeSplit?.['v'+data.awayPHand] ?? homeStats?.hitting?.ops, .72)*(data.homeForm||1)*pPlatoonF(data.awayPSplit,data.awayPHand)*xwOff(data.homeOffXwF) - (homeInj?.length>=3?.02:(homeInj?.length>=1?.01:0));
   // Bullpen: ERA real de relevistas + penalización si lanzaron mucho en su último juego (fatiga)
   const aBPE = sf(data.awayBullpen ?? awayStats?.pitching?.era, 4.0) + Math.min(.6, Math.max(0,(data.awayBullTired||0)-3)*.15);
   const hBPE = sf(data.homeBullpen ?? homeStats?.pitching?.era, 4.0) + Math.min(.6, Math.max(0,(data.homeBullTired||0)-3)*.15);
@@ -816,13 +818,18 @@ async function getPitchArsenal(year){
   const [pR,bR]=await Promise.all([rows('pitcher'),rows('batter')]);
   const pitchers={};   // id -> {pitch_type: usage%}
   pR.forEach(r=>{ const id=+r.player_id,pt=r.pitch_type,u=parseFloat(r.pitch_usage); if(id&&pt&&u) (pitchers[id]=pitchers[id]||{})[pt]=u; });
-  const tAgg={}, lAgg={};   // whiff ponderado por # de pitches
-  bR.forEach(r=>{ const t=r.team_name_alt,pt=r.pitch_type,w=parseFloat(r.whiff_percent),n=parseFloat(r.pitches)||0; if(!t||!pt||isNaN(w)||!n) return;
-    ((tAgg[t]=tAgg[t]||{})[pt]=tAgg[t][pt]||{w:0,n:0}); tAgg[t][pt].w+=w*n; tAgg[t][pt].n+=n;
-    (lAgg[pt]=lAgg[pt]||{w:0,n:0}); lAgg[pt].w+=w*n; lAgg[pt].n+=n; });
+  const tAgg={}, lAgg={}, lxAgg={};   // whiff/xwoba ponderado por # de pitches
+  const batters={};   // id -> {pitch_type: {whiff, xwoba, rv100, n}}  (matchup vs arsenal exacto)
+  bR.forEach(r=>{ const t=r.team_name_alt,pt=r.pitch_type,w=parseFloat(r.whiff_percent),xw=parseFloat(r.est_woba),rv=parseFloat(r.run_value_per_100),n=parseFloat(r.pitches)||0,bid=+r.player_id;
+    if(!pt||!n) return;
+    if(bid){ (batters[bid]=batters[bid]||{})[pt]={whiff:isFinite(w)?w:null,xwoba:isFinite(xw)?xw:null,rv100:isFinite(rv)?rv:null,n}; }
+    if(t&&isFinite(w)){ ((tAgg[t]=tAgg[t]||{})[pt]=tAgg[t][pt]||{w:0,n:0}); tAgg[t][pt].w+=w*n; tAgg[t][pt].n+=n;
+      (lAgg[pt]=lAgg[pt]||{w:0,n:0}); lAgg[pt].w+=w*n; lAgg[pt].n+=n; }
+    if(isFinite(xw)){ (lxAgg[pt]=lxAgg[pt]||{w:0,n:0}); lxAgg[pt].w+=xw*n; lxAgg[pt].n+=n; } });
   const teamWhiff={}; for(const t in tAgg){ teamWhiff[t]={}; for(const pt in tAgg[t]) teamWhiff[t][pt]=tAgg[t][pt].w/tAgg[t][pt].n; }
   const leagueWhiff={}; for(const pt in lAgg) leagueWhiff[pt]=lAgg[pt].w/lAgg[pt].n;
-  _arsenal[year]={pitchers,teamWhiff,leagueWhiff};
+  const leagueXwoba={}; for(const pt in lxAgg) leagueXwoba[pt]=lxAgg[pt].w/lxAgg[pt].n;
+  _arsenal[year]={pitchers,teamWhiff,leagueWhiff,batters,leagueXwoba};
   return _arsenal[year];
 }
 // ── Plate discipline por abridor (Savant custom leaderboard) ────────────────────
@@ -853,6 +860,25 @@ function pitchMatchup(ars, pid, teamAbbr){
   let num=0,den=0,u=0;
   for(const pt in arse){ const us=arse[pt]; if(tw[pt]!=null&&lw[pt]!=null){ num+=us*tw[pt]; den+=us*lw[pt]; u+=us; } }
   return (den>0&&u>=25)?cl(num/den,.90,1.10):1;
+}
+// Abridor vs la ALINEACIÓN EXACTA: cruza el uso de cada pitch del arsenal con el xwOBA y whiff
+// de CADA bateador contra ese tipo de pitch, promediado sobre la alineación. Devuelve factores
+// relativos a la liga: whiffF (>1 = la alineación falla más → más Ks) y xwobaF (>1 = batea mejor
+// ese arsenal → más carreras). null si no hay datos suficientes.
+function lineupMatchup(ars, pid, lineupIds){
+  const arse=ars?.pitchers?.[pid], lw=ars?.leagueWhiff, lx=ars?.leagueXwoba, B=ars?.batters;
+  if(!arse||!B||!lineupIds?.length) return null;
+  let sumWh=0,sumXw=0,nWh=0,nXw=0;
+  for(const bid of lineupIds){
+    const bat=B[bid]; if(!bat) continue;
+    let whN=0,whD=0,xwN=0,xwD=0,u=0;
+    for(const pt in arse){ const us=arse[pt], bp=bat[pt]; if(!bp) continue; u+=us;
+      if(bp.whiff!=null&&lw[pt]!=null){ whN+=us*bp.whiff; whD+=us*lw[pt]; }
+      if(bp.xwoba!=null&&lx[pt]!=null){ xwN+=us*bp.xwoba; xwD+=us*lx[pt]; } }
+    if(u>=25){ if(whD>0){sumWh+=whN/whD;nWh++;} if(xwD>0){sumXw+=xwN/xwD;nXw++;} }
+  }
+  if(!nWh&&!nXw) return null;
+  return { whiffF: nWh?cl(sumWh/nWh,.88,1.12):1, xwobaF: nXw?cl(sumXw/nXw,.88,1.12):1, n:Math.max(nWh,nXw) };
 }
 // Tendencia del pitcher: K/9 de sus últimas ~5 salidas (forma reciente)
 async function getPitcherTrend(id,yr) {
@@ -1192,6 +1218,12 @@ async function runAnalysis() {
       const lineupF=(top,line,conf)=>{ if(!conf) return 1; const set=new Set(line); const miss=top.slice(0,4).filter(b=>!set.has(b.id)).length; return cl(1-miss*.015,.94,1); };
       const homeLineupF=lineupF(hBat,hLine,hConf), awayLineupF=lineupF(aBat,aLine,aConf);
 
+      // Abridor vs la ALINEACIÓN EXACTA (confirmada si existe, si no los top proyectados):
+      // arsenal del abridor × xwOBA/whiff de cada bateador contra cada pitch.
+      const hLU=hConf?hLine:(hBat||[]).map(b=>b.id), aLU=aConf?aLine:(aBat||[]).map(b=>b.id);
+      const hpLM=lineupMatchup(ARS, hpId, aLU);   // abridor LOCAL vs alineación VISITANTE
+      const apLM=lineupMatchup(ARS, apId, hLU);   // abridor VISITANTE vs alineación LOCAL
+
       // BvP (bateador vs abridor rival) para los mejores de cada equipo, si está activado
       if(getBvPOn()){
         const attach=async(bats,oppPid)=>{ await Promise.all(bats.slice(0,5).map(async b=>{ b.bvp=await getBvP(b.id,oppPid); })); };
@@ -1221,8 +1253,12 @@ async function runAnalysis() {
         homePXwoba: SC.pitchers?.[hpId]?.xwoba, awayPXwoba: SC.pitchers?.[apId]?.xwoba,   // Statcast: xwOBA allowed
         homePDisc: DISC[hpId]||null, awayPDisc: DISC[apId]||null,   // plate discipline (whiff/chase/K-BB%)
         homePSplit: hPSplit, awayPSplit: aPSplit,   // OPS permitido del abridor vs L/R
-        homeKMatch: pitchMatchup(ARS, hpId, g.teams.away.team.abbreviation),   // repertorio vs K% del rival
-        awayKMatch: pitchMatchup(ARS, apId, g.teams.home.team.abbreviation),
+        // whiff vs la alineación exacta (si hay datos) o el fallback a nivel equipo
+        homeKMatch: hpLM?.whiffF ?? pitchMatchup(ARS, hpId, g.teams.away.team.abbreviation),
+        awayKMatch: apLM?.whiffF ?? pitchMatchup(ARS, apId, g.teams.home.team.abbreviation),
+        // xwOBA de la alineación vs el arsenal del abridor rival → ajusta la ofensiva
+        awayOffXwF: hpLM?.xwobaF ?? null,   // ofensiva VISITANTE vs arsenal del abridor LOCAL
+        homeOffXwF: apLM?.xwobaF ?? null,   // ofensiva LOCAL vs arsenal del abridor VISITANTE
         odds: pickOdds(oddsMap, g.teams.home.team.name, g.teams.away.team.name, g.gameDate),
       });
       gd.gamePk    = g.gamePk;

@@ -592,8 +592,8 @@ function computePicks(data) {
   const xwOff = f => f!=null ? cl(1+(f-1)*.5,.94,1.06) : 1;
   // OPS vs la MANO del abridor rival (split L/R) × forma reciente × platoon del abridor × matchup de arsenal; menos lesiones y fatiga de viaje
   const travelPen = Math.min(.015, Math.max(0,(data.awayTravel||0)-5)*.004);   // gira larga => ofensiva algo cansada
-  const aOPS = sf(data.awaySplit?.['v'+data.homePHand] ?? awayStats?.hitting?.ops, .72)*(data.awayForm||1)*pPlatoonF(data.homePSplit,data.homePHand,data.awayHands)*xwOff(data.awayOffXwF) - (awayInj?.length>=3?.02:(awayInj?.length>=1?.01:0)) - travelPen;
-  const hOPS = sf(data.homeSplit?.['v'+data.awayPHand] ?? homeStats?.hitting?.ops, .72)*(data.homeForm||1)*pPlatoonF(data.awayPSplit,data.awayPHand,data.homeHands)*xwOff(data.homeOffXwF) - (homeInj?.length>=3?.02:(homeInj?.length>=1?.01:0));
+  const aOPS = sf(data.awaySplit?.['v'+data.homePHand] ?? awayStats?.hitting?.ops, .72)*(data.awayForm||1)*pPlatoonF(data.homePSplit,data.homePHand,data.awayHands)*xwOff(data.awayOffXwF)*(data.awayOffLuck||1) - (awayInj?.length>=3?.02:(awayInj?.length>=1?.01:0)) - travelPen;
+  const hOPS = sf(data.homeSplit?.['v'+data.awayPHand] ?? homeStats?.hitting?.ops, .72)*(data.homeForm||1)*pPlatoonF(data.awayPSplit,data.awayPHand,data.homeHands)*xwOff(data.homeOffXwF)*(data.homeOffLuck||1) - (homeInj?.length>=3?.02:(homeInj?.length>=1?.01:0));
   // Bullpen: ERA real de relevistas + penalización si lanzaron mucho en su último juego (fatiga)
   const aBPE = sf(data.awayBullpen ?? awayStats?.pitching?.era, 4.0) + Math.min(.6, Math.max(0,(data.awayBullTired||0)-3)*.15);
   const hBPE = sf(data.homeBullpen ?? homeStats?.pitching?.era, 4.0) + Math.min(.6, Math.max(0,(data.homeBullTired||0)-3)*.15);
@@ -812,6 +812,22 @@ async function getStatcast(year){
   _statcast[year]={pitchers,batters};
   return _statcast[year];
 }
+// Calidad de contacto por bateador (Savant): barrel%, hard-hit%, EV, sweet-spot%
+let _bq={};
+async function getBatterQuality(year){
+  if(_bq[year]) return _bq[year];
+  try{
+    const r=await fetch(`https://baseballsavant.mlb.com/leaderboard/statcast?type=batter&year=${year}&position=&team=&min=50&csv=true`);
+    if(!r.ok){ _bq[year]={}; return _bq[year]; }
+    const L=(await r.text()).trim().split('\n'); if(L.length<2){ _bq[year]={}; return _bq[year]; }
+    const cols=parseCSVLine(L[0]).map(c=>c.replace(/["﻿]/g,'').trim());
+    const ix=n=>cols.indexOf(n), iId=ix('player_id'),iBr=ix('brl_percent'),iHh=ix('ev95percent'),iEv=ix('avg_hit_speed'),iSs=ix('anglesweetspotpercent');
+    const out={};
+    for(let i=1;i<L.length;i++){ const c=parseCSVLine(L[i]); const id=+c[iId]; if(!id) continue;
+      out[id]={barrel:parseFloat(c[iBr])||null, hardhit:parseFloat(c[iHh])||null, ev:parseFloat(c[iEv])||null, sweetspot:parseFloat(c[iSs])||null}; }
+    _bq[year]=out; return out;
+  }catch(e){ console.warn('batter quality:',e.message); _bq[year]={}; return _bq[year]; }
+}
 // ── Repertorio vs K% (Statcast pitch arsenal) ───────────────────────────────
 // Arsenal del pitcher (uso por pitch) + whiff del equipo vs cada tipo de pitch.
 let _arsenal={};
@@ -887,6 +903,24 @@ function lineupMatchup(ars, pid, lineupIds){
   }
   if(!nWh&&!nXw) return null;
   return { whiffF: nWh?cl(sumWh/nWh,.88,1.12):1, xwobaF: nXw?cl(sumXw/nXw,.88,1.12):1, n:Math.max(nWh,nXw) };
+}
+// Corrección de suerte del lineup: xwOBA esperado vs wOBA real de los nueve (regresión de contacto).
+// No duplica el OPS (que mide el nivel); ajusta si el lineup rinde por encima/debajo de lo esperado.
+function lineupLuck(SC, ids){
+  if(!SC?.batters||!ids?.length) return 1;
+  let xw=0,wo=0,n=0;
+  for(const id of ids){ const s=SC.batters[id]; if(s?.xwoba!=null&&s?.woba){ xw+=s.xwoba; wo+=s.woba; n++; } }
+  if(n<4||wo<=0) return 1;
+  return cl(1+((xw-wo)/wo)*.5, .95, 1.05);   // xwOBA>wOBA => due => sube; amortiguado a la mitad
+}
+// Calidad ofensiva del lineup (para mostrar): xwOBA, barrel%, hard-hit% promedio de los nueve
+function lineupOffQuality(SC, BQ, ids){
+  if(!ids?.length) return null;
+  let xw=0,nx=0, br=0,nb=0, hh=0,nh=0;
+  for(const id of ids){ const s=SC?.batters?.[id], q=BQ?.[id];
+    if(s?.xwoba!=null){ xw+=s.xwoba; nx++; } if(q?.barrel!=null){ br+=q.barrel; nb++; } if(q?.hardhit!=null){ hh+=q.hardhit; nh++; } }
+  if(!nx&&!nb) return null;
+  return { xwoba:nx?+(xw/nx).toFixed(3):null, barrel:nb?+(br/nb).toFixed(1):null, hardhit:nh?+(hh/nh).toFixed(1):null };
 }
 // Tendencia del pitcher: K/9 de sus últimas ~5 salidas (forma reciente)
 async function getPitcherTrend(id,yr) {
@@ -1217,6 +1251,7 @@ async function runAnalysis() {
     const SC = await getStatcast(yr);   // Statcast (xwOBA/xERA/xSLG) una sola vez
     const ARS = await getPitchArsenal(yr);   // Repertorio (whiff por pitch) para el matchup de Ks
     const DISC = await getPitchDiscipline(yr);   // Plate discipline por abridor (whiff/chase/K-BB%)
+    const BQ = await getBatterQuality(yr);   // Calidad de contacto por bateador (barrel/hard-hit/EV)
 
     const results=[];
     const batchBatters=[];
@@ -1261,6 +1296,9 @@ async function runAnalysis() {
       const HANDS=await getPeopleHands([...hLU,...aLU,...(hBat||[]).map(b=>b.id),...(aBat||[]).map(b=>b.id)]);
       (hBat||[]).forEach(b=>b.hand=HANDS[b.id]); (aBat||[]).forEach(b=>b.hand=HANDS[b.id]);
       const homeHands=hLU.map(id=>HANDS[id]).filter(Boolean), awayHands=aLU.map(id=>HANDS[id]).filter(Boolean);
+      // Calidad ofensiva del lineup (Statcast) + corrección de suerte xwOBA-vs-wOBA
+      const aOffQ=lineupOffQuality(SC,BQ,aLU), hOffQ=lineupOffQuality(SC,BQ,hLU);
+      const aLuck=lineupLuck(SC,aLU), hLuck=lineupLuck(SC,hLU);
       // Splits del bateador vs L/R (xwOBA/OPS/K%/BB%/ISO), solo si el usuario lo activó (más llamadas)
       if(getSplitsOn()){
         const attachS=async bats=>{ await Promise.all((bats||[]).slice(0,9).map(async b=>{ b.split=await getBatterSplits(b.id,yr); })); };
@@ -1297,6 +1335,7 @@ async function runAnalysis() {
         homePDisc: DISC[hpId]||null, awayPDisc: DISC[apId]||null,   // plate discipline (whiff/chase/K-BB%)
         homePSplit: hPSplit, awayPSplit: aPSplit,   // OPS permitido del abridor vs L/R
         homeHands, awayHands,   // manos de bateo de cada alineación (composición real platoon)
+        awayOffLuck: aLuck, homeOffLuck: hLuck,   // corrección xwOBA-vs-wOBA del lineup
         // whiff vs la alineación exacta (si hay datos) o el fallback a nivel equipo
         homeKMatch: hpLM?.whiffF ?? pitchMatchup(ARS, hpId, g.teams.away.team.abbreviation),
         awayKMatch: apLM?.whiffF ?? pitchMatchup(ARS, apId, g.teams.home.team.abbreviation),
@@ -1308,6 +1347,7 @@ async function runAnalysis() {
       gd.gamePk    = g.gamePk;
       gd.time      = g.gameDate;
       gd.topBatters= {away:aBat,home:hBat};
+      gd.awayOffQ  = aOffQ; gd.homeOffQ = hOffQ;   // calidad ofensiva Statcast del lineup
       results.push(gd);
       // Platoon (hand) por equipo: OPS vs la mano del rival ÷ OPS general
       const hOverall=sf(hTSt?.hitting?.ops,.72), aOverall=sf(aTSt?.hitting?.ops,.72);
@@ -1457,6 +1497,7 @@ function renderPicks(games) {
         }).join('')}
       </div>
       <div class="game-footer">PF ${g.pf} · Total proy. ${g.total} runs${g.wx?.temp!=null?` · 🌡 ${Math.round(g.wx.temp)}°F`+(g.wx.wind!=null?` · 💨 ${Math.round(g.wx.wind)} mph${(wf=>wf>1.01?' ↗ sale':wf<0.99?' ↘ entra':'')(windFactor(g.wx,VENUE_BEARING[g.homeId]))}`:''):''} · ${g.pitchers.away.name.split(' ').slice(-1)[0]} vs ${g.pitchers.home.name.split(' ').slice(-1)[0]}</div>
+      ${(g.awayOffQ?.xwoba||g.homeOffQ?.xwoba)?`<div class="game-footer" style="border-top:none;padding-top:0">Lineup xwOBA · ${g.away} ${g.awayOffQ?.xwoba??'—'}${g.awayOffQ?.barrel!=null?` (Brl ${g.awayOffQ.barrel}%)`:''} · ${g.home} ${g.homeOffQ?.xwoba??'—'}${g.homeOffQ?.barrel!=null?` (Brl ${g.homeOffQ.barrel}%)`:''}</div>`:''}
     </div>`;
   }).join('');
   $('picks-area').innerHTML = html || '<div class="empty">Ningún pick cumple el filtro seleccionado.</div>';

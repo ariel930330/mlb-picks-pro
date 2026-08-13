@@ -595,8 +595,8 @@ function computePicks(data) {
   const blendOff = (ops,xw) => { const e = xw!=null ? xw*2.31 : null; return e!=null ? .70*ops+.30*e : ops; };
   // OPS vs la MANO del abridor rival (split L/R) mezclado con xwOBA × forma × platoon × matchup arsenal × clutch; menos lesiones y viaje
   const travelPen = Math.min(.015, Math.max(0,(data.awayTravel||0)-5)*.004);   // gira larga => ofensiva algo cansada
-  const aOPS = blendOff(sf(data.awaySplit?.['v'+data.homePHand] ?? awayStats?.hitting?.ops, .72), data.awayOffXwoba)*(data.awayForm||1)*pPlatoonF(data.homePSplit,data.homePHand,data.awayHands)*xwOff(data.awayOffXwF)*(data.awayClutchF||1) - (awayInj?.length>=3?.02:(awayInj?.length>=1?.01:0)) - travelPen;
-  const hOPS = blendOff(sf(data.homeSplit?.['v'+data.awayPHand] ?? homeStats?.hitting?.ops, .72), data.homeOffXwoba)*(data.homeForm||1)*pPlatoonF(data.awayPSplit,data.awayPHand,data.homeHands)*xwOff(data.homeOffXwF)*(data.homeClutchF||1) - (homeInj?.length>=3?.02:(homeInj?.length>=1?.01:0));
+  const aOPS = blendOff(sf(data.awaySplit?.['v'+data.homePHand] ?? awayStats?.hitting?.ops, .72), data.awayOffXwoba)*(data.awayForm||1)*pPlatoonF(data.homePSplit,data.homePHand,data.awayHands)*xwOff(data.awayOffXwF)*(data.awayClutchF||1)*(data.awayDefF||1) - (awayInj?.length>=3?.02:(awayInj?.length>=1?.01:0)) - travelPen;
+  const hOPS = blendOff(sf(data.homeSplit?.['v'+data.awayPHand] ?? homeStats?.hitting?.ops, .72), data.homeOffXwoba)*(data.homeForm||1)*pPlatoonF(data.awayPSplit,data.awayPHand,data.homeHands)*xwOff(data.homeOffXwF)*(data.homeClutchF||1)*(data.homeDefF||1) - (homeInj?.length>=3?.02:(homeInj?.length>=1?.01:0));
   // Bullpen: ERA real de relevistas + penalización si lanzaron mucho en su último juego (fatiga)
   const aBPE = sf(data.awayBullpen ?? awayStats?.pitching?.era, 4.0) + Math.min(.6, Math.max(0,(data.awayBullTired||0)-3)*.15);
   const hBPE = sf(data.homeBullpen ?? homeStats?.pitching?.era, 4.0) + Math.min(.6, Math.max(0,(data.homeBullTired||0)-3)*.15);
@@ -846,6 +846,21 @@ async function getBatTracking(year){
       out[id]={batspeed:p(c[iBs],1), fastswing:p(c[iFs],100), squaredup:p(c[iSq],100), blast:p(c[iBl],100), swinglen:p(c[iSl],1)}; }
     _bt[year]=out; return out;
   }catch(e){ console.warn('bat tracking:',e.message); _bt[year]={}; return _bt[year]; }
+}
+// Defensa del equipo: Outs Above Average (OAA) — cuánto suprime carreras al rival
+let _def={};
+async function getTeamDefense(year){
+  if(_def[year]) return _def[year];
+  try{
+    const r=await fetch(`https://baseballsavant.mlb.com/leaderboard/outs_above_average?type=Fielding_Team&startYear=${year}&endYear=${year}&split=no&team=&range=year&min=q&pos=&roles=&viz=hide&csv=true`);
+    if(!r.ok){ _def[year]={}; return _def[year]; }
+    const L=(await r.text()).trim().split('\n'); if(L.length<2){ _def[year]={}; return _def[year]; }
+    const cols=parseCSVLine(L[0]).map(c=>c.replace(/["﻿]/g,'').trim());
+    const ix=n=>cols.indexOf(n), iId=ix('team_id'),iOaa=ix('outs_above_average');
+    const out={};
+    for(let i=1;i<L.length;i++){ const c=parseCSVLine(L[i]); const id=+c[iId]; const oaa=parseFloat(c[iOaa]); if(id&&isFinite(oaa)) out[id]=oaa; }
+    _def[year]=out; return out;
+  }catch(e){ console.warn('defense:',e.message); _def[year]={}; return _def[year]; }
 }
 // ── Repertorio vs K% (Statcast pitch arsenal) ───────────────────────────────
 // Arsenal del pitcher (uso por pitch) + whiff del equipo vs cada tipo de pitch.
@@ -1291,6 +1306,7 @@ async function runAnalysis() {
     const DISC = await getPitchDiscipline(yr);   // Plate discipline por abridor (whiff/chase/K-BB%)
     const BQ = await getBatterQuality(yr);   // Calidad de contacto por bateador (barrel/hard-hit/EV)
     const BT = await getBatTracking(yr);   // Bat-tracking (bat speed/squared-up/blast/fast-swing)
+    const DEF = await getTeamDefense(yr);   // Defensa por equipo (OAA) — suprime carreras del rival
 
     const results=[];
     const batchBatters=[];
@@ -1341,6 +1357,10 @@ async function runAnalysis() {
       // Clutch (RISP peso bajo, bases llenas muy bajo) relativo al OPS general del equipo
       const clutchF=(c,ops)=>{ if(!c||!ops)return 1; let f=1; if(c.risp)f*=1+((c.risp/ops)-1)*.15; if(c.bl)f*=1+((c.bl/ops)-1)*.05; return cl(f,.975,1.025); };
       const aClutchF=clutchF(aClutch, sf(aTSt?.hitting?.ops,.72)), hClutchF=clutchF(hClutch, sf(hTSt?.hitting?.ops,.72));
+      // Defensa (OAA): buena defensa del rival suprime la ofensiva propia (~0.75 carreras/OAA por temporada, ±4.5%)
+      const aOAA=DEF[aId], hOAA=DEF[hId];
+      const defFactor = oaa => (oaa==null||!isFinite(oaa))?1:cl(1-(oaa*.75/162)/4.5, .955, 1.045);
+      const aDefF=defFactor(hOAA), hDefF=defFactor(aOAA);   // ofensiva visitante vs defensa LOCAL, y viceversa
       // Splits del bateador vs L/R (xwOBA/OPS/K%/BB%/ISO), solo si el usuario lo activó (más llamadas)
       if(getSplitsOn()){
         const attachS=async bats=>{ await Promise.all((bats||[]).slice(0,9).map(async b=>{ b.split=await getBatterSplits(b.id,yr); })); };
@@ -1379,6 +1399,7 @@ async function runAnalysis() {
         homeHands, awayHands,   // manos de bateo de cada alineación (composición real platoon)
         awayOffXwoba: aOffQ?.xwoba, homeOffXwoba: hOffQ?.xwoba,   // xwOBA del lineup (blend con OPS)
         awayClutchF: aClutchF, homeClutchF: hClutchF,   // clutch RISP/bases llenas (peso bajo)
+        awayDefF: aDefF, homeDefF: hDefF,   // defensa OAA del rival que suprime la ofensiva propia
         // whiff vs la alineación exacta (si hay datos) o el fallback a nivel equipo
         homeKMatch: hpLM?.whiffF ?? pitchMatchup(ARS, hpId, g.teams.away.team.abbreviation),
         awayKMatch: apLM?.whiffF ?? pitchMatchup(ARS, apId, g.teams.home.team.abbreviation),
@@ -1391,6 +1412,7 @@ async function runAnalysis() {
       gd.time      = g.gameDate;
       gd.topBatters= {away:aBat,home:hBat};
       gd.awayOffQ  = aOffQ; gd.homeOffQ = hOffQ;   // calidad ofensiva Statcast del lineup
+      gd.awayOAA   = aOAA;  gd.homeOAA  = hOAA;     // defensa (OAA) de cada equipo
       results.push(gd);
       // Platoon (hand) por equipo: OPS vs la mano del rival ÷ OPS general
       const hOverall=sf(hTSt?.hitting?.ops,.72), aOverall=sf(aTSt?.hitting?.ops,.72);
@@ -1539,7 +1561,7 @@ function renderPicks(games) {
           </div>`;
         }).join('')}
       </div>
-      <div class="game-footer">PF ${g.pf} · Total proy. ${g.total} runs${g.wx?.temp!=null?` · 🌡 ${Math.round(g.wx.temp)}°F`+(g.wx.wind!=null?` · 💨 ${Math.round(g.wx.wind)} mph${(wf=>wf>1.01?' ↗ sale':wf<0.99?' ↘ entra':'')(windFactor(g.wx,VENUE_BEARING[g.homeId]))}`:''):''} · ${g.pitchers.away.name.split(' ').slice(-1)[0]} vs ${g.pitchers.home.name.split(' ').slice(-1)[0]}</div>
+      <div class="game-footer">PF ${g.pf} · Total proy. ${g.total} runs${g.wx?.temp!=null?` · 🌡 ${Math.round(g.wx.temp)}°F`+(g.wx.wind!=null?` · 💨 ${Math.round(g.wx.wind)} mph${(wf=>wf>1.01?' ↗ sale':wf<0.99?' ↘ entra':'')(windFactor(g.wx,VENUE_BEARING[g.homeId]))}`:''):''}${(g.awayOAA!=null||g.homeOAA!=null)?` · 🧤 OAA ${g.away} ${g.awayOAA>=0?'+':''}${g.awayOAA??'—'} / ${g.home} ${g.homeOAA>=0?'+':''}${g.homeOAA??'—'}`:''} · ${g.pitchers.away.name.split(' ').slice(-1)[0]} vs ${g.pitchers.home.name.split(' ').slice(-1)[0]}</div>
       ${(g.awayOffQ||g.homeOffQ)?(oq=>`<div class="game-footer" style="border-top:none;padding-top:0">Ofensiva (lineup) · ${g.away} ${oq(g.awayOffQ)} · ${g.home} ${oq(g.homeOffQ)}</div>`)(q=>q?`<b>Rating ${q.rating??'—'}</b> · xwOBA ${q.xwoba??'—'}${q.wrc!=null?` · wRC+ ${q.wrc}`:''}${q.xslg!=null?` · xSLG ${q.xslg}`:''}${q.iso!=null?` · ISO ${q.iso}`:''}${q.barrel!=null?` · Brl ${q.barrel}%`:''}${q.hardhit!=null?` · HH ${q.hardhit}%`:''}${q.ev!=null?` · EV ${q.ev}`:''}${q.batspeed!=null?` · BatSpd ${q.batspeed}`:''}${q.squaredup!=null?` · Sq ${q.squaredup}%`:''}${q.blast!=null?` · Blast ${q.blast}%`:''}`:'—'):''}
     </div>`;
   }).join('');

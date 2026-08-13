@@ -831,6 +831,22 @@ async function getBatterQuality(year){
     _bq[year]=out; return out;
   }catch(e){ console.warn('batter quality:',e.message); _bq[year]={}; return _bq[year]; }
 }
+// Bat-tracking (Savant): bat speed, fast-swing%, squared-up%, blast%, swing length — señal de swing REAL
+let _bt={};
+async function getBatTracking(year){
+  if(_bt[year]) return _bt[year];
+  try{
+    const r=await fetch(`https://baseballsavant.mlb.com/leaderboard/bat-tracking?type=batter&year=${year}&minSwings=100&csv=true`);
+    if(!r.ok){ _bt[year]={}; return _bt[year]; }
+    const L=(await r.text()).trim().split('\n'); if(L.length<2){ _bt[year]={}; return _bt[year]; }
+    const cols=parseCSVLine(L[0]).map(c=>c.replace(/["﻿]/g,'').trim());
+    const ix=n=>cols.indexOf(n), iId=ix('id'),iBs=ix('avg_bat_speed'),iFs=ix('hard_swing_rate'),iSq=ix('squared_up_per_bat_contact'),iBl=ix('blast_per_bat_contact'),iSl=ix('swing_length');
+    const out={}, p=(v,m)=>{ const x=parseFloat(v); return isFinite(x)?+(x*m).toFixed(1):null; };
+    for(let i=1;i<L.length;i++){ const c=parseCSVLine(L[i]); const id=+c[iId]; if(!id) continue;
+      out[id]={batspeed:p(c[iBs],1), fastswing:p(c[iFs],100), squaredup:p(c[iSq],100), blast:p(c[iBl],100), swinglen:p(c[iSl],1)}; }
+    _bt[year]=out; return out;
+  }catch(e){ console.warn('bat tracking:',e.message); _bt[year]={}; return _bt[year]; }
+}
 // ── Repertorio vs K% (Statcast pitch arsenal) ───────────────────────────────
 // Arsenal del pitcher (uso por pitch) + whiff del equipo vs cada tipo de pitch.
 let _arsenal={};
@@ -909,28 +925,31 @@ function lineupMatchup(ars, pid, lineupIds){
 }
 // Calidad ofensiva del lineup: xwOBA, wRC+, xSLG, xBA, ISO, barrel%, hard-hit%, EV, sweet-spot%,
 // launch angle promedio de los nueve, + un rating compuesto 0-100.
-function lineupOffQuality(SC, BQ, ids){
+function lineupOffQuality(SC, BQ, BT, ids){
   if(!ids?.length) return null;
   const avg=arr=>arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:null;
-  const xwA=[],woA=[],xbA=[],xsA=[],brA=[],hhA=[],evA=[],ssA=[],laA=[];
-  for(const id of ids){ const s=SC?.batters?.[id], q=BQ?.[id];
+  const xwA=[],woA=[],xbA=[],xsA=[],brA=[],hhA=[],evA=[],ssA=[],laA=[],bsA=[],fsA=[],sqA=[],blA=[],slA=[];
+  for(const id of ids){ const s=SC?.batters?.[id], q=BQ?.[id], t=BT?.[id];
     if(s?.xwoba!=null)xwA.push(s.xwoba); if(s?.woba!=null)woA.push(s.woba);
     if(s?.xba!=null)xbA.push(s.xba); if(s?.xslg!=null)xsA.push(s.xslg);
     if(q?.barrel!=null)brA.push(q.barrel); if(q?.hardhit!=null)hhA.push(q.hardhit);
-    if(q?.ev!=null)evA.push(q.ev); if(q?.sweetspot!=null)ssA.push(q.sweetspot); if(q?.la!=null)laA.push(q.la); }
-  if(!xwA.length&&!brA.length) return null;
+    if(q?.ev!=null)evA.push(q.ev); if(q?.sweetspot!=null)ssA.push(q.sweetspot); if(q?.la!=null)laA.push(q.la);
+    if(t?.batspeed!=null)bsA.push(t.batspeed); if(t?.fastswing!=null)fsA.push(t.fastswing);
+    if(t?.squaredup!=null)sqA.push(t.squaredup); if(t?.blast!=null)blA.push(t.blast); if(t?.swinglen!=null)slA.push(t.swinglen); }
+  if(!xwA.length&&!brA.length&&!bsA.length) return null;
   const xwoba=avg(xwA), woba=avg(woA), xba=avg(xbA), xslg=avg(xsA), barrel=avg(brA), hardhit=avg(hhA), ev=avg(evA), ss=avg(ssA), la=avg(laA);
+  const batspeed=avg(bsA), fastswing=avg(fsA), squaredup=avg(sqA), blast=avg(blA), swinglen=avg(slA);
   const iso = (xslg!=null&&xba!=null)?xslg-xba:null;   // ISO esperado
   // wRC+ ≈ 100·((wOBA−lgwOBA)/wOBAScale + lgR/PA)/(lgR/PA)  (sin park factor)
   const wrc = woba!=null ? Math.round(100*(((woba-.312)/1.24)+.118)/.118) : null;
-  // Rating compuesto 0-100 (xwOBA domina; barrel/hard-hit/ISO complementan)
+  // Rating compuesto 0-100: xwOBA domina; barrel/hard-hit/ISO + señal de swing REAL (squared-up/bat speed)
   const parts=[]; const hi=(v,w,g,b)=>{ if(v!=null) parts.push({s:cl((v-b)/(g-b),0,1),w}); };
-  hi(xwoba,.5,.360,.290); hi(barrel,.2,12,5); hi(hardhit,.15,45,34); hi(iso,.15,.200,.120);
+  hi(xwoba,.45,.360,.290); hi(barrel,.18,12,5); hi(hardhit,.12,45,34); hi(iso,.12,.200,.120); hi(squaredup,.08,30,22); hi(batspeed,.05,75,69);
   const tw=parts.reduce((a,p)=>a+p.w,0), rating=tw?Math.round(100*parts.reduce((a,p)=>a+p.s*p.w,0)/tw):null;
-  const r=v=>v!=null?+v.toFixed(3):null;
+  const r=v=>v!=null?+v.toFixed(3):null, r1=v=>v!=null?+v.toFixed(1):null;
   return { xwoba:r(xwoba), woba:r(woba), xba:r(xba), xslg:r(xslg), iso:r(iso), wrc, rating,
-    barrel:barrel!=null?+barrel.toFixed(1):null, hardhit:hardhit!=null?+hardhit.toFixed(1):null,
-    ev:ev!=null?+ev.toFixed(1):null, sweetspot:ss!=null?+ss.toFixed(1):null, la:la!=null?+la.toFixed(1):null };
+    barrel:r1(barrel), hardhit:r1(hardhit), ev:r1(ev), sweetspot:r1(ss), la:r1(la),
+    batspeed:r1(batspeed), fastswing:r1(fastswing), squaredup:r1(squaredup), blast:r1(blast), swinglen:r1(swinglen) };
 }
 // Tendencia del pitcher: K/9 de sus últimas ~5 salidas (forma reciente)
 async function getPitcherTrend(id,yr) {
@@ -1271,6 +1290,7 @@ async function runAnalysis() {
     const ARS = await getPitchArsenal(yr);   // Repertorio (whiff por pitch) para el matchup de Ks
     const DISC = await getPitchDiscipline(yr);   // Plate discipline por abridor (whiff/chase/K-BB%)
     const BQ = await getBatterQuality(yr);   // Calidad de contacto por bateador (barrel/hard-hit/EV)
+    const BT = await getBatTracking(yr);   // Bat-tracking (bat speed/squared-up/blast/fast-swing)
 
     const results=[];
     const batchBatters=[];
@@ -1317,7 +1337,7 @@ async function runAnalysis() {
       (hBat||[]).forEach(b=>b.hand=HANDS[b.id]); (aBat||[]).forEach(b=>b.hand=HANDS[b.id]);
       const homeHands=hLU.map(id=>HANDS[id]).filter(Boolean), awayHands=aLU.map(id=>HANDS[id]).filter(Boolean);
       // Calidad ofensiva del lineup (Statcast): xwOBA maneja la ofensiva (blend con OPS)
-      const aOffQ=lineupOffQuality(SC,BQ,aLU), hOffQ=lineupOffQuality(SC,BQ,hLU);
+      const aOffQ=lineupOffQuality(SC,BQ,BT,aLU), hOffQ=lineupOffQuality(SC,BQ,BT,hLU);
       // Clutch (RISP peso bajo, bases llenas muy bajo) relativo al OPS general del equipo
       const clutchF=(c,ops)=>{ if(!c||!ops)return 1; let f=1; if(c.risp)f*=1+((c.risp/ops)-1)*.15; if(c.bl)f*=1+((c.bl/ops)-1)*.05; return cl(f,.975,1.025); };
       const aClutchF=clutchF(aClutch, sf(aTSt?.hitting?.ops,.72)), hClutchF=clutchF(hClutch, sf(hTSt?.hitting?.ops,.72));
@@ -1520,7 +1540,7 @@ function renderPicks(games) {
         }).join('')}
       </div>
       <div class="game-footer">PF ${g.pf} · Total proy. ${g.total} runs${g.wx?.temp!=null?` · 🌡 ${Math.round(g.wx.temp)}°F`+(g.wx.wind!=null?` · 💨 ${Math.round(g.wx.wind)} mph${(wf=>wf>1.01?' ↗ sale':wf<0.99?' ↘ entra':'')(windFactor(g.wx,VENUE_BEARING[g.homeId]))}`:''):''} · ${g.pitchers.away.name.split(' ').slice(-1)[0]} vs ${g.pitchers.home.name.split(' ').slice(-1)[0]}</div>
-      ${(g.awayOffQ||g.homeOffQ)?(oq=>`<div class="game-footer" style="border-top:none;padding-top:0">Ofensiva (lineup) · ${g.away} ${oq(g.awayOffQ)} · ${g.home} ${oq(g.homeOffQ)}</div>`)(q=>q?`<b>Rating ${q.rating??'—'}</b> · xwOBA ${q.xwoba??'—'}${q.wrc!=null?` · wRC+ ${q.wrc}`:''}${q.xslg!=null?` · xSLG ${q.xslg}`:''}${q.iso!=null?` · ISO ${q.iso}`:''}${q.barrel!=null?` · Brl ${q.barrel}%`:''}${q.hardhit!=null?` · HH ${q.hardhit}%`:''}${q.ev!=null?` · EV ${q.ev}`:''}`:'—'):''}
+      ${(g.awayOffQ||g.homeOffQ)?(oq=>`<div class="game-footer" style="border-top:none;padding-top:0">Ofensiva (lineup) · ${g.away} ${oq(g.awayOffQ)} · ${g.home} ${oq(g.homeOffQ)}</div>`)(q=>q?`<b>Rating ${q.rating??'—'}</b> · xwOBA ${q.xwoba??'—'}${q.wrc!=null?` · wRC+ ${q.wrc}`:''}${q.xslg!=null?` · xSLG ${q.xslg}`:''}${q.iso!=null?` · ISO ${q.iso}`:''}${q.barrel!=null?` · Brl ${q.barrel}%`:''}${q.hardhit!=null?` · HH ${q.hardhit}%`:''}${q.ev!=null?` · EV ${q.ev}`:''}${q.batspeed!=null?` · BatSpd ${q.batspeed}`:''}${q.squaredup!=null?` · Sq ${q.squaredup}%`:''}${q.blast!=null?` · Blast ${q.blast}%`:''}`:'—'):''}
     </div>`;
   }).join('');
   $('picks-area').innerHTML = html || '<div class="empty">Ningún pick cumple el filtro seleccionado.</div>';

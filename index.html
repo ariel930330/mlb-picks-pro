@@ -598,8 +598,11 @@ function computePicks(data) {
   const aOPS = blendOff(sf(data.awaySplit?.['v'+data.homePHand] ?? awayStats?.hitting?.ops, .72), data.awayOffXwoba)*(data.awayForm||1)*pPlatoonF(data.homePSplit,data.homePHand,data.awayHands)*xwOff(data.awayOffXwF)*(data.awayClutchF||1)*(data.awayDefF||1) - (awayInj?.length>=3?.02:(awayInj?.length>=1?.01:0)) - travelPen;
   const hOPS = blendOff(sf(data.homeSplit?.['v'+data.awayPHand] ?? homeStats?.hitting?.ops, .72), data.homeOffXwoba)*(data.homeForm||1)*pPlatoonF(data.awayPSplit,data.awayPHand,data.homeHands)*xwOff(data.homeOffXwF)*(data.homeClutchF||1)*(data.homeDefF||1) - (homeInj?.length>=3?.02:(homeInj?.length>=1?.01:0));
   // Bullpen: ERA real de relevistas + penalización si lanzaron mucho en su último juego (fatiga)
-  const aBPE = sf(data.awayBullpen ?? awayStats?.pitching?.era, 4.0) + Math.min(.6, Math.max(0,(data.awayBullTired||0)-3)*.15);
-  const hBPE = sf(data.homeBullpen ?? homeStats?.pitching?.era, 4.0) + Math.min(.6, Math.max(0,(data.homeBullTired||0)-3)*.15);
+  // Bullpen efectivo: mezcla ERA regresado + FIP (más predictivo). Compat con número suelto/viejo.
+  const bpEff = bp => { if(bp==null) return null; if(typeof bp==='number') return bp;
+    const e=bp.era!=null?regress(bp.era,bp.ip,LG.era,60):null, f=bp.fip; return (e!=null&&f!=null)?0.5*e+0.5*f:(e??f); };
+  const aBPE = (bpEff(data.awayBullpen) ?? sf(awayStats?.pitching?.era,4.0)) + Math.min(.6, Math.max(0,(data.awayBullTired||0)-3)*.15);
+  const hBPE = (bpEff(data.homeBullpen) ?? sf(homeStats?.pitching?.era,4.0)) + Math.min(.6, Math.max(0,(data.homeBullTired||0)-3)*.15);
 
   const apIPr=ipOf(awayPitcher), hpIPr=ipOf(homePitcher);
   // Crudos (para mostrar en la pestaña Lanzadores)
@@ -1006,15 +1009,19 @@ async function getTeamCtx(teamId,date,yr) {
     return {awayStreak, reliefIP:+reliefIP.toFixed(1)};
   }catch{return {awayStreak:0, reliefIP:0};}
 }
-// ERA real del bullpen (solo relevistas: más apariciones de relevo que aperturas)
-async function getBullpenERA(id,yr) {
+// Bullpen (solo relevistas: más relevos que aperturas): ERA, FIP y K/9 agregados
+async function getBullpen(id,yr) {
   try{
     const d=await mlb(`/stats?stats=season&group=pitching&season=${yr}&teamId=${id}&playerPool=All&limit=60&sportId=1`);
     const ps=(d.stats||[]).flatMap(g=>g.splits||[]);
-    let er=0, ip=0;
-    ps.forEach(x=>{ const st=x.stat||{}, g=+st.gamesPlayed||0, gs=+st.gamesStarted||0, e=+st.earnedRuns||0, ipf=ipOf(st);
-      if((g-gs)>gs && ipf>0){ er+=e; ip+=ipf; } });   // relevista: más relevos que aperturas
-    return ip>0 ? +(er*9/ip).toFixed(2) : null;
+    let er=0, ip=0, hr=0, bb=0, hbp=0, k=0;
+    ps.forEach(x=>{ const st=x.stat||{}, g=+st.gamesPlayed||0, gs=+st.gamesStarted||0, ipf=ipOf(st);
+      if((g-gs)>gs && ipf>0){ er+=+st.earnedRuns||0; ip+=ipf; hr+=+st.homeRuns||0; bb+=+st.baseOnBalls||0; hbp+=+st.hitByPitch||0; k+=+st.strikeOuts||0; } });
+    if(ip<=0) return null;
+    const era=+(er*9/ip).toFixed(2);
+    const fip=+Math.max(1,Math.min(8,((13*hr)+(3*(bb+hbp))-(2*k))/ip+3.10)).toFixed(2);
+    const k9=+(k*9/ip).toFixed(1);
+    return {era, fip, k9, ip:+ip.toFixed(1)};
   }catch{return null;}
 }
 // OPS del equipo en los últimos ~30 días (forma reciente)
@@ -1325,7 +1332,7 @@ async function runAnalysis() {
         getTeamSplitOPS(hId,yr), getTeamSplitOPS(aId,yr),
         getPitcherHand(hpId), getPitcherHand(apId),
         getRecentOPS(hId,yr), getRecentOPS(aId,yr),
-        getBullpenERA(hId,yr), getBullpenERA(aId,yr),
+        getBullpen(hId,yr), getBullpen(aId,yr),
         getPitcherTrend(hpId,yr), getPitcherTrend(apId,yr),   // tendencia (K/9 últimas salidas)
         getTeamCtx(hId,date,yr), getTeamCtx(aId,date,yr),     // viaje + fatiga de bullpen
         getPitcherSplits(hpId,yr), getPitcherSplits(apId,yr), // OPS permitido vs L/R del abridor
@@ -1413,6 +1420,7 @@ async function runAnalysis() {
       gd.topBatters= {away:aBat,home:hBat};
       gd.awayOffQ  = aOffQ; gd.homeOffQ = hOffQ;   // calidad ofensiva Statcast del lineup
       gd.awayOAA   = aOAA;  gd.homeOAA  = hOAA;     // defensa (OAA) de cada equipo
+      gd.awayBull  = aBull; gd.homeBull = hBull;    // bullpen (ERA/FIP/K9)
       results.push(gd);
       // Platoon (hand) por equipo: OPS vs la mano del rival ÷ OPS general
       const hOverall=sf(hTSt?.hitting?.ops,.72), aOverall=sf(aTSt?.hitting?.ops,.72);
@@ -1561,7 +1569,7 @@ function renderPicks(games) {
           </div>`;
         }).join('')}
       </div>
-      <div class="game-footer">PF ${g.pf} · Total proy. ${g.total} runs${g.wx?.temp!=null?` · 🌡 ${Math.round(g.wx.temp)}°F`+(g.wx.wind!=null?` · 💨 ${Math.round(g.wx.wind)} mph${(wf=>wf>1.01?' ↗ sale':wf<0.99?' ↘ entra':'')(windFactor(g.wx,VENUE_BEARING[g.homeId]))}`:''):''}${(g.awayOAA!=null||g.homeOAA!=null)?` · 🧤 OAA ${g.away} ${g.awayOAA>=0?'+':''}${g.awayOAA??'—'} / ${g.home} ${g.homeOAA>=0?'+':''}${g.homeOAA??'—'}`:''} · ${g.pitchers.away.name.split(' ').slice(-1)[0]} vs ${g.pitchers.home.name.split(' ').slice(-1)[0]}</div>
+      <div class="game-footer">PF ${g.pf} · Total proy. ${g.total} runs${g.wx?.temp!=null?` · 🌡 ${Math.round(g.wx.temp)}°F`+(g.wx.wind!=null?` · 💨 ${Math.round(g.wx.wind)} mph${(wf=>wf>1.01?' ↗ sale':wf<0.99?' ↘ entra':'')(windFactor(g.wx,VENUE_BEARING[g.homeId]))}`:''):''}${(g.awayOAA!=null||g.homeOAA!=null)?` · 🧤 OAA ${g.away} ${g.awayOAA>=0?'+':''}${g.awayOAA??'—'} / ${g.home} ${g.homeOAA>=0?'+':''}${g.homeOAA??'—'}`:''}${(g.awayBull?.fip||g.homeBull?.fip)?` · 🔥 Bull FIP ${g.away} ${g.awayBull?.fip??'—'} / ${g.home} ${g.homeBull?.fip??'—'}`:''} · ${g.pitchers.away.name.split(' ').slice(-1)[0]} vs ${g.pitchers.home.name.split(' ').slice(-1)[0]}</div>
       ${(g.awayOffQ||g.homeOffQ)?(oq=>`<div class="game-footer" style="border-top:none;padding-top:0">Ofensiva (lineup) · ${g.away} ${oq(g.awayOffQ)} · ${g.home} ${oq(g.homeOffQ)}</div>`)(q=>q?`<b>Rating ${q.rating??'—'}</b> · xwOBA ${q.xwoba??'—'}${q.wrc!=null?` · wRC+ ${q.wrc}`:''}${q.xslg!=null?` · xSLG ${q.xslg}`:''}${q.iso!=null?` · ISO ${q.iso}`:''}${q.barrel!=null?` · Brl ${q.barrel}%`:''}${q.hardhit!=null?` · HH ${q.hardhit}%`:''}${q.ev!=null?` · EV ${q.ev}`:''}${q.batspeed!=null?` · BatSpd ${q.batspeed}`:''}${q.squaredup!=null?` · Sq ${q.squaredup}%`:''}${q.blast!=null?` · Blast ${q.blast}%`:''}`:'—'):''}
     </div>`;
   }).join('');

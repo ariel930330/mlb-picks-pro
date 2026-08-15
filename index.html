@@ -1064,20 +1064,19 @@ function bullpenArsenal(ars, ids){
 function bullpenMatchup(ars, ids, lineupIds){ return arsenalVsLineup(ars, bullpenArsenal(ars,ids), lineupIds); }
 // Calidad ofensiva del lineup: xwOBA, wRC+, xSLG, xBA, ISO, barrel%, hard-hit%, EV, sweet-spot%,
 // launch angle promedio de los nueve, + un rating compuesto 0-100.
-function lineupOffQuality(SC, BQ, BT, ids){
+function lineupOffQuality(SC, BQ, BT, ids, weighted){
   if(!ids?.length) return null;
-  const avg=arr=>arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:null;
-  const xwA=[],woA=[],xbA=[],xsA=[],brA=[],hhA=[],evA=[],ssA=[],laA=[],bsA=[],fsA=[],sqA=[],blA=[],slA=[];
-  for(const id of ids){ const s=SC?.batters?.[id], q=BQ?.[id], t=BT?.[id];
-    if(s?.xwoba!=null)xwA.push(s.xwoba); if(s?.woba!=null)woA.push(s.woba);
-    if(s?.xba!=null)xbA.push(s.xba); if(s?.xslg!=null)xsA.push(s.xslg);
-    if(q?.barrel!=null)brA.push(q.barrel); if(q?.hardhit!=null)hhA.push(q.hardhit);
-    if(q?.ev!=null)evA.push(q.ev); if(q?.sweetspot!=null)ssA.push(q.sweetspot); if(q?.la!=null)laA.push(q.la);
-    if(t?.batspeed!=null)bsA.push(t.batspeed); if(t?.fastswing!=null)fsA.push(t.fastswing);
-    if(t?.squaredup!=null)sqA.push(t.squaredup); if(t?.blast!=null)blA.push(t.blast); if(t?.swinglen!=null)slA.push(t.swinglen); }
-  if(!xwA.length&&!brA.length&&!bsA.length) return null;
-  const xwoba=avg(xwA), woba=avg(woA), xba=avg(xbA), xslg=avg(xsA), barrel=avg(brA), hardhit=avg(hhA), ev=avg(evA), ss=avg(ssA), la=avg(laA);
-  const batspeed=avg(bsA), fastswing=avg(fsA), squaredup=avg(sqA), blast=avg(blA), swinglen=avg(slA);
+  // Peso por orden de bateo: el leadoff batea más PAs (solo si la alineación está CONFIRMADA en orden real).
+  const W = i => weighted ? cl(1-i*0.03, .74, 1) : 1;
+  const acc={}, add=(k,v,w)=>{ if(v!=null){ (acc[k]=acc[k]||{s:0,w:0}).s+=v*w; acc[k].w+=w; } };
+  ids.forEach((id,i)=>{ const w=W(i), s=SC?.batters?.[id], q=BQ?.[id], t=BT?.[id];
+    add('xw',s?.xwoba,w); add('wo',s?.woba,w); add('xb',s?.xba,w); add('xs',s?.xslg,w);
+    add('br',q?.barrel,w); add('hh',q?.hardhit,w); add('ev',q?.ev,w); add('ss',q?.sweetspot,w); add('la',q?.la,w);
+    add('bs',t?.batspeed,w); add('fs',t?.fastswing,w); add('sq',t?.squaredup,w); add('bl',t?.blast,w); add('sl',t?.swinglen,w); });
+  const g=k=>acc[k]&&acc[k].w>0?acc[k].s/acc[k].w:null;
+  const xwoba=g('xw'), woba=g('wo'), xba=g('xb'), xslg=g('xs'), barrel=g('br'), hardhit=g('hh'), ev=g('ev'), ss=g('ss'), la=g('la');
+  const batspeed=g('bs'), fastswing=g('fs'), squaredup=g('sq'), blast=g('bl'), swinglen=g('sl');
+  if(xwoba==null&&barrel==null&&batspeed==null) return null;
   const iso = (xslg!=null&&xba!=null)?xslg-xba:null;   // ISO esperado
   // wRC+ ≈ 100·((wOBA−lgwOBA)/wOBAScale + lgR/PA)/(lgR/PA)  (sin park factor)
   const wrc = woba!=null ? Math.round(100*(((woba-.312)/1.24)+.118)/.118) : null;
@@ -1557,7 +1556,15 @@ async function runAnalysis() {
         return cl(((L/n)*sp.vL+(R/n)*sp.vR)/base, .96, 1.04); };
       const aBullPlatF=bullPlatoonF(aBullSplit,homeHands), hBullPlatF=bullPlatoonF(hBullSplit,awayHands);   // pen visitante vs manos LOCALES
       // Calidad ofensiva del lineup (Statcast): xwOBA maneja la ofensiva (blend con OPS)
-      const aOffQ=lineupOffQuality(SC,BQ,BT,aLU), hOffQ=lineupOffQuality(SC,BQ,BT,hLU);
+      const aOffQ=lineupOffQuality(SC,BQ,BT,aLU,aConf), hOffQ=lineupOffQuality(SC,BQ,BT,hLU,hConf);
+      // Disponibilidad de la alineación: confirmada/proyectada, composición L/R/S, K%/BB% y estrella sentada
+      const luInfo=(hands,top,lineIds,conf)=>{ let nL=0,nR=0,nS=0; hands.forEach(h=>{ h==='L'?nL++:h==='S'?nS++:nR++; });
+        const inLU=new Set(lineIds), bset=(top||[]).filter(b=>inLU.has(b.id)), paS=bset.reduce((a,b)=>a+(b.pa||0),0)||1;
+        const kpct=bset.length?+(bset.reduce((a,b)=>a+(b.kpct||0)*(b.pa||0),0)/paS).toFixed(1):null;
+        const bbpct=bset.length?+(bset.reduce((a,b)=>a+((b.bb||0)/(b.pa||1)*100)*(b.pa||0),0)/paS).toFixed(1):null;
+        const missing = conf ? (top||[]).slice(0,3).filter(b=>!inLU.has(b.id)).map(b=>b.name.split(' ').slice(-1)[0]) : [];
+        return {conf, nL, nR, nS, kpct, bbpct, missing}; };
+      const aLUinfo=luInfo(awayHands,aBat,aLU,aConf), hLUinfo=luInfo(homeHands,hBat,hLU,hConf);
       // Clutch (RISP peso bajo, bases llenas muy bajo) relativo al OPS general del equipo
       const clutchF=(c,ops)=>{ if(!c||!ops)return 1; let f=1; if(c.risp)f*=1+((c.risp/ops)-1)*.15; if(c.bl)f*=1+((c.bl/ops)-1)*.05; return cl(f,.975,1.025); };
       const aClutchF=clutchF(aClutch, sf(aTSt?.hitting?.ops,.72)), hClutchF=clutchF(hClutch, sf(hTSt?.hitting?.ops,.72));
@@ -1636,6 +1643,7 @@ async function runAnalysis() {
       gd.time      = g.gameDate;
       gd.topBatters= {away:aBat,home:hBat};
       gd.awayOffQ  = aOffQ; gd.homeOffQ = hOffQ;   // calidad ofensiva Statcast del lineup
+      gd.awayLU    = aLUinfo; gd.homeLU = hLUinfo; // disponibilidad de la alineación
       gd.awayOAA   = aOAA;  gd.homeOAA  = hOAA;     // defensa (OAA) de cada equipo
       gd.awayDef   = aDef;  gd.homeDef  = hDef;     // detalle defensa (OAA IF/OF, FRV)
       gd.awayCatch = aCatch; gd.homeCatch = hCatch; // catcher edge (framing/blocking/throwing)
@@ -1793,6 +1801,7 @@ function renderPicks(games) {
         }).join('')}
       </div>
       <div class="game-footer">PF ${g.pf} · Total proy. ${g.total} runs${g.wx?.temp!=null?` · 🌡 ${Math.round(g.wx.temp)}°F`+(g.wx.humid!=null?` · 💧 ${Math.round(g.wx.humid)}%`:'')+(g.wx.wind!=null?` · 💨 ${windDesc(g.wx,VENUE_BEARING[g.homeId])}`:'')+(g.wx.density!=null?` · ρ ${g.wx.density}`:'')+(g.wx.precip>0?` · 🌧 ${g.wx.precip}mm`:'')+(g.wx.night!=null?` · ${g.wx.night?'🌙':'☀️'}`:''):(g.wx===null?' · 🏟 techado':'')}${(g.awayOAA!=null||g.homeOAA!=null)?` · 🧤 OAA ${g.away} ${g.awayOAA>=0?'+':''}${g.awayOAA??'—'}${g.awayDef?` (IF ${g.awayDef.ifOAA>=0?'+':''}${g.awayDef.ifOAA}/OF ${g.awayDef.ofOAA>=0?'+':''}${g.awayDef.ofOAA}, FRV ${g.awayDef.frv>=0?'+':''}${g.awayDef.frv})`:''} / ${g.home} ${g.homeOAA>=0?'+':''}${g.homeOAA??'—'}${g.homeDef?` (IF ${g.homeDef.ifOAA>=0?'+':''}${g.homeDef.ifOAA}/OF ${g.homeDef.ofOAA>=0?'+':''}${g.homeDef.ofOAA}, FRV ${g.homeDef.frv>=0?'+':''}${g.homeDef.frv})`:''}`:''}${(g.awayCatch||g.homeCatch)?(cd=>` · 🎯 Catcher ${g.away} ${cd(g.awayCatch)} / ${g.home} ${cd(g.homeCatch)}`)(c=>c?`${c.total>=0?'+':''}${c.total} (Fr ${c.framing>=0?'+':''}${c.framing}, Bl ${c.blocking>=0?'+':''}${c.blocking}, Th ${c.throwing>=0?'+':''}${c.throwing}${c.pop?`, pop ${c.pop}`:''})`:'—'):''}${(g.awayBull?.fip||g.homeBull?.fip)?` · 🔥 Bull FIP(disp) ${g.away} ${g.awayBull?.availFip??g.awayBull?.fip??'—'}${g.awayBull?.top3Avail!=null?` [${g.awayBull.top3Avail}/3]`:''} / ${g.home} ${g.homeBull?.availFip??g.homeBull?.fip??'—'}${g.homeBull?.top3Avail!=null?` [${g.homeBull.top3Avail}/3]`:''}`:''} · ${g.pitchers.away.name.split(' ').slice(-1)[0]} vs ${g.pitchers.home.name.split(' ').slice(-1)[0]}</div>
+      ${(g.awayLU||g.homeLU)?(lu=>`<div class="game-footer" style="border-top:none;padding-top:0">Alineación · ${g.away} ${lu(g.awayLU)} · ${g.home} ${lu(g.homeLU)}</div>`)(i=>i?`${i.conf?'<b style="color:var(--gtx)">✓ confirmada</b>':'proyectada'} · ${i.nR}R/${i.nL}L${i.nS?`/${i.nS}S`:''}${i.kpct!=null?` · K ${i.kpct}%`:''}${i.bbpct!=null?` · BB ${i.bbpct}%`:''}${i.missing&&i.missing.length?` · <span style="color:var(--rtx)">⚠ sin ${i.missing.join(', ')}</span>`:''}`:'—'):''}
       ${(g.awayOffQ||g.homeOffQ)?(oq=>`<div class="game-footer" style="border-top:none;padding-top:0">Ofensiva (lineup) · ${g.away} ${oq(g.awayOffQ)} · ${g.home} ${oq(g.homeOffQ)}</div>`)(q=>q?`<b>Rating ${q.rating??'—'}</b> · xwOBA ${q.xwoba??'—'}${q.wrc!=null?` · wRC+ ${q.wrc}`:''}${q.xslg!=null?` · xSLG ${q.xslg}`:''}${q.iso!=null?` · ISO ${q.iso}`:''}${q.barrel!=null?` · Brl ${q.barrel}%`:''}${q.hardhit!=null?` · HH ${q.hardhit}%`:''}${q.ev!=null?` · EV ${q.ev}`:''}${q.batspeed!=null?` · BatSpd ${q.batspeed}`:''}${q.squaredup!=null?` · Sq ${q.squaredup}%`:''}${q.blast!=null?` · Blast ${q.blast}%`:''}`:'—'):''}
       ${(g.awayFormW||g.homeFormW)?(ff=>`<div class="game-footer" style="border-top:none;padding-top:0">Forma OPS · ${g.away} ${ff(g.awayFormW,g.awayFormF,g.awayFormC)} · ${g.home} ${ff(g.homeFormW,g.homeFormF,g.homeFormC)}</div>`)((w,f,conf)=>{const d=f!=null?Math.round((f-1)*100):0;const tag=conf==='ok'?' <span style="color:var(--gtx)">✓ respaldado</span>':conf==='weak'?' <span style="color:var(--rtx)">⚠ sin respaldo</span>':'';return `<b>${d>=0?'+':''}${d}%</b>${tag}`+(w?` (7d ${w.d7?.ops??'—'} · 15d ${w.d15?.ops??'—'} · 30d ${w.d30?.ops??'—'})`:'');}):''}
       ${(g.awayBrun||g.homeBrun)?(br=>`<div class="game-footer" style="border-top:none;padding-top:0">🏃 Baserunning · ${g.away} ${br(g.awayBrun)} · ${g.home} ${br(g.homeBrun)}</div>`)(b=>b?`RV ${b.brv>=0?'+':''}${b.brv}${b.speed!=null?` · ${b.speed} ft/s`:''}${b.sb!=null?` · ${b.sb}SB/${b.cs}CS`:''}`:'—'):''}

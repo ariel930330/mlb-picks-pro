@@ -660,6 +660,96 @@ function batLuck(woba,xwoba){
   return {z:+z.toFixed(2),extra,flag};
 }
 
+// ── MLB EDGE READ ───────────────────────────────────────────────────────────────
+// Convierte TODOS los factores en una lectura de juego por categoría (qué equipo y
+// cuánto), una convicción total con umbral (NO EDGE/LEAN/STRONG/ELITE), la mejor
+// aplicación (F5/Team Total/ML/RL), conflictos, red flags y un DATA QUALITY 0-100
+// OBLIGATORIO que ATENÚA la convicción. Convención de signo: + = ventaja LOCAL (home).
+// FÓRMULA por categoría = (señal_home − señal_away) × ganancia; ganancias calibradas
+// para que un edge fuerte pero realista dé ~±10-18 puntos. Umbrales sobre la convicción
+// ya atenuada por DQ: <12 NO EDGE · <27 LEAN · <45 STRONG · ≥45 ELITE.
+function buildEdgeRead(P){
+  const {away,home}=P, n=v=>(v==null||!isFinite(v))?null:v, C=(v,a,b)=>Math.max(a,Math.min(b,v));
+  const cats=[], push=(name,pts,k)=>cats.push({name,k,pts:+((pts||0)).toFixed(1)});
+  // 1) Abridor — diferencia de rating (0..1) del que cada uno manda al montículo
+  push('Abridor', ((P.hps||.5)-(P.aps||.5))*60, 'sp');
+  // 2) Arsenal (matchup) — whiffs del arsenal vs alineación rival + supresión del xwOBA
+  const hArs=((P.homeKMatch||1)-1)+(1-(P.awayOffXwF??1)), aArs=((P.awayKMatch||1)-1)+(1-(P.homeOffXwF??1));
+  push('Arsenal (matchup)', (hArs-aArs)*70, 'arsenal');
+  // 3) Ofensiva — producción OPS/base
+  push('Ofensiva', ((P.hos||.5)-(P.aos||.5))*40, 'off');
+  // 4) Calidad de contacto — Statcast: rating (xwOBA/barrel/hard-hit) del lineup
+  push('Calidad de contacto', (n(P.hOffRat)!=null&&n(P.aOffRat)!=null)?((P.hOffRat-P.aOffRat)/100)*40:0, 'contact');
+  // 5) Plate discipline — whiff+chase del abridor propio + K% de la alineación
+  const pd=d=> d?(((d.whiff||24)-24)/12 + ((d.chase||28)-28)/12):0;
+  let disc=pd(P.hD)-pd(P.aD);
+  if(n(P.aLUk)!=null&&n(P.hLUk)!=null) disc+=(P.aLUk-P.hLUk)/25;   // home lineup con menos K% = +
+  push('Plate discipline', disc*10, 'disc');
+  // 6) Bullpen — ERA efectivo (menor mejor); away peor => home +
+  push('Bullpen', ((P.aBPE??4)-(P.hBPE??4))*12, 'pen');
+  // 7) Defensa — OAA (runs) + catcher framing (runs)
+  push('Defensa', ((n(P.hOAA)??0)-(n(P.aOAA)??0))*0.35 + ((n(P.hCatch)??0)-(n(P.aCatch)??0))*0.4, 'def');
+  // 8) Baserunning — run value
+  push('Baserunning', ((n(P.hBrv)??0)-(n(P.aBrv)??0))*0.5, 'brun');
+  // 9) Regresión — lo que se le va a los números con suerte (luck flags): away lucky/home unlucky => home +
+  push('Regresión', ((P.apLuckZ||0)-(P.hpLuckZ||0)+((P.aBatZ||0)-(P.hBatZ||0))*0.5)*3, 'reg');
+  // 10) Fatiga — el equipo más cansado pierde ofensiva
+  push('Fatiga', ((P.homeFatF||1)-(P.awayFatF||1))*100, 'fat');
+  // Park/Weather = read de TOTAL (no de equipo) → aparte
+  const parkPts=+(((P.envAdj||1)-1)*100).toFixed(1);
+  // Atribución por equipo (Even si |pts|<1.5)
+  const lines=cats.map(c=>({name:c.name,k:c.k,pts:c.pts,team:Math.abs(c.pts)<1.5?'Even':(c.pts>=0?home:away),mag:Math.round(Math.abs(c.pts))}));
+  const net=+cats.reduce((a,c)=>a+c.pts,0).toFixed(1), edgeTeam=net>=0?home:away, netAbs=Math.abs(net);
+
+  // ── DATA QUALITY (0-100) — OBLIGATORIO: atenúa la convicción ──
+  let dq=100; const dqNotes=[];
+  if(!P.aConf){ dq-=10; dqNotes.push(`${away} sin alineación confirmada`); }
+  if(!P.hConf){ dq-=10; dqNotes.push(`${home} sin alineación confirmada`); }
+  if(n(P.aIP)!=null&&P.aIP<25){ dq-=(P.aIP<10?18:12); dqNotes.push(`${away}: abridor ${P.aIP.toFixed(0)} IP (muestra chica)`); }
+  if(n(P.hIP)!=null&&P.hIP<25){ dq-=(P.hIP<10?18:12); dqNotes.push(`${home}: abridor ${P.hIP.toFixed(0)} IP (muestra chica)`); }
+  if(P.aPXera==null) dq-=4; if(P.hPXera==null) dq-=4;    // sin Statcast del abridor
+  if(P.aVelo==null) dq-=3;  if(P.hVelo==null) dq-=3;     // sin velo (no se verifica salud del brazo)
+  if(P.aBpTop3==null) dq-=4; if(P.hBpTop3==null) dq-=4;  // sin info de disponibilidad del pen
+  if(P.aMiss?.length){ dq-=Math.min(8,P.aMiss.length*4); }
+  if(P.hMiss?.length){ dq-=Math.min(8,P.hMiss.length*4); }
+  if(P.noWx) dq-=3;
+  dq=Math.max(0,Math.min(100,Math.round(dq)));
+  const dqScale=0.55+0.45*(dq/100);           // un +40 con lineup sin postear NO es un +40 real
+  const convEff=+(netAbs*dqScale).toFixed(1);
+  const tier = convEff<12?'NO EDGE' : convEff<27?'LEAN' : convEff<45?'STRONG' : 'ELITE';
+
+  // ── BEST APPLICATION ── según qué categorías empujan el edge del equipo
+  const s=k=>{ const c=cats.find(x=>x.k===k); return c?(net>=0?c.pts:-c.pts):0; };   // aporte a FAVOR del edgeTeam
+  const spSide=s('sp')+s('arsenal')+s('disc'), offSide=s('off')+s('contact'), penSide=s('pen');
+  const apps=[
+    {bet:`${edgeTeam} F5 (primeros 5)`,     fit: spSide*1.3 + offSide*0.7 + Math.max(0,parkPts)*0.2},   // F5 evade el bullpen
+    {bet:`${edgeTeam} Team Total Over`,     fit: offSide*1.3 + Math.max(0,parkPts)*0.6 + spSide*0.2},
+    {bet:`${edgeTeam} ML (juego completo)`, fit: netAbs*1.0 + penSide*0.5},                              // ML sí incluye el pen
+    {bet:`${edgeTeam} Run Line`,            fit: (netAbs>=35?netAbs*0.8:0) + offSide*0.3},
+  ];
+  if(penSide<-3){ apps[0].fit+=6; apps[2].fit-=6; }   // si el pen va EN CONTRA, F5 sube y ML baja
+  const best=apps.filter(a=>a.fit>0.5).sort((x,y)=>y.fit-x.fit).slice(0,3).map(a=>a.bet);
+
+  // ── CONFLICTS ── categorías que van CONTRA el edge (mag ≥ 3)
+  const conflicts=lines.filter(c=>c.team!=='Even'&&c.team!==edgeTeam&&c.mag>=3).map(c=>`${c.name}: favorece a ${c.team} (${c.mag})`);
+
+  // ── RED FLAGS ──
+  const flags=[];
+  if(n(P.aBpTop3)!=null&&P.aBpTop3<2) flags.push(`Bullpen ${away}: brazos de alta leverage agotados`);
+  if(n(P.hBpTop3)!=null&&P.hBpTop3<2) flags.push(`Bullpen ${home}: brazos de alta leverage agotados`);
+  if(!P.aConf) flags.push(`Alineación ${away} sin confirmar`);
+  if(!P.hConf) flags.push(`Alineación ${home} sin confirmar`);
+  if(n(P.aIP)!=null&&P.aIP<25) flags.push(`${away}: abridor con muestra MLB limitada (${P.aIP.toFixed(0)} IP)`);
+  if(n(P.hIP)!=null&&P.hIP<25) flags.push(`${home}: abridor con muestra MLB limitada (${P.hIP.toFixed(0)} IP)`);
+  if(Math.abs(P.apLuckZ||0)>=.6) flags.push(`${away}: abridor con ERA fuera de su xERA (regresión probable)`);
+  if(Math.abs(P.hpLuckZ||0)>=.6) flags.push(`${home}: abridor con ERA fuera de su xERA (regresión probable)`);
+  if(P.aMiss?.length) flags.push(`${away} sin ${P.aMiss.join(', ')}`);
+  if(P.hMiss?.length) flags.push(`${home} sin ${P.hMiss.join(', ')}`);
+
+  return { lines, park:{pts:parkPts, dir:parkPts>=0?'ofensiva':'pitcheo'}, net, edgeTeam, netAbs:+netAbs.toFixed(1),
+           convEff, tier, dq, dqNotes, best, conflicts, flags };
+}
+
 // ── Picks computation ─────────────────────────────────────────────────────────
 function computePicks(data) {
   const {away,home,awayId,homeId,awayPitcherId,homePitcherId,awayPitcher,homePitcher,awayStats,homeStats,awayRecent,homeRecent,awayInj,homeInj,odds} = data;
@@ -860,8 +950,22 @@ function computePicks(data) {
   picks.sort((a,b)=>b.prob-a.prob);
   const top3=picks.slice(0,3).map(p=>({...p,conf:p.prob>=.58?'High':p.prob>=.53?'Medium':'Low'}));
 
+  // ── MLB EDGE READ: lectura de juego por categoría + convicción + data quality ──
+  const _e=data.edge||{};
+  const edgeRead=buildEdgeRead({ away,home, aps,hps, aos,hos, aBPE,hBPE,
+    homeKMatch:data.homeKMatch, awayKMatch:data.awayKMatch, awayOffXwF:data.awayOffXwF, homeOffXwF:data.homeOffXwF,
+    hOffRat:_e.hOffRat, aOffRat:_e.aOffRat, aD, hD, aLUk:_e.aLUk, hLUk:_e.hLUk,
+    aOAA:_e.aOAA, hOAA:_e.hOAA, aCatch:_e.aCatch, hCatch:_e.hCatch, aBrv:_e.aBrv, hBrv:_e.hBrv,
+    apLuckZ:apLuck.z, hpLuckZ:hpLuck.z, aBatZ:aBatLuck.z, hBatZ:hBatLuck.z,
+    homeFatF:data.homeFatF, awayFatF:data.awayFatF, envAdj:pf*wxF,
+    aConf:_e.aConf, hConf:_e.hConf, aMiss:_e.aMiss, hMiss:_e.hMiss,
+    aIP:apIPr, hIP:hpIPr, aPXera:data.awayPXera, hPXera:data.homePXera,
+    aVelo:data.awayPShape?.fbVelo, hVelo:data.homePShape?.fbVelo,
+    aBpTop3:_e.aBpTop3, hBpTop3:_e.hBpTop3, noWx:!data.wx });
+
   return {
     away,home,awayId,homeId,venue:VENUES[homeId]||'',wx:data.wx||null,
+    edgeRead,
     awayWP:+awp.toFixed(4),homeWP:+hwp.toFixed(4),
     awayML:p2ml(awp),homeML:p2ml(hwp),
     total,totalLine,pf,
@@ -1753,6 +1857,10 @@ async function runAnalysis() {
         awayPitcher: apSt, homePitcher: hpSt,
         awayStats: aTSt, homeStats: hTSt,
         awayBaseOPS: _aOps, homeBaseOPS: _hOps,   // DATA WINDOWS: baseline estabilizado (2025+2026 → liga)
+        // MLB EDGE READ: señales extra por categoría + insumos de Data Quality
+        edge:{ aOffRat:aOffQ?.rating, hOffRat:hOffQ?.rating, aOAA, hOAA, aCatch:aCatch?.total, hCatch:hCatch?.total,
+               aBrv:aBrun?.brv, hBrv:hBrun?.brv, aConf, hConf, aMiss:aLUinfo?.missing, hMiss:hLUinfo?.missing,
+               aLUk:aLUinfo?.kpct, hLUk:hLUinfo?.kpct, aBpTop3:aBull?.top3Avail, hBpTop3:hBull?.top3Avail },
         awayRecent: aWL, homeRecent: hWL,
         awayInj: aInj, homeInj: hInj, wx, kprops,
         homeSplit: hSplit, awaySplit: aSplit, homePHand: hHand, awayPHand: aHand,
@@ -1946,6 +2054,26 @@ function renderPicks(games) {
         <div class="team-home"><img class="team-logo-img" src="${teamLogo(g.homeId)}" onerror="${IMG_FALLBACK}"><div class="team-name">${g.home}</div><div class="team-pct" style="color:var(--green)">${hwp}%</div><div class="team-ml">${g.homeML}</div></div>
       </div>
       <div class="prob-bar"><div class="prob-away" style="width:${barW}"></div><div class="prob-home" style="flex:1"></div></div>
+      ${g.edgeRead?(er=>{
+        const tierC=er.tier==='ELITE'?'var(--green)':er.tier==='STRONG'?'var(--gold)':er.tier==='LEAN'?'var(--blue)':'var(--text3)';
+        const dqC=er.dq>=85?'var(--green)':er.dq>=70?'var(--gold)':er.dq>=50?'var(--blue)':'var(--red)';
+        const catLine=c=>`<div style="display:flex;justify-content:space-between;font-size:11px;padding:1px 0"><span style="color:var(--text2)">${c.name}</span><span style="font-weight:700;color:${c.team==='Even'?'var(--text3)':(c.team===er.edgeTeam?'var(--gtx)':'var(--rtx)')}">${c.team==='Even'?'Even':`${c.team} +${c.mag}`}</span></div>`;
+        return `<div style="background:var(--bg3);border-radius:var(--rs);padding:10px 12px;margin-bottom:10px">
+          <div style="font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--gold);margin-bottom:6px">📖 MLB EDGE READ</div>
+          ${er.lines.map(catLine).join('')}
+          <div style="display:flex;justify-content:space-between;font-size:11px;padding:1px 0"><span style="color:var(--text2)">Park/Weather</span><span style="font-weight:700;color:var(--text3)">${er.park.pts>=0?'+':''}${er.park.pts} ${er.park.dir}</span></div>
+          <div style="border-top:1px solid var(--border);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between;align-items:center">
+            <span style="font-size:14px;font-weight:800" title="convicción atenuada por Data Quality · bruto +${er.netAbs}">${er.edgeTeam} +${Math.round(er.convEff)}</span>
+            <span style="font-size:12px;font-weight:800;color:${tierC}">${er.tier}${er.tier!=='NO EDGE'?' EDGE':''}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;margin-top:5px">
+            <span style="color:var(--text3);font-weight:700">DATA QUALITY${er.dqNotes.length?` <span style="font-weight:400">(${er.dqNotes.join(', ')})</span>`:''}</span><span style="font-weight:800;color:${dqC}">${er.dq}/100</span>
+          </div>
+          ${er.best.length?`<div style="font-size:10px;margin-top:6px"><b style="color:var(--text2)">BEST APPLICATION</b><ol style="margin:2px 0 0;padding-left:16px">${er.best.map(b=>`<li>${b}</li>`).join('')}</ol></div>`:''}
+          ${er.conflicts.length?`<div style="font-size:10px;margin-top:4px;color:var(--rtx)"><b>CONFLICTS</b> · ${er.conflicts.join(' · ')}</div>`:''}
+          ${er.flags.length?`<div style="font-size:10px;margin-top:4px;color:var(--red)"><b>🚩 RED FLAGS</b> · ${er.flags.join(' · ')}</div>`:''}
+        </div>`;
+      })(g.edgeRead):''}
       <div class="picks">
         ${picks.map(p=>{
           const cc=confMap[p.conf]||'low', lbl=labelMap[p.conf]||'🔴 BAJA';

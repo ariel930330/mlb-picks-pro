@@ -628,7 +628,9 @@ function computePicks(data) {
   const apK9r=regress(apK90,apIPr,LG.k9,30), hpK9r=regress(hpK90,hpIPr,LG.k9,30);
   // Tendencia: mezcla 25% del K/9 de sus últimas salidas · × matchup de repertorio vs el equipo rival
   const apK9t=data.awayPTrend?.75*apK9r+.25*data.awayPTrend:apK9r, hpK9t=data.homePTrend?.75*hpK9r+.25*data.homePTrend:hpK9r;
-  const apK9=apK9t*(data.awayKMatch||1), hpK9=hpK9t*(data.homeKMatch||1);
+  // "Stuff" del abridor (velocidad de recta + iVB) — nudge chico y estable al K/9, acotado ±4%
+  const stuffK = sh => { if(!sh?.fbVelo) return 1; return cl(1+(sh.fbVelo-93.5)*.006+(sh.fbIVB!=null?(sh.fbIVB-15)*.004:0), .96, 1.04); };
+  const apK9=apK9t*(data.awayKMatch||1)*stuffK(data.awayPShape), hpK9=hpK9t*(data.homeKMatch||1)*stuffK(data.homePShape);
   const apBB9=regress(apBB90,apIPr,LG.bb9,30), hpBB9=regress(hpBB90,hpIPr,LG.bb9,30);
   // HR/9 (regresado hacia la liga por innings)
   const apHR9=regress(apIPr>0?sf(awayPitcher?.homeRuns,0)/apIPr*9:LG_HR9,apIPr,LG_HR9,40);
@@ -766,8 +768,8 @@ function computePicks(data) {
     awayWP:+awp.toFixed(4),homeWP:+hwp.toFixed(4),
     awayML:p2ml(awp),homeML:p2ml(hwp),
     total,totalLine,pf,
-    pitchers:{away:{id:awayPitcherId,name:data.awayPitcherName||'TBD',era:+apERA0.toFixed(2),fip:+apFIP0.toFixed(2),xfip:+apXFIP0.toFixed(2),xera:data.awayPXera?+(+data.awayPXera).toFixed(2):null,whiff:aD?.whiff??null,chase:aD?.chase??null,k9:+apK90.toFixed(1),kExp:apKExp,kLine:apKLine,kMkt:aKMkt,rating:+aps.toFixed(3)},
-              home:{id:homePitcherId,name:data.homePitcherName||'TBD',era:+hpERA0.toFixed(2),fip:+hpFIP0.toFixed(2),xfip:+hpXFIP0.toFixed(2),xera:data.homePXera?+(+data.homePXera).toFixed(2):null,whiff:hD?.whiff??null,chase:hD?.chase??null,k9:+hpK90.toFixed(1),kExp:hpKExp,kLine:hpKLine,kMkt:hKMkt,rating:+hps.toFixed(3)}},
+    pitchers:{away:{id:awayPitcherId,name:data.awayPitcherName||'TBD',era:+apERA0.toFixed(2),fip:+apFIP0.toFixed(2),xfip:+apXFIP0.toFixed(2),xera:data.awayPXera?+(+data.awayPXera).toFixed(2):null,whiff:aD?.whiff??null,chase:aD?.chase??null,shape:data.awayPShape,k9:+apK90.toFixed(1),kExp:apKExp,kLine:apKLine,kMkt:aKMkt,rating:+aps.toFixed(3)},
+              home:{id:homePitcherId,name:data.homePitcherName||'TBD',era:+hpERA0.toFixed(2),fip:+hpFIP0.toFixed(2),xfip:+hpXFIP0.toFixed(2),xera:data.homePXera?+(+data.homePXera).toFixed(2):null,whiff:hD?.whiff??null,chase:hD?.chase??null,shape:data.homePShape,k9:+hpK90.toFixed(1),kExp:hpKExp,kLine:hpKLine,kMkt:hKMkt,rating:+hps.toFixed(3)}},
     picks:top3,allPicks:picks,
     features:{hps,aps,hos,aos,hbs,abs:abs2,str},
   };
@@ -856,6 +858,31 @@ async function getBatTracking(year){
       out[id]={batspeed:p(c[iBs],1), fastswing:p(c[iFs],100), squaredup:p(c[iSq],100), blast:p(c[iBl],100), swinglen:p(c[iSl],1)}; }
     _bt[year]=out; return out;
   }catch(e){ console.warn('bat tracking:',e.message); _bt[year]={}; return _bt[year]; }
+}
+// Pitch-shape (Savant pitch-movement): velocidad de recta, induced vertical break, movimiento
+// horizontal y separación de velocidad recta↔offspeed. "Stuff" del abridor.
+let _shape={};
+async function getPitchShape(year){
+  if(_shape[year]) return _shape[year];
+  const grab=async type=>{ try{
+    const r=await fetch(`https://baseballsavant.mlb.com/leaderboard/pitch-movement?year=${year}&team=&min=q&pitch_type=${type}&csv=true`);
+    if(!r.ok) return {}; const L=(await r.text()).trim().split('\n'); if(L.length<2) return {};
+    const cols=parseCSVLine(L[0]).map(c=>c.replace(/["﻿]/g,'').trim());
+    const iId=cols.indexOf('pitcher_id'),iV=cols.indexOf('avg_speed'),iZ=cols.indexOf('pitcher_break_z_induced'),iX=cols.indexOf('pitcher_break_x'),iN=cols.indexOf('pitches_thrown');
+    const o={}; for(let i=1;i<L.length;i++){ const c=parseCSVLine(L[i]); const id=+c[iId]; if(!id) continue;
+      o[id]={velo:parseFloat(c[iV])||null, ivb:parseFloat(c[iZ])||null, hb:parseFloat(c[iX])||null, n:parseFloat(c[iN])||0}; }
+    return o;
+  }catch{return {};} };
+  const [ff,si,sl,ch]=await Promise.all([grab('FF'),grab('SI'),grab('SL'),grab('CH')]);
+  const out={}, ids=new Set([...Object.keys(ff),...Object.keys(si),...Object.keys(sl),...Object.keys(ch)]);
+  ids.forEach(id=>{
+    const fb = (ff[id]&&si[id]) ? (ff[id].n>=si[id].n?ff[id]:si[id]) : (ff[id]||si[id]);
+    const off = (ch[id]&&sl[id]) ? (ch[id].n>=sl[id].n?ch[id]:sl[id]) : (ch[id]||sl[id]);
+    if(!fb?.velo) return;
+    out[id]={ fbVelo:+fb.velo.toFixed(1), fbIVB:fb.ivb!=null?+fb.ivb.toFixed(1):null, fbHB:fb.hb!=null?+fb.hb.toFixed(1):null,
+      veloSep: off?.velo?+(fb.velo-off.velo).toFixed(1):null };
+  });
+  _shape[year]=out; return out;
 }
 // Defensa del equipo: Outs Above Average (OAA) — cuánto suprime carreras al rival
 let _def={};
@@ -1386,6 +1413,7 @@ async function runAnalysis() {
     const BT = await getBatTracking(yr);   // Bat-tracking (bat speed/squared-up/blast/fast-swing)
     const DEF = await getTeamDefense(yr);   // Defensa por equipo (OAA) — suprime carreras del rival
     const FRAME = await getCatcherFraming(yr);   // Catcher framing (run value) por equipo
+    const SHAPE = await getPitchShape(yr);   // Pitch-shape del abridor (velocidad/iVB/movimiento)
 
     const results=[];
     const batchBatters=[];
@@ -1515,6 +1543,7 @@ async function runAnalysis() {
         awayBullPlatF: aBullPlatF, homeBullPlatF: hBullPlatF,   // platoon del pen (splits L/R) vs la alineación
         homePTrend: hTrend, awayPTrend: aTrend,                  // K/9 reciente del abridor
         awayTravel: aCtx?.awayStreak||0,                        // racha de juegos de visita del equipo visitante
+        homePShape: SHAPE[hpId]||null, awayPShape: SHAPE[apId]||null,   // pitch-shape (velo/iVB) del abridor
         homePXera: SC.pitchers?.[hpId]?.xera, awayPXera: SC.pitchers?.[apId]?.xera,   // Statcast: xERA (contact suppression)
         homePXwoba: SC.pitchers?.[hpId]?.xwoba, awayPXwoba: SC.pitchers?.[apId]?.xwoba,   // Statcast: xwOBA allowed
         homePDisc: DISC[hpId]||null, awayPDisc: DISC[apId]||null,   // plate discipline (whiff/chase/K-BB%)
@@ -1817,7 +1846,7 @@ function renderPitchers(games) {
         <span style="font-size:13px;font-weight:700;color:${recColor}">${badge}</span>
       </div>
       <div style="display:flex;gap:8px;padding:10px 12px;flex-wrap:wrap">
-        ${[['ERA',p.era],['FIP',p.fip],['xFIP',p.xfip],['xERA',p.xera??'—'],['Whiff%',p.whiff!=null?p.whiff:'—'],['Chase%',p.chase!=null?p.chase:'—'],['K/9',p.k9],['Ks Exp.',p.kExp],[`Línea (${lineSrc})`,line]].map(([l,v])=>`
+        ${[['ERA',p.era],['FIP',p.fip],['xFIP',p.xfip],['xERA',p.xera??'—'],['Whiff%',p.whiff!=null?p.whiff:'—'],['Chase%',p.chase!=null?p.chase:'—'],['Velo',p.shape?.fbVelo??'—'],['iVB',p.shape?.fbIVB??'—'],['Sep',p.shape?.veloSep??'—'],['K/9',p.k9],['Ks Exp.',p.kExp],[`Línea (${lineSrc})`,line]].map(([l,v])=>`
           <div style="background:var(--bg3);border-radius:var(--rs);padding:6px 12px;text-align:center;min-width:60px">
             <div style="font-size:9px;color:var(--text3)">${l}</div>
             <div style="font-size:14px;font-weight:700;color:${['K/9','Ks Exp.'].includes(l)?'var(--green)':'var(--text)'}">${v}</div>

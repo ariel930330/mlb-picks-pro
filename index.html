@@ -2020,8 +2020,10 @@ async function runAnalysis() {
     allBatters = batchBatters;
     allParlays = buildParlays(results);
 
-    // Save to Supabase
-    await savePredictions(date, results);
+    // Save to Supabase — historial: solo los 5 MEJORES picks de juego de la jornada por edge
+    const best5Games = [...results].filter(g=>g.picks&&g.picks.length)
+      .sort((a,b)=>(b.picks[0].edge??-1)-(a.picks[0].edge??-1)).slice(0,5);
+    await savePredictions(date, best5Games);
 
     // Update UI
     renderPicks(results);
@@ -2052,7 +2054,10 @@ async function runAnalysis() {
 // Guarda los picks de props (pitchers Ks + bateadores) recolectados al renderizar
 async function savePropPicks(date){
   if(!isOwner()) return;
-  const picks=[...propsPitcher.map(p=>({...p,kind:'pitcher'})),...propsBatter.map(p=>({...p,kind:'batter'}))].filter(p=>p.player_id&&p.gamePk);
+  // Solo los 5 MEJORES por edge de cada categoría (edge de mercado; sin línea → al final, desempata prob)
+  const byEdge=(a,b)=>((b.edge??-1)-(a.edge??-1))||((b.prob??0)-(a.prob??0));
+  const top5=arr=>[...arr].filter(p=>p.player_id&&p.gamePk).sort(byEdge).slice(0,5);
+  const picks=[...top5(propsPitcher).map(p=>({...p,kind:'pitcher'})),...top5(propsBatter).map(p=>({...p,kind:'batter'}))];
   if(!picks.length) return;
   try{
     const {data:existing}=await sb.from('prop_picks').select('id,player_id,market,result').eq('game_date',date);
@@ -2307,8 +2312,9 @@ function renderPitchers(games) {
     let line, lineSrc, rec, recColor, badge, sub;
     // Pick de Ks a guardar: línea real si existe, si no la del modelo; lado = over si proyección > línea
     if(p.id){ const l=mkt?mkt.line:p.kLine, over=p.kExp>=l, pr=over?poissonOver(p.kExp,l):1-poissonOver(p.kExp,l);
+      const kEdge=(mkt&&l>=3.5)?+(pr-(over?mkt.fairOver:mkt.fairUnder)).toFixed(3):null;   // edge vs línea de casa (para rankear)
       // Solo guardar el pick de Ks si el modelo tiene un lean claro (evita guardar TODOS los abridores)
-      if(pr>=0.5) propsPitcher.push({gamePk:p.gamePk,player_id:p.id,player_name:p.name,team:p.team,market:'Ks',target:l,side:over?'over':'under',prob:+pr.toFixed(3),proj:p.kExp}); }
+      if(pr>=0.5) propsPitcher.push({gamePk:p.gamePk,player_id:p.id,player_name:p.name,team:p.team,market:'Ks',target:l,side:over?'over':'under',prob:+pr.toFixed(3),proj:p.kExp,edge:kEdge}); }
     if(mkt){
       line=mkt.line; lineSrc='casa';
       if(line<3.5){
@@ -2435,9 +2441,9 @@ function renderBatters(batData) {
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px">
       ${cats.map(cat=>{
         const top2=[...pool].sort((a,b)=>cat.metric(b)-cat.metric(a)).slice(0,2);
-        top2.forEach(r=>propsBatter.push({gamePk:r.gamePk,player_id:r.id,player_name:r.name,team:r.team,market:cat.mkt,
+        top2.forEach(r=>{ const ev=cat.tag?cat.tag(r):null; propsBatter.push({gamePk:r.gamePk,player_id:r.id,player_name:r.name,team:r.team,market:cat.mkt,
           target:typeof cat.target==='function'?cat.target(r):cat.target, side:'over',
-          prob:cat.prob?+cat.prob(r).toFixed(3):null, proj:+cat.metric(r).toFixed(2)}));
+          prob:cat.prob?+cat.prob(r).toFixed(3):null, proj:+cat.metric(r).toFixed(2), edge:ev?+ev.edge.toFixed(3):null}); });
         return `<div class="card"><div class="card-hdr"><span class="card-hdr-title">${cat.title}</span></div>${top2.map((r,i)=>row(r,i,cat)).join('')}</div>`;
       }).join('')}
     </div>`;

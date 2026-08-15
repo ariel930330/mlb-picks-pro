@@ -503,6 +503,13 @@ const cl = (v,a=0,b=1) => Math.max(a,Math.min(b,v));
 // Regresión a la media: mezcla la tasa observada (n muestras) con la liga (peso=prior).
 // Muestras chicas se acercan a la liga (un .400 en 30 turnos NO es .400 real).
 const regress = (rate,n,lg,prior) => (rate*n + lg*prior)/(n+prior);
+// ── SAMPLE SIZE / DATA RELIABILITY ─────────────────────────────────────────────
+// Cada métrica carga su muestra. Fiabilidad = n/(n+K); K = punto de estabilización
+// aprox. (Fangraphs). Evita que un .550 ISO vs LHP en 18 PA se vuelva un edge real:
+// se encoge hacia el prior (temporada) según su fiabilidad. shrink(obs,prior,n,K)≡regress.
+const RELK={ops:280,obp:300,iso:320,slg:320,avg:460,kpct:60,bbpct:120,woba:200,k9:120,bf:150,ip:80,bbe:150};
+const reliab=(n,metric)=>{ const K=RELK[metric]||200; return n>0?cl(n/(n+K),0,1):0; };
+const relLabel=r=> r>=.7?'alta':r>=.4?'media':r>=.2?'baja':'muy baja';
 // Promedios de liga (MLB ~2024) para regresar
 const LG = {ba:.243,obp:.312,slg:.399,hr:.033, era:4.10,fip:4.10,k9:8.6,bb9:3.1};
 const sig = x => 1/(1+Math.exp(-Math.max(-20,Math.min(20,x))));
@@ -1161,9 +1168,14 @@ async function getPitcherSplits(id,yr){
   try{
     const d=await mlb(`/people/${id}/stats?stats=statSplits&group=pitching&sitCodes=vl,vr&season=${yr}&sportId=1`);
     const sp=(d.stats||[]).flatMap(x=>x.splits||[]);
-    const g=code=>{ const s=sp.find(x=>x.split?.code===code); const v=s?parseFloat(s.stat?.ops):NaN; return isFinite(v)?v:null; };
-    const vL=g('vl'), vR=g('vr');
-    return (vL!=null&&vR!=null)?{vL,vR}:null;
+    const g=code=>{ const s=sp.find(x=>x.split?.code===code); if(!s) return null; const v=parseFloat(s.stat?.ops); const bf=+s.stat?.battersFaced||+s.stat?.plateAppearances||0; return isFinite(v)?{ops:v,bf}:null; };
+    const L=g('vl'), R=g('vr');
+    if(L==null||R==null) return null;
+    // SAMPLE SIZE: cada lado se encoge hacia el OPS-permitido combinado del abridor según sus BF
+    // (un split vs L de pocos BF casi no mueve; con muchos BF sí manda).
+    const base=(L.ops*L.bf+R.ops*R.bf)/((L.bf+R.bf)||1);
+    const vL=+regress(L.ops,L.bf,base,RELK.bf).toFixed(3), vR=+regress(R.ops,R.bf,base,RELK.bf).toFixed(3);
+    return {vL,vR,bfL:L.bf,bfR:R.bf,rel:+reliab(Math.min(L.bf,R.bf),'bf').toFixed(2)};
   }catch{return null;}
 }
 // Contexto del equipo: fatiga de calendario (rest days, densidad, juegos seguidos, day-after-night,
@@ -1595,10 +1607,12 @@ async function runAnalysis() {
       const seasonISO=st=>{ const slg=parseFloat(st?.slg),avg=parseFloat(st?.avg); return (isFinite(slg)&&isFinite(avg))?slg-avg:null; };
       const formFactor=(win,seasonOPS,sK,sIso)=>{
         if(!seasonOPS) return {f:1,conf:null};
+        // SAMPLE SIZE: cada ventana reciente pesa según sus PA reales (ventana corta/lluviosa cuenta menos)
+        const sw=(w,pa,exp)=> w*cl((pa||0)/exp,0,1);
         const parts=[{ops:seasonOPS,w:.50}];   // ancla: temporada
-        if(win?.d30) parts.push({ops:win.d30.ops,w:.25});
-        if(win?.d15) parts.push({ops:win.d15.ops,w:.15});
-        if(win?.d7)  parts.push({ops:win.d7.ops, w:.10});
+        if(win?.d30) parts.push({ops:win.d30.ops,w:sw(.25,win.d30.pa,820)});
+        if(win?.d15) parts.push({ops:win.d15.ops,w:sw(.15,win.d15.pa,400)});
+        if(win?.d7)  parts.push({ops:win.d7.ops, w:sw(.10,win.d7.pa,180)});
         const tw=parts.reduce((a,p)=>a+p.w,0), eff=parts.reduce((a,p)=>a+p.ops*p.w,0)/tw;
         const d=eff/seasonOPS-1;   // desviación de la forma (box score)
         // ¿lo subyacente (15d) respalda la dirección? K% abajo = mejor; ISO arriba = mejor
@@ -2073,7 +2087,11 @@ function renderBatters(batData) {
       const pAdj=cl(1-(oppScore-.5)*.6,.78,1.22);          // pitcher rival: as => baja; flojo => sube
       // Platoon: si hay split individual del bateador vs esa mano (OPS vs L/R), úsalo; si no, el del equipo
       const bs = (b.split && oppHand) ? b.split['v'+oppHand] : null;
-      const pl = (bs && bs.ops && b.ops) ? cl(bs.ops/b.ops, .82, 1.20) : cl(plat||1,.85,1.15);
+      // SAMPLE SIZE: el OPS del split vs esa mano se encoge hacia la temporada según sus PA.
+      // 18 PA → fiabilidad ~6% → el split casi no mueve (un .550 ISO / 1.200 OPS no se vuelve edge).
+      const bsRel = bs ? reliab(bs.pa||0,'ops') : 0;
+      const bsOps = (bs && bs.ops!=null && b.ops) ? regress(bs.ops, bs.pa||0, b.ops, RELK.ops) : null;
+      const pl = bsOps ? cl(bsOps/b.ops, .82, 1.20) : cl(plat||1,.85,1.15);
       // BvP: ratio vs su OPS, regresado fuerte (prior 40 AB) -> solo mueve con muestra grande
       const bvpF=(b.bvp&&b.bvp.ops&&b.ops)?cl(regress(b.bvp.ops/b.ops,b.bvp.ab,1,50),.92,1.10):1;
       // Statcast: mezcla xBA/xSLG (calidad real de contacto; corrige suerte / due de regresión)
@@ -2097,7 +2115,7 @@ function renderBatters(batData) {
       const evHits=bp?.hits?evalProp(poissonOver(expH,bp.hits.line),bp.hits):null;
       const evTB  =bp?.tb  ?evalProp(poissonOver(expTB,bp.tb.line),  bp.tb)  :null;
       const evHR  =bp?.hr  ?evalProp(poissonOver(expHR,bp.hr.line),  bp.hr)  :null;
-      return {id:b.id,name:b.name,pos:b.pos,pitcher:oppPitcher,oppHand,hand:b.hand,split:bs,bvp:b.bvp,tag,hitP,expTB,hrbiR,expBB,expHR,evHits,evTB,evHR};
+      return {id:b.id,name:b.name,pos:b.pos,pitcher:oppPitcher,oppHand,hand:b.hand,split:bs?{...bs,rel:+bsRel.toFixed(2)}:bs,bvp:b.bvp,tag,hitP,expTB,hrbiR,expBB,expHR,evHits,evTB,evHR};
     };
     const aSet=g.awayLineup?new Set(g.awayLineup):null, hSet=g.homeLineup?new Set(g.homeLineup):null;
     (g.awayBatters||[]).forEach(b=>{ if(aSet&&!aSet.has(b.id)) return; const r=mk(b,g.awayOppScore??.5,g.homePitcher,g.awayPlatoon,g.awayOppHand); if(r){r.team=g.away;r.gamePk=g.gamePk;r.conf=!!aSet;rows.push(r);} });
@@ -2125,7 +2143,7 @@ function renderBatters(batData) {
       <img class="headshot-sm" src="${playerImg(r.id)}" onerror="${IMG_FALLBACK}">
       <div style="flex:1;min-width:0">
         <div style="font-weight:700;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.name}${r.hand?` <span style="color:var(--text3);font-size:9px;font-weight:700">${r.hand}HB</span>`:''}${r.conf?' <span style="color:var(--gtx);font-size:9px;font-weight:700">✓</span>':''}</div>
-        <div style="font-size:9px;color:var(--text2);display:flex;align-items:center;gap:3px"><img class="logo-xs" src="${teamLogo(ABBR2ID[r.team])}" onerror="${IMG_FALLBACK}">${r.team} · vs ${(r.pitcher||'').split(' ').slice(-1)[0]||'—'}${r.oppHand?` (${r.oppHand})`:''} <span style="color:${r.tag.c};font-weight:700">${r.tag.t}</span>${r.split&&r.split.ops?` <span style="color:var(--blue);font-weight:700">v${r.oppHand} ${r.split.ops.toFixed(3)} OPS${r.split.kpct!=null?`, ${r.split.kpct}%K`:''}</span>`:''}${r.bvp&&r.bvp.ab>=8?` <span style="color:var(--gold);font-weight:700">BvP ${r.bvp.h}-${r.bvp.ab}${r.bvp.hr?`, ${r.bvp.hr}HR`:''}</span>`:''}</div>
+        <div style="font-size:9px;color:var(--text2);display:flex;align-items:center;gap:3px"><img class="logo-xs" src="${teamLogo(ABBR2ID[r.team])}" onerror="${IMG_FALLBACK}">${r.team} · vs ${(r.pitcher||'').split(' ').slice(-1)[0]||'—'}${r.oppHand?` (${r.oppHand})`:''} <span style="color:${r.tag.c};font-weight:700">${r.tag.t}</span>${r.split&&r.split.ops?` <span style="color:var(--blue);font-weight:700">v${r.oppHand} ${r.split.ops.toFixed(3)} OPS${r.split.kpct!=null?`, ${r.split.kpct}%K`:''}</span>${r.split.pa!=null?`<span style="color:${r.split.rel>=.4?'var(--text3)':'var(--rtx)'};font-weight:700"> (${r.split.pa}PA·fiab ${relLabel(r.split.rel||0)})</span>`:''}`:''}${r.bvp&&r.bvp.ab>=8?` <span style="color:var(--gold);font-weight:700">BvP ${r.bvp.h}-${r.bvp.ab}${r.bvp.hr?`, ${r.bvp.hr}HR`:''}</span>`:''}</div>
       </div>
       <div style="text-align:right"><span style="font-size:16px;font-weight:700;color:var(--green)">${cat.fmt(r)}</span>${cat.tag?propTag(cat.tag(r)):''}</div>
     </div>`;

@@ -146,6 +146,25 @@ a{color:var(--blue);text-decoration:none}
   .er-row{grid-template-columns:64px 1fr 42px}
 }
 
+/* ── Batter prop rows (chips, sin overlap) ── */
+.bt-row{display:grid;grid-template-columns:18px auto minmax(0,1fr) auto;align-items:start;gap:9px;padding:9px 12px;border-bottom:1px solid var(--border)}
+.bt-row:last-child{border-bottom:none}
+.bt-rank{width:18px;height:18px;border-radius:50%;background:var(--bg);color:var(--gold);font-size:10px;font-weight:800;display:flex;align-items:center;justify-content:center;margin-top:2px}
+.bt-info{min-width:0;display:flex;flex-direction:column;gap:3px}
+.bt-name{font-weight:700;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:5px}
+.bt-hand{color:var(--text3);font-size:9px;font-weight:700}
+.bt-ok{color:var(--gtx);font-size:9px;font-weight:800}
+.bt-vs{font-size:9.5px;color:var(--text2);display:flex;align-items:center;gap:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bt-mtag{font-weight:800}
+.bt-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:1px}
+.bt-chip{font-size:9px;font-weight:700;padding:2px 6px;border-radius:5px;background:var(--bg3);color:var(--text2);white-space:nowrap}
+.bt-chip.blue{color:var(--blue)}
+.bt-chip.gold{color:var(--gold)}
+.bt-chip.warn{color:var(--rtx)}
+.bt-proj{display:flex;flex-direction:column;align-items:flex-end;gap:2px;text-align:right;min-width:54px}
+.bt-val{font-size:18px;font-weight:800;color:var(--green);line-height:1;font-variant-numeric:tabular-nums}
+.bt-casa{font-size:9px;font-weight:700;white-space:nowrap}
+
 /* ── Stats bar ── */
 .stats-bar{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:12px}
 .stat-card{background:var(--bg2);border-radius:var(--rs);padding:10px 12px;border:1px solid var(--border)}
@@ -2381,7 +2400,7 @@ function renderBatters(batData) {
   const pool = rows.filter(r=> r.tag.t==='favorable' || r.hitP>=0.68);
   if(!pool.length){$('batters-area').innerHTML='<div class="empty">Ningún bateador con matchup favorable ni alta probabilidad en la jornada.</div>';return;}
 
-  const propTag=ev=>ev?`<span style="font-size:9px;font-weight:700;color:${ev.edge>0?'var(--gtx)':'var(--text3)'}"> · casa ${ev.over?'O':'U'}${ev.line} ${ev.edge>=0?'+':''}${(ev.edge*100).toFixed(0)}%${ev.stake>0?` ${ev.stake}%`:''}</span>`:'';
+  const propTag=ev=>ev?`<span class="bt-casa" style="color:${ev.edge>0?'var(--gtx)':'var(--text3)'}">casa ${ev.over?'O':'U'}${ev.line} ${ev.edge>=0?'+':''}${(ev.edge*100).toFixed(0)}%${ev.stake>0?` · ${ev.stake}%`:''}</span>`:'';
   // Cada categoría: los 2 MÁS PROBABLES (mayor proyección). mkt/target/prob para el historial.
   const cats=[
     {title:'⚾ Probabilidad de Hit', mkt:'Hit', target:.5, prob:r=>r.hitP,               metric:r=>r.hitP,  fmt:r=>Math.round(r.hitP*100)+'%', tag:r=>r.evHits},
@@ -2391,16 +2410,26 @@ function renderBatters(batData) {
     {title:'🏟️ Home runs (HR)',      mkt:'HR',  target:.5, prob:r=>1-Math.exp(-r.expHR), metric:r=>r.expHR, fmt:r=>r.expHR.toFixed(2),         tag:r=>r.evHR},
   ];
   propsBatter=[];   // recolectar los top-2 de cada categoría para guardar
-  const row=(r,i,cat)=>`
-    <div style="display:flex;align-items:center;gap:10px;padding:8px 12px;border-bottom:1px solid var(--border)">
-      <span style="min-width:18px;height:18px;border-radius:50%;background:var(--bg);color:var(--gold);font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center">${i+1}</span>
+  const chip=(txt,cls='')=>`<span class="bt-chip ${cls}">${txt}</span>`;
+  const row=(r,i,cat)=>{
+    const chips=[];
+    if(r.split&&r.split.ops){
+      chips.push(chip(`v${r.oppHand} ${r.split.ops.toFixed(3)} OPS`,'blue'));
+      if(r.split.kpct!=null) chips.push(chip(`${r.split.kpct}% K`));
+      if(r.split.pa!=null) chips.push(chip(`${r.split.pa} PA · ${relLabel(r.split.rel||0)}`, (r.split.rel<.4?'warn':'')));
+    }
+    if(r.bvp&&r.bvp.ab>=8) chips.push(chip(`BvP ${r.bvp.h}-${r.bvp.ab}${r.bvp.hr?`, ${r.bvp.hr}HR`:''}`,'gold'));
+    return `<div class="bt-row">
+      <span class="bt-rank">${i+1}</span>
       <img class="headshot-sm" src="${playerImg(r.id)}" onerror="${IMG_FALLBACK}">
-      <div style="flex:1;min-width:0">
-        <div style="font-weight:700;font-size:12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${r.name}${r.hand?` <span style="color:var(--text3);font-size:9px;font-weight:700">${r.hand}HB</span>`:''}${r.conf?' <span style="color:var(--gtx);font-size:9px;font-weight:700">✓</span>':''}</div>
-        <div style="font-size:9px;color:var(--text2);display:flex;align-items:center;gap:3px"><img class="logo-xs" src="${teamLogo(ABBR2ID[r.team])}" onerror="${IMG_FALLBACK}">${r.team} · vs ${(r.pitcher||'').split(' ').slice(-1)[0]||'—'}${r.oppHand?` (${r.oppHand})`:''} <span style="color:${r.tag.c};font-weight:700">${r.tag.t}</span>${r.split&&r.split.ops?` <span style="color:var(--blue);font-weight:700">v${r.oppHand} ${r.split.ops.toFixed(3)} OPS${r.split.kpct!=null?`, ${r.split.kpct}%K`:''}</span>${r.split.pa!=null?`<span style="color:${r.split.rel>=.4?'var(--text3)':'var(--rtx)'};font-weight:700"> (${r.split.pa}PA·fiab ${relLabel(r.split.rel||0)})</span>`:''}`:''}${r.bvp&&r.bvp.ab>=8?` <span style="color:var(--gold);font-weight:700">BvP ${r.bvp.h}-${r.bvp.ab}${r.bvp.hr?`, ${r.bvp.hr}HR`:''}</span>`:''}</div>
+      <div class="bt-info">
+        <div class="bt-name">${r.name}${r.hand?`<span class="bt-hand">${r.hand}HB</span>`:''}${r.conf?`<span class="bt-ok">✓</span>`:''}</div>
+        <div class="bt-vs"><img class="logo-xs" src="${teamLogo(ABBR2ID[r.team])}" onerror="${IMG_FALLBACK}">${r.team} · vs ${(r.pitcher||'').split(' ').slice(-1)[0]||'—'}${r.oppHand?` (${r.oppHand})`:''} · <span class="bt-mtag" style="color:${r.tag.c}">${r.tag.t}</span></div>
+        ${chips.length?`<div class="bt-chips">${chips.join('')}</div>`:''}
       </div>
-      <div style="text-align:right"><span style="font-size:16px;font-weight:700;color:var(--green)">${cat.fmt(r)}</span>${cat.tag?propTag(cat.tag(r)):''}</div>
+      <div class="bt-proj"><span class="bt-val">${cat.fmt(r)}</span>${cat.tag&&cat.tag(r)?propTag(cat.tag(r)):''}</div>
     </div>`;
+  };
   $('batters-area').innerHTML=`
     <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los 2 más probables de la jornada por categoría · <b>solo matchups favorables o de alta probabilidad</b> · ajustado por pitcher rival, mano, estadio y clima${rows.some(r=>r.conf)?' · <b style="color:var(--gtx)">✓</b> = titular confirmado (alineación publicada)':' · alineaciones aún sin confirmar'}${rows.some(r=>r.evHits||r.evTB||r.evHR)?' · <b>casa</b> = línea real con edge y stake':''}.</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px">

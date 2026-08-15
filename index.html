@@ -998,7 +998,7 @@ function computePicks(data) {
     const favPr=homeFav?odds.spread.priceHome:odds.spread.priceAway, dogPr=homeFav?odds.spread.priceAway:odds.spread.priceHome;
     const prob=favSide?bFav:1-bFav, fair=favSide?fairFav:1-fairFav, mRaw=favSide?mCover:1-mCover;
     const team=favSide?favTeam:dogTeam, pt=favSide?favPt:dogPt, price=favSide?favPr:dogPr;
-    picks.push({cat:'Run Line',main:`${team} ${pt} ${amFmt(price)}`,sub:`Modelo ${pct(mRaw)} → ${pct(prob)} vs Mercado ${pct(fair)}`,prob,edge:+(prob-fair).toFixed(3),bEdge:+(mRaw-fair).toFixed(3),mkt:true,price,fair});
+    picks.push({cat:'Run Line',main:`${team} ${pt>0?'+':''}${pt} ${amFmt(price)}`,sub:`Modelo ${pct(mRaw)} → ${pct(prob)} vs Mercado ${pct(fair)}`,prob,edge:+(prob-fair).toFixed(3),bEdge:+(mRaw-fair).toFixed(3),mkt:true,price,fair});
   } else {
     const dogSide=(1-rlProb)>=rlProb;   // el +1.5 suele ser más probable
     picks.push(dogSide

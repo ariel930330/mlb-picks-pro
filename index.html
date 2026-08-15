@@ -729,7 +729,7 @@ function computePicks(data) {
     const {fairHome,fairAway,priceHome,priceAway}=odds.ml;
     const bHome=blend(hwp,fairHome), bAway=1-bHome, homeSide=bHome>=bAway;   // lado MÁS PROBABLE
     const prob=homeSide?bHome:bAway, fair=homeSide?fairHome:fairAway, price=homeSide?priceHome:priceAway, mRaw=homeSide?hwp:awp;
-    picks.push({cat:'Money Line',main:`${homeSide?home:away} ML ${amFmt(price)}`,sub:`Modelo ${pct(mRaw)} → ${pct(prob)} vs Mercado ${pct(fair)}`,prob,edge:+(prob-fair).toFixed(3),mkt:true,price,fair});
+    picks.push({cat:'Money Line',main:`${homeSide?home:away} ML ${amFmt(price)}`,sub:`Modelo ${pct(mRaw)} → ${pct(prob)} vs Mercado ${pct(fair)}`,prob,edge:+(prob-fair).toFixed(3),bEdge:+(mRaw-fair).toFixed(3),mkt:true,price,fair});
   } else {
     picks.push(favHome
       ? {cat:'Money Line',main:`${home} ML ${p2ml(hwp)}`,sub:`Modelo: ${pct(hwp)}`,prob:hwp,edge:+(hwp-BREAKEVEN).toFixed(3)}
@@ -741,7 +741,7 @@ function computePicks(data) {
     const line=odds.total.point, mOver=normOver(total,totalSigma,line), bOver=blend(mOver,odds.total.fairOver);
     const overSide=bOver>=0.5;   // lado MÁS PROBABLE (over o under)
     const prob=overSide?bOver:1-bOver, fair=overSide?odds.total.fairOver:odds.total.fairUnder, price=overSide?odds.total.priceOver:odds.total.priceUnder, mRaw=overSide?mOver:1-mOver;
-    picks.push({cat:'Total del partido',main:`${overSide?'OVER':'UNDER'} ${line} ${amFmt(price)}`,sub:`Proy ${total} · Modelo ${pct(mRaw)} → ${pct(prob)} vs Mercado ${pct(fair)}`,prob,edge:+(prob-fair).toFixed(3),mkt:true,price,fair});
+    picks.push({cat:'Total del partido',main:`${overSide?'OVER':'UNDER'} ${line} ${amFmt(price)}`,sub:`Proy ${total} · Modelo ${pct(mRaw)} → ${pct(prob)} vs Mercado ${pct(fair)}`,prob,edge:+(prob-fair).toFixed(3),bEdge:+(mRaw-fair).toFixed(3),mkt:true,price,fair});
   } else {
     picks.push({cat:'Total del partido',main:`${totalPick?'OVER':'UNDER'} ${totalLine} runs`,sub:`Proyección: ${total} runs · PF ${pf}`,prob:totalProb,edge:+(totalProb-BREAKEVEN).toFixed(3)});
   }
@@ -757,7 +757,7 @@ function computePicks(data) {
     const favPr=homeFav?odds.spread.priceHome:odds.spread.priceAway, dogPr=homeFav?odds.spread.priceAway:odds.spread.priceHome;
     const prob=favSide?bFav:1-bFav, fair=favSide?fairFav:1-fairFav, mRaw=favSide?mCover:1-mCover;
     const team=favSide?favTeam:dogTeam, pt=favSide?favPt:dogPt, price=favSide?favPr:dogPr;
-    picks.push({cat:'Run Line',main:`${team} ${pt} ${amFmt(price)}`,sub:`Modelo ${pct(mRaw)} → ${pct(prob)} vs Mercado ${pct(fair)}`,prob,edge:+(prob-fair).toFixed(3),mkt:true,price,fair});
+    picks.push({cat:'Run Line',main:`${team} ${pt} ${amFmt(price)}`,sub:`Modelo ${pct(mRaw)} → ${pct(prob)} vs Mercado ${pct(fair)}`,prob,edge:+(prob-fair).toFixed(3),bEdge:+(mRaw-fair).toFixed(3),mkt:true,price,fair});
   } else {
     const dogSide=(1-rlProb)>=rlProb;   // el +1.5 suele ser más probable
     picks.push(dogSide
@@ -1456,6 +1456,19 @@ async function getUmpires(date){
   }catch{return {};}
 }
 
+// Línea de APERTURA (primera vista de la app en el día) para medir movimiento de mercado (Market Edge).
+// No hay API gratis de líneas históricas; se guarda el primer snapshot en localStorage y se compara.
+const openKey = date => 'openlines_'+date;
+const loadOpen = date => { try{ return JSON.parse(localStorage.getItem(openKey(date))||'{}'); }catch{ return {}; } };
+const saveOpen = (date,o) => { try{ localStorage.setItem(openKey(date),JSON.stringify(o)); }catch{} };
+function lineMovement(open, cur){
+  if(!open||!cur) return null; const m={};
+  if(open.mlH!=null&&cur.mlH!=null&&open.mlH!==cur.mlH) m.mlH={o:open.mlH,c:cur.mlH};
+  if(open.tot!=null&&cur.tot!=null&&open.tot!==cur.tot) m.tot={o:open.tot,c:cur.tot};
+  if(open.rlH!=null&&cur.rlH!=null&&open.rlH!==cur.rlH) m.rlH={o:open.rlH,c:cur.rlH};
+  return Object.keys(m).length?m:null;
+}
+
 // ── State ─────────────────────────────────────────────────────────────────────
 let allGames=[], allBatters=[], allParlays=[], allBProps={};
 let propsPitcher=[], propsBatter=[];   // picks de props recolectados al renderizar (para guardar)
@@ -1465,6 +1478,7 @@ async function runAnalysis() {
   if(!requireAuth()) return;
   const date = $('date-pick').value;
   if(!date){ $('run-status').textContent='Selecciona una fecha.'; return; }
+  const OPEN = loadOpen(date);   // líneas de apertura (primera vista) para el movimiento de mercado
   const btn  = $('run-btn');
   btn.disabled=true; btn.innerHTML='<i class="ti ti-loader-2" style="animation:spin .7s linear infinite"></i>Analizando...';
   $('run-status').textContent='';
@@ -1644,6 +1658,7 @@ async function runAnalysis() {
       // Statcast a cada bateador (xBA/xSLG = calidad real de contacto)
       [...hBat,...aBat].forEach(b=>{ const s=SC.batters?.[b.id]; if(s){ b.xba=s.xba; b.xslg=s.xslg; } });
 
+      const gOdds = pickOdds(oddsMap, g.teams.home.team.name, g.teams.away.team.name, g.gameDate);
       const gd = computePicks({
         away: g.teams.away.team.abbreviation,
         home: g.teams.home.team.abbreviation,
@@ -1682,9 +1697,12 @@ async function runAnalysis() {
         // xwOBA de la alineación vs el arsenal del abridor rival → ajusta la ofensiva
         awayOffXwF: hpLM?.xwobaF ?? null,   // ofensiva VISITANTE vs arsenal del abridor LOCAL
         homeOffXwF: apLM?.xwobaF ?? null,   // ofensiva LOCAL vs arsenal del abridor VISITANTE
-        odds: pickOdds(oddsMap, g.teams.home.team.name, g.teams.away.team.name, g.gameDate),
+        odds: gOdds,
       });
       gd.gamePk    = g.gamePk;
+      // Movimiento de mercado: snapshot actual vs apertura (primera vista guardada)
+      const snap={ mlH:gOdds?.ml?.priceHome??null, tot:gOdds?.total?.point??null, rlH:gOdds?.spread?.homePoint??null };
+      if(snap.mlH!=null||snap.tot!=null||snap.rlH!=null){ if(!OPEN[g.gamePk]) OPEN[g.gamePk]=snap; gd.openLine=OPEN[g.gamePk]; gd.curLine=snap; gd.move=lineMovement(OPEN[g.gamePk],snap); }
       gd.time      = g.gameDate;
       gd.topBatters= {away:aBat,home:hBat};
       gd.awayOffQ  = aOffQ; gd.homeOffQ = hOffQ;   // calidad ofensiva Statcast del lineup
@@ -1715,6 +1733,7 @@ async function runAnalysis() {
         pf:gd.pf||1, wx:gd.wx||null});
     }
 
+    saveOpen(date, OPEN);   // persiste las líneas de apertura vistas hoy
     allGames = results;
     allBatters = batchBatters;
     allParlays = buildParlays(results);
@@ -1844,7 +1863,7 @@ function renderPicks(games) {
             <div class="pick-accent"></div>
             <div class="pick-badge"><span class="icon">${lbl.split(' ')[0]}</span><span class="label">${lbl.split(' ')[1]||''}</span></div>
             <div class="pick-body"><div class="pick-cat">${p.cat}</div><div class="pick-main">${p.main}</div><div class="pick-sub">${p.sub||''}</div></div>
-            <div class="pick-pct"><div class="pick-prob">${pct(p.prob)}</div><div class="pick-edge">edge ${p.edge>=0?'+':''}${(p.edge*100).toFixed(1)}%</div>${p.stake>0?`<div class="pick-stake">apostar ${p.stake}%</div>`:''}</div>
+            <div class="pick-pct"><div class="pick-prob">${pct(p.prob)}</div>${p.bEdge!=null?`<div class="pick-edge" title="Baseball Edge: modelo puro vs mercado">⚾ ${p.bEdge>=0?'+':''}${(p.bEdge*100).toFixed(1)}%</div>`:''}<div class="pick-edge">${p.bEdge!=null?'mkt ':'edge '}${p.edge>=0?'+':''}${(p.edge*100).toFixed(1)}%</div>${p.stake>0?`<div class="pick-stake">apostar ${p.stake}%</div>`:''}</div>
           </div>`;
         }).join('')}
       </div>
@@ -1853,6 +1872,7 @@ function renderPicks(games) {
       ${(g.awayOffQ||g.homeOffQ)?(oq=>`<div class="game-footer" style="border-top:none;padding-top:0">Ofensiva (lineup) · ${g.away} ${oq(g.awayOffQ)} · ${g.home} ${oq(g.homeOffQ)}</div>`)(q=>q?`<b>Rating ${q.rating??'—'}</b> · xwOBA ${q.xwoba??'—'}${q.wrc!=null?` · wRC+ ${q.wrc}`:''}${q.xslg!=null?` · xSLG ${q.xslg}`:''}${q.iso!=null?` · ISO ${q.iso}`:''}${q.barrel!=null?` · Brl ${q.barrel}%`:''}${q.hardhit!=null?` · HH ${q.hardhit}%`:''}${q.ev!=null?` · EV ${q.ev}`:''}${q.batspeed!=null?` · BatSpd ${q.batspeed}`:''}${q.squaredup!=null?` · Sq ${q.squaredup}%`:''}${q.blast!=null?` · Blast ${q.blast}%`:''}`:'—'):''}
       ${(g.awayFormW||g.homeFormW)?(ff=>`<div class="game-footer" style="border-top:none;padding-top:0">Forma OPS · ${g.away} ${ff(g.awayFormW,g.awayFormF,g.awayFormC)} · ${g.home} ${ff(g.homeFormW,g.homeFormF,g.homeFormC)}</div>`)((w,f,conf)=>{const d=f!=null?Math.round((f-1)*100):0;const tag=conf==='ok'?' <span style="color:var(--gtx)">✓ respaldado</span>':conf==='weak'?' <span style="color:var(--rtx)">⚠ sin respaldo</span>':'';return `<b>${d>=0?'+':''}${d}%</b>${tag}`+(w?` (7d ${w.d7?.ops??'—'} · 15d ${w.d15?.ops??'—'} · 30d ${w.d30?.ops??'—'})`:'');}):''}
       ${(g.awayBrun||g.homeBrun)?(br=>`<div class="game-footer" style="border-top:none;padding-top:0">🏃 Baserunning · ${g.away} ${br(g.awayBrun)} · ${g.home} ${br(g.homeBrun)}</div>`)(b=>b?`RV ${b.brv>=0?'+':''}${b.brv}${b.speed!=null?` · ${b.speed} ft/s`:''}${b.sb!=null?` · ${b.sb}SB/${b.cs}CS`:''}`:'—'):''}
+      ${g.move?(m=>`<div class="game-footer" style="border-top:none;padding-top:0">📈 Mercado (desde apertura) · ${m}</div>`)([g.move.mlH?`ML ${amFmt(g.move.mlH.o)}→${amFmt(g.move.mlH.c)}`:'',g.move.tot?`Total ${g.move.tot.o}→${g.move.tot.c}`:'',g.move.rlH?`RL ${g.move.rlH.o>0?'+':''}${g.move.rlH.o}→${g.move.rlH.c>0?'+':''}${g.move.rlH.c}`:''].filter(Boolean).join(' · ')):''}
       ${(g.awayFat||g.homeFat)?(ft=>`<div class="game-footer" style="border-top:none;padding-top:0">😴 Fatiga · ${g.away} ${ft(g.awayFat)} · ${g.home} ${ft(g.homeFat)}</div>`)(x=>{if(!x)return '—';const tags=[];x.rest!=null&&tags.push(`${x.rest}d rest`);x.g7!=null&&tags.push(`${x.g7}/7`);x.mi>300&&tags.push(`✈ ${x.mi}mi`);x.dan&&tags.push('☀️tras🌙');x.dh&&tags.push('DH');x.xtra&&tags.push('extras');const d=x.f!=null?Math.round((x.f-1)*100):0;return `${d<0?`<span style="color:var(--rtx)">${d}%</span>`:'ok'}${tags.length?' · '+tags.join(', '):''}`;}):''}
     </div>`;
   }).join('');

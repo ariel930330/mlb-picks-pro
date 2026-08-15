@@ -1032,7 +1032,9 @@ async function getFormWindows(id,yr,date) {
     const start=new Date(new Date(end).getTime()-days*864e5).toISOString().slice(0,10);
     const d=await mlb(`/teams/${id}/stats?stats=byDateRange&group=hitting&startDate=${start}&endDate=${end}&season=${yr}&sportId=1`);
     const st=d.stats?.[0]?.splits?.[0]?.stat; const ops=parseFloat(st?.ops); const pa=+st?.plateAppearances||0;
-    return (isFinite(ops)&&pa>0)?{ops:+ops.toFixed(3),pa}:null;
+    if(!(isFinite(ops)&&pa>0)) return null;
+    const k=+st?.strikeOuts||0, slg=parseFloat(st?.slg), avg=parseFloat(st?.avg);
+    return {ops:+ops.toFixed(3), pa, kpct:+(k/pa*100).toFixed(1), iso:(isFinite(slg)&&isFinite(avg))?+(slg-avg).toFixed(3):null};
   }catch{return null;} };
   const [d7,d15,d30]=await Promise.all([range(7),range(15),range(30)]);
   return {d7,d15,d30};
@@ -1343,18 +1345,35 @@ async function runAnalysis() {
         getTeamClutch(hId,yr), getTeamClutch(aId,yr),         // clutch: OPS con RISP y bases llenas
       ]);
       // Forma reciente multi-ventana: la TEMPORADA siempre domina (50%); 30/15/7 días con peso
-      // decreciente. Nunca reemplaza la temporada por el last-7. Resultado acotado ±10%.
+      // decreciente. Nunca reemplaza la temporada por el last-7. Acotado ±10%.
+      // Además, la desviación se AMORTIGUA si lo subyacente (K% e ISO recientes) no la respalda:
+      // un OPS caliente de puro AVG/BABIP (sin mejor K%/ISO) = señal débil -> se descuenta.
       const _hOps=sf(hTSt?.hitting?.ops,.72), _aOps=sf(aTSt?.hitting?.ops,.72);
-      const formFactor=(win,seasonOPS)=>{
-        if(!seasonOPS) return 1;
+      const seasonK=st=>{ const pa=+st?.plateAppearances||0,k=+st?.strikeOuts||0; return pa?k/pa*100:null; };
+      const seasonISO=st=>{ const slg=parseFloat(st?.slg),avg=parseFloat(st?.avg); return (isFinite(slg)&&isFinite(avg))?slg-avg:null; };
+      const formFactor=(win,seasonOPS,sK,sIso)=>{
+        if(!seasonOPS) return {f:1,conf:null};
         const parts=[{ops:seasonOPS,w:.50}];   // ancla: temporada
         if(win?.d30) parts.push({ops:win.d30.ops,w:.25});
         if(win?.d15) parts.push({ops:win.d15.ops,w:.15});
         if(win?.d7)  parts.push({ops:win.d7.ops, w:.10});
         const tw=parts.reduce((a,p)=>a+p.w,0), eff=parts.reduce((a,p)=>a+p.ops*p.w,0)/tw;
-        return cl(eff/seasonOPS,.90,1.10);
+        const d=eff/seasonOPS-1;   // desviación de la forma (box score)
+        // ¿lo subyacente (15d) respalda la dirección? K% abajo = mejor; ISO arriba = mejor
+        const w15=win?.d15; let u=0, have=false;
+        if(w15?.kpct!=null && sK){ u+=(sK-w15.kpct)/sK; have=true; }
+        if(w15?.iso!=null && sIso){ u+=(w15.iso-sIso)/Math.max(sIso,.05); have=true; }
+        let c=1, conf=null;
+        if(have && Math.abs(d)>.01){
+          if(Math.abs(u)<.05){ c=.75; conf='neutral'; }
+          else if(Math.sign(u)===Math.sign(d)){ c=1; conf='ok'; }
+          else { c=.5; conf='weak'; }   // OPS se movió pero lo subyacente lo contradice
+        }
+        return { f: cl(1+d*c,.90,1.10), conf };
       };
-      const homeForm=formFactor(hWin,_hOps), awayForm=formFactor(aWin,_aOps);
+      const hFF=formFactor(hWin,_hOps,seasonK(hTSt?.hitting),seasonISO(hTSt?.hitting));
+      const aFF=formFactor(aWin,_aOps,seasonK(aTSt?.hitting),seasonISO(aTSt?.hitting));
+      const homeForm=hFF.f, awayForm=aFF.f;
 
       // Alineación confirmada (si ya se publicó, ~1-3 h antes del juego)
       const hLine=(g.lineups?.homePlayers||[]).map(p=>p.id), aLine=(g.lineups?.awayPlayers||[]).map(p=>p.id);
@@ -1437,6 +1456,7 @@ async function runAnalysis() {
       gd.awayBull  = aBull; gd.homeBull = hBull;    // bullpen (ERA/FIP/K9)
       gd.awayFormW = aWin;  gd.homeFormW = hWin;    // ventanas de forma (7/15/30d)
       gd.awayFormF = awayForm; gd.homeFormF = homeForm;   // factor de forma resultante
+      gd.awayFormC = aFF.conf; gd.homeFormC = hFF.conf;   // confirmación subyacente (ok/neutral/weak)
       results.push(gd);
       // Platoon (hand) por equipo: OPS vs la mano del rival ÷ OPS general
       const hOverall=sf(hTSt?.hitting?.ops,.72), aOverall=sf(aTSt?.hitting?.ops,.72);
@@ -1587,7 +1607,7 @@ function renderPicks(games) {
       </div>
       <div class="game-footer">PF ${g.pf} · Total proy. ${g.total} runs${g.wx?.temp!=null?` · 🌡 ${Math.round(g.wx.temp)}°F`+(g.wx.wind!=null?` · 💨 ${Math.round(g.wx.wind)} mph${(wf=>wf>1.01?' ↗ sale':wf<0.99?' ↘ entra':'')(windFactor(g.wx,VENUE_BEARING[g.homeId]))}`:''):''}${(g.awayOAA!=null||g.homeOAA!=null)?` · 🧤 OAA ${g.away} ${g.awayOAA>=0?'+':''}${g.awayOAA??'—'} / ${g.home} ${g.homeOAA>=0?'+':''}${g.homeOAA??'—'}`:''}${(g.awayBull?.fip||g.homeBull?.fip)?` · 🔥 Bull FIP ${g.away} ${g.awayBull?.fip??'—'} / ${g.home} ${g.homeBull?.fip??'—'}`:''} · ${g.pitchers.away.name.split(' ').slice(-1)[0]} vs ${g.pitchers.home.name.split(' ').slice(-1)[0]}</div>
       ${(g.awayOffQ||g.homeOffQ)?(oq=>`<div class="game-footer" style="border-top:none;padding-top:0">Ofensiva (lineup) · ${g.away} ${oq(g.awayOffQ)} · ${g.home} ${oq(g.homeOffQ)}</div>`)(q=>q?`<b>Rating ${q.rating??'—'}</b> · xwOBA ${q.xwoba??'—'}${q.wrc!=null?` · wRC+ ${q.wrc}`:''}${q.xslg!=null?` · xSLG ${q.xslg}`:''}${q.iso!=null?` · ISO ${q.iso}`:''}${q.barrel!=null?` · Brl ${q.barrel}%`:''}${q.hardhit!=null?` · HH ${q.hardhit}%`:''}${q.ev!=null?` · EV ${q.ev}`:''}${q.batspeed!=null?` · BatSpd ${q.batspeed}`:''}${q.squaredup!=null?` · Sq ${q.squaredup}%`:''}${q.blast!=null?` · Blast ${q.blast}%`:''}`:'—'):''}
-      ${(g.awayFormW||g.homeFormW)?(ff=>`<div class="game-footer" style="border-top:none;padding-top:0">Forma OPS · ${g.away} ${ff(g.awayFormW,g.awayFormF)} · ${g.home} ${ff(g.homeFormW,g.homeFormF)}</div>`)((w,f)=>{const d=f!=null?Math.round((f-1)*100):0;return `<b>${d>=0?'+':''}${d}%</b>`+(w?` (7d ${w.d7?.ops??'—'} · 15d ${w.d15?.ops??'—'} · 30d ${w.d30?.ops??'—'})`:'');}):''}
+      ${(g.awayFormW||g.homeFormW)?(ff=>`<div class="game-footer" style="border-top:none;padding-top:0">Forma OPS · ${g.away} ${ff(g.awayFormW,g.awayFormF,g.awayFormC)} · ${g.home} ${ff(g.homeFormW,g.homeFormF,g.homeFormC)}</div>`)((w,f,conf)=>{const d=f!=null?Math.round((f-1)*100):0;const tag=conf==='ok'?' <span style="color:var(--gtx)">✓ respaldado</span>':conf==='weak'?' <span style="color:var(--rtx)">⚠ sin respaldo</span>':'';return `<b>${d>=0?'+':''}${d}%</b>${tag}`+(w?` (7d ${w.d7?.ops??'—'} · 15d ${w.d15?.ops??'—'} · 30d ${w.d30?.ops??'—'})`:'');}):''}
     </div>`;
   }).join('');
   $('picks-area').innerHTML = html || '<div class="empty">Ningún pick cumple el filtro seleccionado.</div>';

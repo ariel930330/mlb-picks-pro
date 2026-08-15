@@ -606,8 +606,10 @@ function computePicks(data) {
     const base = (e!=null&&q!=null)?0.5*e+0.5*q:(e??q);
     const pen = bp.top3Avail!=null ? (3-bp.top3Avail)*0.13 : 0;   // cada arm de alta leverage gastado castiga
     return base!=null ? base+pen : null; };
-  const aBPE = bpEff(data.awayBullpen) ?? sf(awayStats?.pitching?.era,4.0);
-  const hBPE = bpEff(data.homeBullpen) ?? sf(homeStats?.pitching?.era,4.0);
+  // Matchup del arsenal del pen vs la alineación que enfrenta (amortiguado a la mitad, ~±5%)
+  const bullXw = f => f!=null ? cl(1+(f-1)*.5,.95,1.05) : 1;
+  const aBPE = (bpEff(data.awayBullpen) ?? sf(awayStats?.pitching?.era,4.0)) * bullXw(data.awayBullXwF);
+  const hBPE = (bpEff(data.homeBullpen) ?? sf(homeStats?.pitching?.era,4.0)) * bullXw(data.homeBullXwF);
 
   const apIPr=ipOf(awayPitcher), hpIPr=ipOf(homePitcher);
   // Crudos (para mostrar en la pestaña Lanzadores)
@@ -952,8 +954,9 @@ function pitchMatchup(ars, pid, teamAbbr){
 // de CADA bateador contra ese tipo de pitch, promediado sobre la alineación. Devuelve factores
 // relativos a la liga: whiffF (>1 = la alineación falla más → más Ks) y xwobaF (>1 = batea mejor
 // ese arsenal → más carreras). null si no hay datos suficientes.
-function lineupMatchup(ars, pid, lineupIds){
-  const arse=ars?.pitchers?.[pid], lw=ars?.leagueWhiff, lx=ars?.leagueXwoba, B=ars?.batters;
+// Core: un arsenal (uso% por pitch) cruzado con el xwOBA/whiff de cada bateador de la alineación.
+function arsenalVsLineup(ars, arse, lineupIds){
+  const lw=ars?.leagueWhiff, lx=ars?.leagueXwoba, B=ars?.batters;
   if(!arse||!B||!lineupIds?.length) return null;
   let sumWh=0,sumXw=0,nWh=0,nXw=0;
   for(const bid of lineupIds){
@@ -967,6 +970,17 @@ function lineupMatchup(ars, pid, lineupIds){
   if(!nWh&&!nXw) return null;
   return { whiffF: nWh?cl(sumWh/nWh,.88,1.12):1, xwobaF: nXw?cl(sumXw/nXw,.88,1.12):1, n:Math.max(nWh,nXw) };
 }
+function lineupMatchup(ars, pid, lineupIds){ return arsenalVsLineup(ars, ars?.pitchers?.[pid], lineupIds); }
+// Arsenal AGREGADO del bullpen (promedio del uso% de los relevistas dados) y su matchup vs la alineación.
+function bullpenArsenal(ars, ids){
+  if(!ars?.pitchers||!ids?.length) return null;
+  const agg={}; let n=0;
+  ids.forEach(id=>{ const a=ars.pitchers[id]; if(!a) return; n++; for(const pt in a) agg[pt]=(agg[pt]||0)+a[pt]; });
+  if(!n) return null;
+  for(const pt in agg) agg[pt]/=n;
+  return agg;
+}
+function bullpenMatchup(ars, ids, lineupIds){ return arsenalVsLineup(ars, bullpenArsenal(ars,ids), lineupIds); }
 // Calidad ofensiva del lineup: xwOBA, wRC+, xSLG, xBA, ISO, barrel%, hard-hit%, EV, sweet-spot%,
 // launch angle promedio de los nueve, + un rating compuesto 0-100.
 function lineupOffQuality(SC, BQ, BT, ids){
@@ -1071,7 +1085,8 @@ async function getBullpen(id,yr,date) {
     const gassed=Object.values(relievers).filter(r=>!r.available).map(r=>r.name);
     const usedData=Object.keys(usage).length>0;
     return {...season, availFip, availK9, availCount:availArms.length, totalArms:Object.keys(relievers).length,
-      top3Avail: usedData?top3Avail:null, top3Names:top3.map(r=>r.name), gassed, usedData};
+      top3Avail: usedData?top3Avail:null, top3Names:top3.map(r=>r.name), gassed, usedData,
+      availIds: availArms.sort((a,b)=>a.fip-b.fip).slice(0,6).map(r=>r.id)};   // mejores 6 disponibles para el matchup
   }catch{return null;}
 }
 // OPS del equipo en los últimos ~30 días (forma reciente)
@@ -1438,6 +1453,9 @@ async function runAnalysis() {
       const hLU=hConf?hLine:(hBat||[]).map(b=>b.id), aLU=aConf?aLine:(aBat||[]).map(b=>b.id);
       const hpLM=lineupMatchup(ARS, hpId, aLU);   // abridor LOCAL vs alineación VISITANTE
       const apLM=lineupMatchup(ARS, apId, hLU);   // abridor VISITANTE vs alineación LOCAL
+      // Bullpen (brazos DISPONIBLES) vs la alineación que enfrenta: pen local vs visitante y viceversa
+      const hBullLM=bullpenMatchup(ARS, hBull?.availIds, aLU);   // pen LOCAL vs alineación VISITANTE
+      const aBullLM=bullpenMatchup(ARS, aBull?.availIds, hLU);   // pen VISITANTE vs alineación LOCAL
 
       // Mano de bateo (L/R/S) de la alineación y de los top: una sola llamada batcheada.
       const HANDS=await getPeopleHands([...hLU,...aLU,...(hBat||[]).map(b=>b.id),...(aBat||[]).map(b=>b.id)]);
@@ -1484,6 +1502,7 @@ async function runAnalysis() {
         homeSplit: hSplit, awaySplit: aSplit, homePHand: hHand, awayPHand: aHand,
         homeForm: homeForm*homeLineupF, awayForm: awayForm*awayLineupF,
         homeBullpen: hBull, awayBullpen: aBull,                   // bullpen con calidad DISPONIBLE
+        awayBullXwF: aBullLM?.xwobaF ?? null, homeBullXwF: hBullLM?.xwobaF ?? null,   // matchup arsenal del pen vs la alineación
         homePTrend: hTrend, awayPTrend: aTrend,                  // K/9 reciente del abridor
         awayTravel: aCtx?.awayStreak||0,                        // racha de juegos de visita del equipo visitante
         homePXera: SC.pitchers?.[hpId]?.xera, awayPXera: SC.pitchers?.[apId]?.xera,   // Statcast: xERA (contact suppression)

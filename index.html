@@ -598,13 +598,16 @@ function computePicks(data) {
   const aOPS = blendOff(sf(data.awaySplit?.['v'+data.homePHand] ?? awayStats?.hitting?.ops, .72), data.awayOffXwoba)*(data.awayForm||1)*pPlatoonF(data.homePSplit,data.homePHand,data.awayHands)*xwOff(data.awayOffXwF)*(data.awayClutchF||1)*(data.awayDefF||1)*(data.awayFrameF||1) - (awayInj?.length>=3?.02:(awayInj?.length>=1?.01:0)) - travelPen;
   const hOPS = blendOff(sf(data.homeSplit?.['v'+data.awayPHand] ?? homeStats?.hitting?.ops, .72), data.homeOffXwoba)*(data.homeForm||1)*pPlatoonF(data.awayPSplit,data.awayPHand,data.homeHands)*xwOff(data.homeOffXwF)*(data.homeClutchF||1)*(data.homeDefF||1)*(data.homeFrameF||1) - (homeInj?.length>=3?.02:(homeInj?.length>=1?.01:0));
   // Bullpen: ERA real de relevistas + penalización si lanzaron mucho en su último juego (fatiga)
-  // Bullpen efectivo: mezcla ERA regresado + FIP (más predictivo). Compat con número suelto/viejo.
+  // Bullpen efectivo: calidad DISPONIBLE (FIP de los brazos listos, no el de temporada) + ERA regresado,
+  // con penalización si faltan brazos de alta leverage (top-3 por FIP). Compat con número suelto/viejo.
   const bpEff = bp => { if(bp==null) return null; if(typeof bp==='number') return bp;
-    const e=bp.era!=null?regress(bp.era,bp.ip,LG.era,60):null, f=bp.fip; return (e!=null&&f!=null)?0.5*e+0.5*f:(e??f); };
-  // Fatiga: IP de relevo del último juego + acumulada en 2 días (cerrador/relevistas gastados)
-  const bullFatigue = (t1,t2) => Math.min(.75, Math.max(0,(t1||0)-3)*.12 + Math.max(0,(t2||0)-6)*.06);
-  const aBPE = (bpEff(data.awayBullpen) ?? sf(awayStats?.pitching?.era,4.0)) + bullFatigue(data.awayBullTired,data.awayBullTired2);
-  const hBPE = (bpEff(data.homeBullpen) ?? sf(homeStats?.pitching?.era,4.0)) + bullFatigue(data.homeBullTired,data.homeBullTired2);
+    const q = bp.availFip ?? bp.fip;   // FIP de los DISPONIBLES si hay datos de uso, si no el de temporada
+    const e = bp.era!=null?regress(bp.era,bp.ip,LG.era,60):null;
+    const base = (e!=null&&q!=null)?0.5*e+0.5*q:(e??q);
+    const pen = bp.top3Avail!=null ? (3-bp.top3Avail)*0.13 : 0;   // cada arm de alta leverage gastado castiga
+    return base!=null ? base+pen : null; };
+  const aBPE = bpEff(data.awayBullpen) ?? sf(awayStats?.pitching?.era,4.0);
+  const hBPE = bpEff(data.homeBullpen) ?? sf(homeStats?.pitching?.era,4.0);
 
   const apIPr=ipOf(awayPitcher), hpIPr=ipOf(homePitcher);
   // Crudos (para mostrar en la pestaña Lanzadores)
@@ -1023,30 +1026,52 @@ async function getTeamCtx(teamId,date,yr) {
     const games=(d.dates||[]).flatMap(x=>x.games||[]).filter(g=>g.status?.abstractGameState==='Final').sort((a,b)=>(a.gameDate||'').localeCompare(b.gameDate||''));
     let awayStreak=0;
     for(let i=games.length-1;i>=0;i--){ if(games[i].teams?.away?.team?.id===teamId) awayStreak++; else break; }
-    // Fatiga del bullpen: IP de relevo del último juego y acumulada en los últimos 2 (disponibilidad del cerrador)
-    let reliefIP=0, reliefIP2=0; const last2=games.slice(-2);
-    for(let gi=0; gi<last2.length; gi++){ try{
-      const r=await fetch(MLB+`/game/${last2[gi].gamePk}/boxscore`); const bd=await r.json();
-      const side=bd.teams?.home?.team?.id===teamId?'home':'away';
-      let ip=0; Object.values(bd.teams?.[side]?.players||{}).forEach(p=>{ const pit=p.stats?.pitching; if(pit?.inningsPitched&&(+pit.gamesStarted||0)===0) ip+=ipOf({inningsPitched:pit.inningsPitched}); });
-      reliefIP2+=ip; if(gi===last2.length-1) reliefIP=ip;
-    }catch{} }
-    return {awayStreak, reliefIP:+reliefIP.toFixed(1), reliefIP2:+reliefIP2.toFixed(1)};
-  }catch{return {awayStreak:0, reliefIP:0, reliefIP2:0};}
+    return {awayStreak};   // la fatiga/disponibilidad del bullpen la maneja getBullpen (por relevista)
+  }catch{return {awayStreak:0};}
 }
-// Bullpen (solo relevistas: más relevos que aperturas): ERA, FIP y K/9 agregados
-async function getBullpen(id,yr) {
+// Bullpen: calidad DISPONIBLE (no solo ERA de temporada). Calcula el FIP/K9 de temporada,
+// pero también marca qué relevistas están gastados (uso en los últimos 3 juegos) y computa
+// el FIP de los brazos DISPONIBLES + cuántos del top-3 de alta leverage están listos.
+async function getBullpen(id,yr,date) {
   try{
     const d=await mlb(`/stats?stats=season&group=pitching&season=${yr}&teamId=${id}&playerPool=All&limit=60&sportId=1`);
     const ps=(d.stats||[]).flatMap(g=>g.splits||[]);
-    let er=0, ip=0, hr=0, bb=0, hbp=0, k=0;
-    ps.forEach(x=>{ const st=x.stat||{}, g=+st.gamesPlayed||0, gs=+st.gamesStarted||0, ipf=ipOf(st);
-      if((g-gs)>gs && ipf>0){ er+=+st.earnedRuns||0; ip+=ipf; hr+=+st.homeRuns||0; bb+=+st.baseOnBalls||0; hbp+=+st.hitByPitch||0; k+=+st.strikeOuts||0; } });
+    let er=0, ip=0, hr=0, bb=0, hbp=0, k=0; const relievers={};
+    ps.forEach(x=>{ const st=x.stat||{}, g=+st.gamesPlayed||0, gs=+st.gamesStarted||0, ipf=ipOf(st), rid=x.player?.id;
+      if((g-gs)>gs && ipf>0){ er+=+st.earnedRuns||0; ip+=ipf; hr+=+st.homeRuns||0; bb+=+st.baseOnBalls||0; hbp+=+st.hitByPitch||0; k+=+st.strikeOuts||0;
+        if(rid && ipf>=10){ const rf=Math.max(1,Math.min(8,((13*(+st.homeRuns||0))+(3*((+st.baseOnBalls||0)+(+st.hitByPitch||0)))-(2*(+st.strikeOuts||0)))/ipf+3.10));
+          relievers[rid]={id:rid,name:x.player?.fullName||'?',ip:ipf,fip:+rf.toFixed(2),k9:+((+st.strikeOuts||0)*9/ipf).toFixed(1)}; } } });
     if(ip<=0) return null;
     const era=+(er*9/ip).toFixed(2);
     const fip=+Math.max(1,Math.min(8,((13*hr)+(3*(bb+hbp))-(2*k))/ip+3.10)).toFixed(2);
-    const k9=+(k*9/ip).toFixed(1);
-    return {era, fip, k9, ip:+ip.toFixed(1)};
+    const season={era, fip, k9:+(k*9/ip).toFixed(1), ip:+ip.toFixed(1)};
+    // Uso reciente: pitches por relevista en los últimos 3 juegos (más reciente primero)
+    const usage={};
+    try{
+      const start=new Date(new Date(date).getTime()-6*864e5).toISOString().slice(0,10);
+      const end=new Date(new Date(date).getTime()-864e5).toISOString().slice(0,10);
+      const sch=await mlb(`/schedule?sportId=1&teamId=${id}&startDate=${start}&endDate=${end}`);
+      const finals=(sch.dates||[]).flatMap(x=>x.games||[]).filter(g=>g.status?.abstractGameState==='Final').sort((a,b)=>(b.gameDate||'').localeCompare(a.gameDate||'')).slice(0,3);
+      for(let di=0; di<finals.length; di++){ try{
+        const r=await fetch(MLB+`/game/${finals[di].gamePk}/boxscore`); const bd=await r.json();
+        const side=bd.teams?.home?.team?.id===id?'home':'away';
+        Object.values(bd.teams?.[side]?.players||{}).forEach(p=>{ const pit=p.stats?.pitching, pid=p.person?.id;
+          if(pit && (+pit.gamesStarted||0)===0 && pit.numberOfPitches){ (usage[pid]=usage[pid]||[0,0,0])[di]=+pit.numberOfPitches||0; } });
+      }catch{} }
+    }catch{}
+    // Disponibilidad por relevista: gastado si tiró mucho ayer, 3 días seguidos, o back-to-back fuerte
+    const isTired=u=>{ const [y,d2,d3]=u||[0,0,0]; return y>=35 || (y>0&&d2>0&&d3>0) || (y>=20&&d2>=20); };
+    Object.values(relievers).forEach(r=>{ r.available = !isTired(usage[r.id]); r.pit3=(usage[r.id]||[0,0,0]).reduce((a,b)=>a+b,0); });
+    const availArms=Object.values(relievers).filter(r=>r.available);
+    const wsum=availArms.reduce((a,r)=>a+r.ip,0);
+    const availFip = availArms.length ? +(availArms.reduce((a,r)=>a+r.fip*r.ip,0)/wsum).toFixed(2) : null;
+    const availK9  = availArms.length ? +(availArms.reduce((a,r)=>a+r.k9*r.ip,0)/wsum).toFixed(1) : null;
+    const top3=Object.values(relievers).sort((a,b)=>a.fip-b.fip).slice(0,3);   // mejores por FIP (alta leverage)
+    const top3Avail=top3.filter(r=>r.available).length;
+    const gassed=Object.values(relievers).filter(r=>!r.available).map(r=>r.name);
+    const usedData=Object.keys(usage).length>0;
+    return {...season, availFip, availK9, availCount:availArms.length, totalArms:Object.keys(relievers).length,
+      top3Avail: usedData?top3Avail:null, top3Names:top3.map(r=>r.name), gassed, usedData};
   }catch{return null;}
 }
 // OPS del equipo en los últimos ~30 días (forma reciente)
@@ -1364,7 +1389,7 @@ async function runAnalysis() {
         getTeamSplitOPS(hId,yr), getTeamSplitOPS(aId,yr),
         getPitcherHand(hpId), getPitcherHand(apId),
         getFormWindows(hId,yr,date), getFormWindows(aId,yr,date),
-        getBullpen(hId,yr), getBullpen(aId,yr),
+        getBullpen(hId,yr,date), getBullpen(aId,yr,date),
         getPitcherTrend(hpId,yr), getPitcherTrend(apId,yr),   // tendencia (K/9 últimas salidas)
         getTeamCtx(hId,date,yr), getTeamCtx(aId,date,yr),     // viaje + fatiga de bullpen
         getPitcherSplits(hpId,yr), getPitcherSplits(apId,yr), // OPS permitido vs L/R del abridor
@@ -1458,9 +1483,8 @@ async function runAnalysis() {
         awayInj: aInj, homeInj: hInj, wx, kprops,
         homeSplit: hSplit, awaySplit: aSplit, homePHand: hHand, awayPHand: aHand,
         homeForm: homeForm*homeLineupF, awayForm: awayForm*awayLineupF,
-        homeBullpen: hBull, awayBullpen: aBull,
+        homeBullpen: hBull, awayBullpen: aBull,                   // bullpen con calidad DISPONIBLE
         homePTrend: hTrend, awayPTrend: aTrend,                  // K/9 reciente del abridor
-        homeBullTired: hCtx?.reliefIP||0, awayBullTired: aCtx?.reliefIP||0,   // IP de relevo en su último juego
         awayTravel: aCtx?.awayStreak||0,                        // racha de juegos de visita del equipo visitante
         homePXera: SC.pitchers?.[hpId]?.xera, awayPXera: SC.pitchers?.[apId]?.xera,   // Statcast: xERA (contact suppression)
         homePXwoba: SC.pitchers?.[hpId]?.xwoba, awayPXwoba: SC.pitchers?.[apId]?.xwoba,   // Statcast: xwOBA allowed
@@ -1471,7 +1495,6 @@ async function runAnalysis() {
         awayClutchF: aClutchF, homeClutchF: hClutchF,   // clutch RISP/bases llenas (peso bajo)
         awayDefF: aDefF, homeDefF: hDefF,   // defensa OAA del rival que suprime la ofensiva propia
         awayFrameF: aFrameF, homeFrameF: hFrameF,   // catcher framing del rival
-        awayBullTired2: aCtx?.reliefIP2||0, homeBullTired2: hCtx?.reliefIP2||0,   // IP de relevo en 2 días
         // whiff vs la alineación exacta (si hay datos) o el fallback a nivel equipo
         homeKMatch: hpLM?.whiffF ?? pitchMatchup(ARS, hpId, g.teams.away.team.abbreviation),
         awayKMatch: apLM?.whiffF ?? pitchMatchup(ARS, apId, g.teams.home.team.abbreviation),
@@ -1638,7 +1661,7 @@ function renderPicks(games) {
           </div>`;
         }).join('')}
       </div>
-      <div class="game-footer">PF ${g.pf} · Total proy. ${g.total} runs${g.wx?.temp!=null?` · 🌡 ${Math.round(g.wx.temp)}°F`+(g.wx.wind!=null?` · 💨 ${Math.round(g.wx.wind)} mph${(wf=>wf>1.01?' ↗ sale':wf<0.99?' ↘ entra':'')(windFactor(g.wx,VENUE_BEARING[g.homeId]))}`:''):''}${(g.awayOAA!=null||g.homeOAA!=null)?` · 🧤 OAA ${g.away} ${g.awayOAA>=0?'+':''}${g.awayOAA??'—'} / ${g.home} ${g.homeOAA>=0?'+':''}${g.homeOAA??'—'}`:''}${(g.awayFrame!=null||g.homeFrame!=null)?` · 🎯 Frame ${g.away} ${g.awayFrame>=0?'+':''}${g.awayFrame??'—'} / ${g.home} ${g.homeFrame>=0?'+':''}${g.homeFrame??'—'}`:''}${(g.awayBull?.fip||g.homeBull?.fip)?` · 🔥 Bull FIP ${g.away} ${g.awayBull?.fip??'—'} / ${g.home} ${g.homeBull?.fip??'—'}`:''} · ${g.pitchers.away.name.split(' ').slice(-1)[0]} vs ${g.pitchers.home.name.split(' ').slice(-1)[0]}</div>
+      <div class="game-footer">PF ${g.pf} · Total proy. ${g.total} runs${g.wx?.temp!=null?` · 🌡 ${Math.round(g.wx.temp)}°F`+(g.wx.wind!=null?` · 💨 ${Math.round(g.wx.wind)} mph${(wf=>wf>1.01?' ↗ sale':wf<0.99?' ↘ entra':'')(windFactor(g.wx,VENUE_BEARING[g.homeId]))}`:''):''}${(g.awayOAA!=null||g.homeOAA!=null)?` · 🧤 OAA ${g.away} ${g.awayOAA>=0?'+':''}${g.awayOAA??'—'} / ${g.home} ${g.homeOAA>=0?'+':''}${g.homeOAA??'—'}`:''}${(g.awayFrame!=null||g.homeFrame!=null)?` · 🎯 Frame ${g.away} ${g.awayFrame>=0?'+':''}${g.awayFrame??'—'} / ${g.home} ${g.homeFrame>=0?'+':''}${g.homeFrame??'—'}`:''}${(g.awayBull?.fip||g.homeBull?.fip)?` · 🔥 Bull FIP(disp) ${g.away} ${g.awayBull?.availFip??g.awayBull?.fip??'—'}${g.awayBull?.top3Avail!=null?` [${g.awayBull.top3Avail}/3]`:''} / ${g.home} ${g.homeBull?.availFip??g.homeBull?.fip??'—'}${g.homeBull?.top3Avail!=null?` [${g.homeBull.top3Avail}/3]`:''}`:''} · ${g.pitchers.away.name.split(' ').slice(-1)[0]} vs ${g.pitchers.home.name.split(' ').slice(-1)[0]}</div>
       ${(g.awayOffQ||g.homeOffQ)?(oq=>`<div class="game-footer" style="border-top:none;padding-top:0">Ofensiva (lineup) · ${g.away} ${oq(g.awayOffQ)} · ${g.home} ${oq(g.homeOffQ)}</div>`)(q=>q?`<b>Rating ${q.rating??'—'}</b> · xwOBA ${q.xwoba??'—'}${q.wrc!=null?` · wRC+ ${q.wrc}`:''}${q.xslg!=null?` · xSLG ${q.xslg}`:''}${q.iso!=null?` · ISO ${q.iso}`:''}${q.barrel!=null?` · Brl ${q.barrel}%`:''}${q.hardhit!=null?` · HH ${q.hardhit}%`:''}${q.ev!=null?` · EV ${q.ev}`:''}${q.batspeed!=null?` · BatSpd ${q.batspeed}`:''}${q.squaredup!=null?` · Sq ${q.squaredup}%`:''}${q.blast!=null?` · Blast ${q.blast}%`:''}`:'—'):''}
       ${(g.awayFormW||g.homeFormW)?(ff=>`<div class="game-footer" style="border-top:none;padding-top:0">Forma OPS · ${g.away} ${ff(g.awayFormW,g.awayFormF,g.awayFormC)} · ${g.home} ${ff(g.homeFormW,g.homeFormF,g.homeFormC)}</div>`)((w,f,conf)=>{const d=f!=null?Math.round((f-1)*100):0;const tag=conf==='ok'?' <span style="color:var(--gtx)">✓ respaldado</span>':conf==='weak'?' <span style="color:var(--rtx)">⚠ sin respaldo</span>':'';return `<b>${d>=0?'+':''}${d}%</b>${tag}`+(w?` (7d ${w.d7?.ops??'—'} · 15d ${w.d15?.ops??'—'} · 30d ${w.d30?.ops??'—'})`:'');}):''}
     </div>`;

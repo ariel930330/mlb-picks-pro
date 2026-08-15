@@ -20,6 +20,9 @@
   --shadow:0 2px 10px rgba(20,30,50,.06);--shadow-lg:0 10px 28px rgba(20,30,50,.14);
 }
 *{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+.card[id]{scroll-margin-top:14px}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);font-size:13px;min-height:100vh}
 a{color:var(--blue);text-decoration:none}
 
@@ -80,6 +83,68 @@ a{color:var(--blue);text-decoration:none}
 .med  .pick-accent,.med  .pick-badge{background:var(--abg)}.med  .label,.med  .pick-prob{color:var(--atx)}
 .low  .pick-accent,.low  .pick-badge{background:var(--rbg)}.low  .label,.low  .pick-prob{color:var(--rtx)}
 .game-footer{padding:6px 12px;font-size:9px;color:var(--text3);background:var(--bg3);border-top:1px solid var(--border)}
+
+/* ── MLB Edge Read (encoding visual) ── */
+.er{background:var(--bg3);border-radius:var(--rs);padding:10px 12px 11px;margin:0 12px 10px}
+.er-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}
+.er-ttl{font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--gold)}
+.er-conv{display:flex;align-items:center;gap:8px}
+.er-team{font-size:15px;font-weight:800;letter-spacing:-.3px}
+.er-tier{font-size:10px;font-weight:800;letter-spacing:.4px;padding:3px 8px;border-radius:6px;color:#fff}
+.er-rows{display:flex;flex-direction:column;gap:3px}
+.er-row{display:grid;grid-template-columns:74px 1fr 46px;align-items:center;gap:8px;font-size:10px}
+.er-nm{color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.er-track{position:relative;height:11px;background:var(--bg4);border-radius:3px;overflow:hidden}
+.er-track::before{content:"";position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--text3);opacity:.5}
+.er-fill{position:absolute;top:0;bottom:0;border-radius:2px}
+.er-fill.away{right:50%;background:var(--blue)}
+.er-fill.home{left:50%;background:var(--green)}
+.er-fill.dim{opacity:.32}
+.er-val{text-align:right;font-weight:800;font-variant-numeric:tabular-nums}
+.er-val.away{color:var(--blue)}.er-val.home{color:var(--green)}.er-val.even{color:var(--text3)}
+.er-meta{display:flex;align-items:center;gap:12px;margin-top:9px;padding-top:9px;border-top:1px solid var(--border);flex-wrap:wrap}
+.er-dq{display:flex;align-items:center;gap:7px}
+.er-dq-lbl{font-size:9px;font-weight:800;letter-spacing:.4px;color:var(--text3);text-transform:uppercase}
+.er-dq-track{width:64px;height:7px;border-radius:99px;background:var(--bg4);overflow:hidden}
+.er-dq-fill{height:100%;border-radius:99px}
+.er-dq-val{font-size:11px;font-weight:800;font-variant-numeric:tabular-nums}
+.er-park{font-size:10px;color:var(--text2);font-weight:600}
+.er-apps{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:9px}
+.er-apps .lb{font-size:9px;font-weight:800;letter-spacing:.4px;color:var(--text3);text-transform:uppercase}
+.er-app{font-size:10px;font-weight:700;padding:3px 8px;border-radius:99px;background:var(--gbg);color:var(--gtx);display:inline-flex;gap:5px;align-items:center}
+.er-app .n{font-family:ui-monospace,Consolas,monospace;font-weight:800;opacity:.7}
+.er-note{font-size:9.5px;margin-top:8px;line-height:1.45}
+.er-note.conf{color:var(--rtx)}
+.er-note.red{color:var(--red)}
+.er-note b{letter-spacing:.3px}
+/* detalle plegable */
+.er-more{margin:0 12px 8px}
+.er-more>summary{cursor:pointer;font-size:9.5px;font-weight:700;color:var(--text2);padding:4px 0;list-style:none;user-select:none}
+.er-more>summary::-webkit-details-marker{display:none}
+.er-more>summary::before{content:"▸ ";color:var(--gold)}
+.er-more[open]>summary::before{content:"▾ "}
+
+/* ── Conviction Board (tablero de jornada) ── */
+.board{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:12px;box-shadow:var(--shadow)}
+.board-hd{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--border);background:var(--bg3)}
+.board-hd .t{font-size:11px;font-weight:800;letter-spacing:.5px;color:var(--gold)}
+.board-hd .s{font-size:10px;color:var(--text3)}
+.board-row{display:grid;grid-template-columns:104px 1fr 92px 58px 62px;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--border);font-size:12px;cursor:pointer;text-decoration:none;color:inherit;transition:background .12s}
+.board-row:last-child{border-bottom:none}
+.board-row:hover{background:var(--bg3)}
+.board-mu{font-weight:700;white-space:nowrap}
+.board-edge{display:flex;align-items:center;gap:7px;min-width:0}
+.board-eteam{font-weight:800}
+.board-ebar{flex:1;height:6px;border-radius:99px;background:var(--bg4);overflow:hidden;min-width:24px}
+.board-ebar>i{display:block;height:100%;border-radius:99px}
+.board-tier{font-size:10px;font-weight:800;letter-spacing:.3px;padding:2px 7px;border-radius:5px;color:#fff;text-align:center;white-space:nowrap}
+.board-dq{font-size:11px;font-weight:800;font-variant-numeric:tabular-nums;text-align:center}
+.board-bet{font-size:11px;font-weight:700;color:var(--gold);text-align:right;white-space:nowrap}
+@media(max-width:560px){
+  .board-row{grid-template-columns:88px 1fr 52px;gap:8px}
+  .board-tier,.board-dq{display:none}
+  .er-row{grid-template-columns:64px 1fr 42px}
+}
 
 /* ── Stats bar ── */
 .stats-bar{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:12px}
@@ -2032,6 +2097,32 @@ function selectGamePicks(g){
   return Object.values(byCat).sort(pickSorter()).slice(0,5);
 }
 
+// Colores compartidos por el Edge Read y el tablero de convicción
+const tierBg = t => t==='ELITE'?'var(--green)':t==='STRONG'?'var(--gold)':t==='LEAN'?'var(--blue)':'var(--text3)';
+const dqColor = dq => dq>=85?'var(--green)':dq>=70?'var(--gold)':dq>=50?'var(--blue)':'var(--red)';
+// Tablero de convicción: todos los juegos ordenados por convicción efectiva (atenuada por DQ)
+function convictionBoard(games){
+  const rows=games.filter(g=>g.edgeRead).map(g=>({g,er:g.edgeRead}))
+    .sort((a,b)=>b.er.convEff-a.er.convEff);
+  if(!rows.length) return '';
+  const r=rows.map(({g,er})=>{
+    const etHome=er.edgeTeam===g.home, etC=etHome?'var(--green)':'var(--blue)';
+    const noEdge=er.tier==='NO EDGE';
+    const bestBet=er.best.length?er.best[0].replace(/\s*\(.*?\)/,'').replace(er.edgeTeam+' ',''):'—';
+    const barW=Math.min(100, er.convEff/60*100);
+    return `<a class="board-row" href="#game-${g.gamePk}">
+      <span class="board-mu">${g.away} <span style="color:var(--text3)">@</span> ${g.home}</span>
+      <span class="board-edge"><span class="board-eteam" style="color:${noEdge?'var(--text3)':etC}">${noEdge?'—':er.edgeTeam} +${Math.round(er.convEff)}</span><span class="board-ebar"><i style="width:${barW}%;background:${tierBg(er.tier)}"></i></span></span>
+      <span class="board-tier" style="background:${tierBg(er.tier)}">${er.tier}</span>
+      <span class="board-dq" style="color:${dqColor(er.dq)}">${er.dq}</span>
+      <span class="board-bet">${noEdge?'—':bestBet}</span>
+    </a>`;
+  }).join('');
+  return `<div class="board">
+    <div class="board-hd"><span class="t">🎯 TABLERO DE CONVICCIÓN</span><span class="s">${rows.length} juegos · ordenados por edge · clic para ver detalle</span></div>
+    ${r}
+  </div>`;
+}
 function renderPicks(games) {
   const confMap = {High:'high',Medium:'med',Low:'low'};
   const labelMap = {High:'🟢 ALTA',Medium:'🟡 MEDIA',Low:'🔴 BAJA'};
@@ -2040,10 +2131,10 @@ function renderPicks(games) {
   const html = games.map(g=>{
     // Un pick por tipo de mercado (variedad), hasta 5, según el orden elegido
     const picks = selectGamePicks(g).map(p=>({...p,conf:confOf(p)}));
-    if(!picks.length) return '';
+    // La card siempre se renderiza (la lectura de edge es el héroe); si no hay picks de alta, se nota.
     const awp=Math.round(g.awayWP*100), hwp=Math.round(g.homeWP*100);
     const barW=awp+'%';
-    return `<div class="card">
+    return `<div class="card" id="game-${g.gamePk}">
       <div class="card-hdr">
         <span class="card-hdr-title"><img class="logo-xs" src="${teamLogo(g.awayId)}" onerror="${IMG_FALLBACK}"> ${g.away} <span style="color:var(--text3)">@</span> <img class="logo-xs" src="${teamLogo(g.homeId)}" onerror="${IMG_FALLBACK}"> ${g.home}</span>
         <span style="font-size:10px;color:var(--text3)">${g.venue}</span>
@@ -2055,27 +2146,32 @@ function renderPicks(games) {
       </div>
       <div class="prob-bar"><div class="prob-away" style="width:${barW}"></div><div class="prob-home" style="flex:1"></div></div>
       ${g.edgeRead?(er=>{
-        const tierC=er.tier==='ELITE'?'var(--green)':er.tier==='STRONG'?'var(--gold)':er.tier==='LEAN'?'var(--blue)':'var(--text3)';
-        const dqC=er.dq>=85?'var(--green)':er.dq>=70?'var(--gold)':er.dq>=50?'var(--blue)':'var(--red)';
-        const catLine=c=>`<div style="display:flex;justify-content:space-between;font-size:11px;padding:1px 0"><span style="color:var(--text2)">${c.name}</span><span style="font-weight:700;color:${c.team==='Even'?'var(--text3)':(c.team===er.edgeTeam?'var(--gtx)':'var(--rtx)')}">${c.team==='Even'?'Even':`${c.team} +${c.mag}`}</span></div>`;
-        return `<div style="background:var(--bg3);border-radius:var(--rs);padding:10px 12px;margin-bottom:10px">
-          <div style="font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--gold);margin-bottom:6px">📖 MLB EDGE READ</div>
-          ${er.lines.map(catLine).join('')}
-          <div style="display:flex;justify-content:space-between;font-size:11px;padding:1px 0"><span style="color:var(--text2)">Park/Weather</span><span style="font-weight:700;color:var(--text3)">${er.park.pts>=0?'+':''}${er.park.pts} ${er.park.dir}</span></div>
-          <div style="border-top:1px solid var(--border);margin-top:6px;padding-top:6px;display:flex;justify-content:space-between;align-items:center">
-            <span style="font-size:14px;font-weight:800" title="convicción atenuada por Data Quality · bruto +${er.netAbs}">${er.edgeTeam} +${Math.round(er.convEff)}</span>
-            <span style="font-size:12px;font-weight:800;color:${tierC}">${er.tier}${er.tier!=='NO EDGE'?' EDGE':''}</span>
+        const etHome=er.edgeTeam===g.home, etC=etHome?'var(--green)':'var(--blue)';
+        const barRow=c=>{
+          const home=c.pts>0, mag=Math.abs(c.pts), w=Math.min(50, mag*2.5);
+          const even=c.team==='Even', dim=(!even&&c.team!==er.edgeTeam)?' dim':'';
+          const fill=even?'':`<span class="er-fill ${home?'home':'away'}${dim}" style="width:${w}%"></span>`;
+          const vcls=even?'even':(home?'home':'away');
+          return `<div class="er-row"><span class="er-nm">${c.name}</span><span class="er-track">${fill}</span><span class="er-val ${vcls}">${even?'Even':`${c.team} +${c.mag}`}</span></div>`;
+        };
+        return `<div class="er">
+          <div class="er-top">
+            <span class="er-ttl">📖 MLB EDGE READ</span>
+            <span class="er-conv"><span class="er-team" style="color:${etC}" title="convicción atenuada por Data Quality · bruto +${er.netAbs}">${er.edgeTeam} +${Math.round(er.convEff)}</span><span class="er-tier" style="background:${tierBg(er.tier)}">${er.tier}${er.tier!=='NO EDGE'?' EDGE':''}</span></span>
           </div>
-          <div style="display:flex;justify-content:space-between;align-items:center;font-size:10px;margin-top:5px">
-            <span style="color:var(--text3);font-weight:700">DATA QUALITY${er.dqNotes.length?` <span style="font-weight:400">(${er.dqNotes.join(', ')})</span>`:''}</span><span style="font-weight:800;color:${dqC}">${er.dq}/100</span>
+          <div class="er-rows">${er.lines.map(barRow).join('')}</div>
+          <div class="er-meta">
+            <span class="er-dq"><span class="er-dq-lbl">Data Quality</span><span class="er-dq-track"><span class="er-dq-fill" style="width:${er.dq}%;background:${dqColor(er.dq)}"></span></span><span class="er-dq-val" style="color:${dqColor(er.dq)}">${er.dq}</span></span>
+            <span class="er-park">🌡 Park/Weather ${er.park.pts>=0?'+':''}${er.park.pts} ${er.park.dir}</span>
           </div>
-          ${er.best.length?`<div style="font-size:10px;margin-top:6px"><b style="color:var(--text2)">BEST APPLICATION</b><ol style="margin:2px 0 0;padding-left:16px">${er.best.map(b=>`<li>${b}</li>`).join('')}</ol></div>`:''}
-          ${er.conflicts.length?`<div style="font-size:10px;margin-top:4px;color:var(--rtx)"><b>CONFLICTS</b> · ${er.conflicts.join(' · ')}</div>`:''}
-          ${er.flags.length?`<div style="font-size:10px;margin-top:4px;color:var(--red)"><b>🚩 RED FLAGS</b> · ${er.flags.join(' · ')}</div>`:''}
+          ${er.best.length?`<div class="er-apps"><span class="lb">Mejor</span>${er.best.map((b,i)=>`<span class="er-app"><span class="n">${i+1}</span>${b.replace(/\s*\(.*?\)/,'')}</span>`).join('')}</div>`:''}
+          ${er.conflicts.length?`<div class="er-note conf"><b>⚔ CONFLICTS</b> · ${er.conflicts.join(' · ')}</div>`:''}
+          ${er.flags.length?`<div class="er-note red"><b>🚩 RED FLAGS</b> · ${er.flags.join(' · ')}</div>`:''}
+          ${er.dqNotes.length?`<div class="er-note" style="color:var(--text3)"><b>DQ</b> · ${er.dqNotes.join(' · ')}</div>`:''}
         </div>`;
       })(g.edgeRead):''}
       <div class="picks">
-        ${picks.map(p=>{
+        ${picks.length?picks.map(p=>{
           const cc=confMap[p.conf]||'low', lbl=labelMap[p.conf]||'🔴 BAJA';
           return `<div class="pick-row ${cc}">
             <div class="pick-accent"></div>
@@ -2083,8 +2179,9 @@ function renderPicks(games) {
             <div class="pick-body"><div class="pick-cat">${p.cat}</div><div class="pick-main">${p.main}</div><div class="pick-sub">${p.sub||''}</div></div>
             <div class="pick-pct"><div class="pick-prob">${pct(p.prob)}</div>${p.bEdge!=null?`<div class="pick-edge" title="Baseball Edge: modelo puro vs mercado">⚾ ${p.bEdge>=0?'+':''}${(p.bEdge*100).toFixed(1)}%</div>`:''}<div class="pick-edge">${p.bEdge!=null?'mkt ':'edge '}${p.edge>=0?'+':''}${(p.edge*100).toFixed(1)}%</div>${p.stake>0?`<div class="pick-stake">apostar ${p.stake}%</div>`:''}</div>
           </div>`;
-        }).join('')}
+        }).join(''):'<div style="padding:10px 12px;font-size:11px;color:var(--text3)">Sin picks de mercado de alta confianza — la lectura de edge de arriba es la señal.</div>'}
       </div>
+      <details class="er-more"><summary>Detalle de los 13 factores</summary>
       <div class="game-footer">PF ${g.pf} · Total proy. ${g.total} runs${g.wx?.temp!=null?` · 🌡 ${Math.round(g.wx.temp)}°F`+(g.wx.humid!=null?` · 💧 ${Math.round(g.wx.humid)}%`:'')+(g.wx.wind!=null?` · 💨 ${windDesc(g.wx,VENUE_BEARING[g.homeId])}`:'')+(g.wx.density!=null?` · ρ ${g.wx.density}`:'')+(g.wx.precip>0?` · 🌧 ${g.wx.precip}mm`:'')+(g.wx.night!=null?` · ${g.wx.night?'🌙':'☀️'}`:''):(g.wx===null?' · 🏟 techado':'')}${(g.awayOAA!=null||g.homeOAA!=null)?` · 🧤 OAA ${g.away} ${g.awayOAA>=0?'+':''}${g.awayOAA??'—'}${g.awayDef?` (IF ${g.awayDef.ifOAA>=0?'+':''}${g.awayDef.ifOAA}/OF ${g.awayDef.ofOAA>=0?'+':''}${g.awayDef.ofOAA}, FRV ${g.awayDef.frv>=0?'+':''}${g.awayDef.frv})`:''} / ${g.home} ${g.homeOAA>=0?'+':''}${g.homeOAA??'—'}${g.homeDef?` (IF ${g.homeDef.ifOAA>=0?'+':''}${g.homeDef.ifOAA}/OF ${g.homeDef.ofOAA>=0?'+':''}${g.homeDef.ofOAA}, FRV ${g.homeDef.frv>=0?'+':''}${g.homeDef.frv})`:''}`:''}${(g.awayCatch||g.homeCatch)?(cd=>` · 🎯 Catcher ${g.away} ${cd(g.awayCatch)} / ${g.home} ${cd(g.homeCatch)}`)(c=>c?`${c.total>=0?'+':''}${c.total} (Fr ${c.framing>=0?'+':''}${c.framing}, Bl ${c.blocking>=0?'+':''}${c.blocking}, Th ${c.throwing>=0?'+':''}${c.throwing}${c.pop?`, pop ${c.pop}`:''})`:'—'):''}${(g.awayBull?.fip||g.homeBull?.fip)?` · 🔥 Bull FIP(disp) ${g.away} ${g.awayBull?.availFip??g.awayBull?.fip??'—'}${g.awayBull?.top3Avail!=null?` [${g.awayBull.top3Avail}/3]`:''} / ${g.home} ${g.homeBull?.availFip??g.homeBull?.fip??'—'}${g.homeBull?.top3Avail!=null?` [${g.homeBull.top3Avail}/3]`:''}`:''}${g.ump?` · 👨‍⚖️ ${g.ump}${g.umpT?` (${g.umpT.run>1?'hitter':g.umpT.run<1?'pitcher':'neutral'})`:''}`:''} · ${g.pitchers.away.name.split(' ').slice(-1)[0]} vs ${g.pitchers.home.name.split(' ').slice(-1)[0]}</div>
       ${(g.awayLU||g.homeLU)?(lu=>`<div class="game-footer" style="border-top:none;padding-top:0">Alineación · ${g.away} ${lu(g.awayLU)} · ${g.home} ${lu(g.homeLU)}</div>`)(i=>i?`${i.conf?'<b style="color:var(--gtx)">✓ confirmada</b>':'proyectada'} · ${i.nR}R/${i.nL}L${i.nS?`/${i.nS}S`:''}${i.kpct!=null?` · K ${i.kpct}%`:''}${i.bbpct!=null?` · BB ${i.bbpct}%`:''}${i.missing&&i.missing.length?` · <span style="color:var(--rtx)">⚠ sin ${i.missing.join(', ')}</span>`:''}`:'—'):''}
       ${(g.awayOffQ||g.homeOffQ)?(oq=>`<div class="game-footer" style="border-top:none;padding-top:0">Ofensiva (lineup) · ${g.away} ${oq(g.awayOffQ)} · ${g.home} ${oq(g.homeOffQ)}</div>`)(q=>q?`<b>Rating ${q.rating??'—'}</b> · xwOBA ${q.xwoba??'—'}${q.wrc!=null?` · wRC+ ${q.wrc}`:''}${q.xslg!=null?` · xSLG ${q.xslg}`:''}${q.iso!=null?` · ISO ${q.iso}`:''}${q.barrel!=null?` · Brl ${q.barrel}%`:''}${q.hardhit!=null?` · HH ${q.hardhit}%`:''}${q.ev!=null?` · EV ${q.ev}`:''}${q.batspeed!=null?` · BatSpd ${q.batspeed}`:''}${q.squaredup!=null?` · Sq ${q.squaredup}%`:''}${q.blast!=null?` · Blast ${q.blast}%`:''}`:'—'):''}
@@ -2097,9 +2194,10 @@ function renderPicks(games) {
           .map(([k,t,x])=>x&&(x.flag||Math.abs(x.z||0)>=.25)?`${t} ${k} ${tag(x.z)}`:'').filter(Boolean);
         return it.length?`<div class="game-footer" style="border-top:none;padding-top:0">⚖️ Regresión (real vs esperado) · ${it.join(' · ')}</div>`:'';})(g.luck):''}
       ${(g.awayFat||g.homeFat)?(ft=>`<div class="game-footer" style="border-top:none;padding-top:0">😴 Fatiga · ${g.away} ${ft(g.awayFat)} · ${g.home} ${ft(g.homeFat)}</div>`)(x=>{if(!x)return '—';const tags=[];x.rest!=null&&tags.push(`${x.rest}d rest`);x.g7!=null&&tags.push(`${x.g7}/7`);x.mi>300&&tags.push(`✈ ${x.mi}mi`);x.dan&&tags.push('☀️tras🌙');x.dh&&tags.push('DH');x.xtra&&tags.push('extras');const d=x.f!=null?Math.round((x.f-1)*100):0;return `${d<0?`<span style="color:var(--rtx)">${d}%</span>`:'ok'}${tags.length?' · '+tags.join(', '):''}`;}):''}
+      </details>
     </div>`;
   }).join('');
-  $('picks-area').innerHTML = html || '<div class="empty">Ningún pick cumple el filtro seleccionado.</div>';
+  $('picks-area').innerHTML = (games.length?convictionBoard(games):'') + (html || '<div class="empty">Ningún pick cumple el filtro seleccionado.</div>');
 }
 
 // Copia los picks visibles al portapapeles (texto plano para compartir)

@@ -888,16 +888,26 @@ async function getPitchShape(year){
 let _def={};
 async function getTeamDefense(year){
   if(_def[year]) return _def[year];
-  try{
-    const r=await fetch(`https://baseballsavant.mlb.com/leaderboard/outs_above_average?type=Fielding_Team&startYear=${year}&endYear=${year}&split=no&team=&range=year&min=q&pos=&roles=&viz=hide&csv=true`);
-    if(!r.ok){ _def[year]={}; return _def[year]; }
-    const L=(await r.text()).trim().split('\n'); if(L.length<2){ _def[year]={}; return _def[year]; }
+  const csv=async type=>{ try{
+    const r=await fetch(`https://baseballsavant.mlb.com/leaderboard/outs_above_average?type=${type}&startYear=${year}&endYear=${year}&split=no&team=&range=year&min=q&pos=&roles=&viz=hide&csv=true`);
+    if(!r.ok) return null; const L=(await r.text()).trim().split('\n'); if(L.length<2) return null;
     const cols=parseCSVLine(L[0]).map(c=>c.replace(/["﻿]/g,'').trim());
-    const ix=n=>cols.indexOf(n), iId=ix('team_id'),iOaa=ix('outs_above_average');
-    const out={};
-    for(let i=1;i<L.length;i++){ const c=parseCSVLine(L[i]); const id=+c[iId]; const oaa=parseFloat(c[iOaa]); if(id&&isFinite(oaa)) out[id]=oaa; }
-    _def[year]=out; return out;
-  }catch(e){ console.warn('defense:',e.message); _def[year]={}; return _def[year]; }
+    return {cols, rows:L.slice(1).map(parseCSVLine)};
+  }catch{return null;} };
+  const out={};
+  try{
+    // 1) Totales por equipo (OAA) + mapa nombre->id
+    const tm=await csv('Fielding_Team'), name2id={};
+    if(tm){ const iN=tm.cols.indexOf('team_name'),iId=tm.cols.indexOf('team_id'),iO=tm.cols.indexOf('outs_above_average');
+      tm.rows.forEach(c=>{ const id=+c[iId]; if(id){ name2id[c[iN]]=id; out[id]={oaa:parseFloat(c[iO])||0, ifOAA:0, ofOAA:0, frv:0}; } }); }
+    // 2) Individual -> OAA de infield/outfield + Fielding Run Value por equipo
+    const fd=await csv('Fielder');
+    if(fd){ const iT=fd.cols.indexOf('display_team_name'),iP=fd.cols.indexOf('primary_pos_formatted'),iO=fd.cols.indexOf('outs_above_average'),iF=fd.cols.indexOf('fielding_runs_prevented');
+      const IF=new Set(['1B','2B','3B','SS']), OF=new Set(['LF','CF','RF','OF']);
+      fd.rows.forEach(c=>{ const id=name2id[c[iT]]; if(!id||!out[id]) return; const pos=c[iP], oaa=parseFloat(c[iO])||0, frv=parseFloat(c[iF])||0;
+        out[id].frv+=frv; if(IF.has(pos)) out[id].ifOAA+=oaa; else if(OF.has(pos)) out[id].ofOAA+=oaa; }); }
+  }catch(e){ console.warn('defense:',e.message); }
+  _def[year]=out; return out;
 }
 // Catcher framing por equipo: run value del titular (más pitches) de cada equipo
 let _framing=null;
@@ -1503,10 +1513,15 @@ async function runAnalysis() {
       // Clutch (RISP peso bajo, bases llenas muy bajo) relativo al OPS general del equipo
       const clutchF=(c,ops)=>{ if(!c||!ops)return 1; let f=1; if(c.risp)f*=1+((c.risp/ops)-1)*.15; if(c.bl)f*=1+((c.bl/ops)-1)*.05; return cl(f,.975,1.025); };
       const aClutchF=clutchF(aClutch, sf(aTSt?.hitting?.ops,.72)), hClutchF=clutchF(hClutch, sf(hTSt?.hitting?.ops,.72));
-      // Defensa (OAA): buena defensa del rival suprime la ofensiva propia (~0.75 carreras/OAA por temporada, ±4.5%)
-      const aOAA=DEF[aId], hOAA=DEF[hId];
+      // Defensa (OAA + FRV): buena defensa del rival suprime la ofensiva propia (~0.75 carreras/OAA, ±4.5%).
+      // "Defensa detrás del abridor": un pitcher ground-ball se beneficia del infield OAA; uno fly-ball del outfield.
+      const aDef=DEF[aId], hDef=DEF[hId];
+      const gbTend = st => { const go=+st?.groundOuts||0, ao=+st?.airOuts||0; return (go+ao)>0?go/(go+ao):0.5; };
+      const effOAA = (def,gbT) => { if(!def) return null; const base=def.oaa??0;
+        return (def.ifOAA!=null&&def.ofOAA!=null) ? base+(gbT-.5)*2*(def.ifOAA-def.ofOAA)*.5 : base; };
       const defFactor = oaa => (oaa==null||!isFinite(oaa))?1:cl(1-(oaa*.75/162)/4.5, .955, 1.045);
-      const aDefF=defFactor(hOAA), hDefF=defFactor(aOAA);   // ofensiva visitante vs defensa LOCAL, y viceversa
+      const aDefF=defFactor(effOAA(hDef,gbTend(hpSt))), hDefF=defFactor(effOAA(aDef,gbTend(apSt)));   // ofensiva vs defensa rival detrás del abridor rival
+      const aOAA=aDef?.oaa, hOAA=hDef?.oaa;
       // Catcher framing del rival: buen framing roba strikes y suprime la ofensiva propia (±3%)
       const aFrame=FRAME[aId], hFrame=FRAME[hId];
       const frameFactor = rv => (rv==null||!isFinite(rv))?1:cl(1-(rv/162)/4.5, .97, 1.03);
@@ -1566,6 +1581,7 @@ async function runAnalysis() {
       gd.topBatters= {away:aBat,home:hBat};
       gd.awayOffQ  = aOffQ; gd.homeOffQ = hOffQ;   // calidad ofensiva Statcast del lineup
       gd.awayOAA   = aOAA;  gd.homeOAA  = hOAA;     // defensa (OAA) de cada equipo
+      gd.awayDef   = aDef;  gd.homeDef  = hDef;     // detalle defensa (OAA IF/OF, FRV)
       gd.awayFrame = aFrame; gd.homeFrame = hFrame; // catcher framing (run value)
       gd.awayBull  = aBull; gd.homeBull = hBull;    // bullpen (ERA/FIP/K9)
       gd.awayFormW = aWin;  gd.homeFormW = hWin;    // ventanas de forma (7/15/30d)
@@ -1719,7 +1735,7 @@ function renderPicks(games) {
           </div>`;
         }).join('')}
       </div>
-      <div class="game-footer">PF ${g.pf} · Total proy. ${g.total} runs${g.wx?.temp!=null?` · 🌡 ${Math.round(g.wx.temp)}°F`+(g.wx.wind!=null?` · 💨 ${Math.round(g.wx.wind)} mph${(wf=>wf>1.01?' ↗ sale':wf<0.99?' ↘ entra':'')(windFactor(g.wx,VENUE_BEARING[g.homeId]))}`:''):''}${(g.awayOAA!=null||g.homeOAA!=null)?` · 🧤 OAA ${g.away} ${g.awayOAA>=0?'+':''}${g.awayOAA??'—'} / ${g.home} ${g.homeOAA>=0?'+':''}${g.homeOAA??'—'}`:''}${(g.awayFrame!=null||g.homeFrame!=null)?` · 🎯 Frame ${g.away} ${g.awayFrame>=0?'+':''}${g.awayFrame??'—'} / ${g.home} ${g.homeFrame>=0?'+':''}${g.homeFrame??'—'}`:''}${(g.awayBull?.fip||g.homeBull?.fip)?` · 🔥 Bull FIP(disp) ${g.away} ${g.awayBull?.availFip??g.awayBull?.fip??'—'}${g.awayBull?.top3Avail!=null?` [${g.awayBull.top3Avail}/3]`:''} / ${g.home} ${g.homeBull?.availFip??g.homeBull?.fip??'—'}${g.homeBull?.top3Avail!=null?` [${g.homeBull.top3Avail}/3]`:''}`:''} · ${g.pitchers.away.name.split(' ').slice(-1)[0]} vs ${g.pitchers.home.name.split(' ').slice(-1)[0]}</div>
+      <div class="game-footer">PF ${g.pf} · Total proy. ${g.total} runs${g.wx?.temp!=null?` · 🌡 ${Math.round(g.wx.temp)}°F`+(g.wx.wind!=null?` · 💨 ${Math.round(g.wx.wind)} mph${(wf=>wf>1.01?' ↗ sale':wf<0.99?' ↘ entra':'')(windFactor(g.wx,VENUE_BEARING[g.homeId]))}`:''):''}${(g.awayOAA!=null||g.homeOAA!=null)?` · 🧤 OAA ${g.away} ${g.awayOAA>=0?'+':''}${g.awayOAA??'—'}${g.awayDef?` (IF ${g.awayDef.ifOAA>=0?'+':''}${g.awayDef.ifOAA}/OF ${g.awayDef.ofOAA>=0?'+':''}${g.awayDef.ofOAA}, FRV ${g.awayDef.frv>=0?'+':''}${g.awayDef.frv})`:''} / ${g.home} ${g.homeOAA>=0?'+':''}${g.homeOAA??'—'}${g.homeDef?` (IF ${g.homeDef.ifOAA>=0?'+':''}${g.homeDef.ifOAA}/OF ${g.homeDef.ofOAA>=0?'+':''}${g.homeDef.ofOAA}, FRV ${g.homeDef.frv>=0?'+':''}${g.homeDef.frv})`:''}`:''}${(g.awayFrame!=null||g.homeFrame!=null)?` · 🎯 Frame ${g.away} ${g.awayFrame>=0?'+':''}${g.awayFrame??'—'} / ${g.home} ${g.homeFrame>=0?'+':''}${g.homeFrame??'—'}`:''}${(g.awayBull?.fip||g.homeBull?.fip)?` · 🔥 Bull FIP(disp) ${g.away} ${g.awayBull?.availFip??g.awayBull?.fip??'—'}${g.awayBull?.top3Avail!=null?` [${g.awayBull.top3Avail}/3]`:''} / ${g.home} ${g.homeBull?.availFip??g.homeBull?.fip??'—'}${g.homeBull?.top3Avail!=null?` [${g.homeBull.top3Avail}/3]`:''}`:''} · ${g.pitchers.away.name.split(' ').slice(-1)[0]} vs ${g.pitchers.home.name.split(' ').slice(-1)[0]}</div>
       ${(g.awayOffQ||g.homeOffQ)?(oq=>`<div class="game-footer" style="border-top:none;padding-top:0">Ofensiva (lineup) · ${g.away} ${oq(g.awayOffQ)} · ${g.home} ${oq(g.homeOffQ)}</div>`)(q=>q?`<b>Rating ${q.rating??'—'}</b> · xwOBA ${q.xwoba??'—'}${q.wrc!=null?` · wRC+ ${q.wrc}`:''}${q.xslg!=null?` · xSLG ${q.xslg}`:''}${q.iso!=null?` · ISO ${q.iso}`:''}${q.barrel!=null?` · Brl ${q.barrel}%`:''}${q.hardhit!=null?` · HH ${q.hardhit}%`:''}${q.ev!=null?` · EV ${q.ev}`:''}${q.batspeed!=null?` · BatSpd ${q.batspeed}`:''}${q.squaredup!=null?` · Sq ${q.squaredup}%`:''}${q.blast!=null?` · Blast ${q.blast}%`:''}`:'—'):''}
       ${(g.awayFormW||g.homeFormW)?(ff=>`<div class="game-footer" style="border-top:none;padding-top:0">Forma OPS · ${g.away} ${ff(g.awayFormW,g.awayFormF,g.awayFormC)} · ${g.home} ${ff(g.homeFormW,g.homeFormF,g.homeFormC)}</div>`)((w,f,conf)=>{const d=f!=null?Math.round((f-1)*100):0;const tag=conf==='ok'?' <span style="color:var(--gtx)">✓ respaldado</span>':conf==='weak'?' <span style="color:var(--rtx)">⚠ sin respaldo</span>':'';return `<b>${d>=0?'+':''}${d}%</b>${tag}`+(w?` (7d ${w.d7?.ops??'—'} · 15d ${w.d15?.ops??'—'} · 30d ${w.d30?.ops??'—'})`:'');}):''}
     </div>`;

@@ -608,8 +608,8 @@ function computePicks(data) {
     return base!=null ? base+pen : null; };
   // Matchup del arsenal del pen vs la alineación que enfrenta (amortiguado a la mitad, ~±5%)
   const bullXw = f => f!=null ? cl(1+(f-1)*.5,.95,1.05) : 1;
-  const aBPE = (bpEff(data.awayBullpen) ?? sf(awayStats?.pitching?.era,4.0)) * bullXw(data.awayBullXwF);
-  const hBPE = (bpEff(data.homeBullpen) ?? sf(homeStats?.pitching?.era,4.0)) * bullXw(data.homeBullXwF);
+  const aBPE = (bpEff(data.awayBullpen) ?? sf(awayStats?.pitching?.era,4.0)) * bullXw(data.awayBullXwF) * (data.awayBullPlatF||1);
+  const hBPE = (bpEff(data.homeBullpen) ?? sf(homeStats?.pitching?.era,4.0)) * bullXw(data.homeBullXwF) * (data.homeBullPlatF||1);
 
   const apIPr=ipOf(awayPitcher), hpIPr=ipOf(homePitcher);
   // Crudos (para mostrar en la pestaña Lanzadores)
@@ -1461,6 +1461,15 @@ async function runAnalysis() {
       const HANDS=await getPeopleHands([...hLU,...aLU,...(hBat||[]).map(b=>b.id),...(aBat||[]).map(b=>b.id)]);
       (hBat||[]).forEach(b=>b.hand=HANDS[b.id]); (aBat||[]).forEach(b=>b.hand=HANDS[b.id]);
       const homeHands=hLU.map(id=>HANDS[id]).filter(Boolean), awayHands=aLU.map(id=>HANDS[id]).filter(Boolean);
+      // Splits L/R de los top-3 relevistas DISPONIBLES -> vulnerabilidad platoon del bullpen vs la alineación
+      const relSplit=async bull=>{ const ids=(bull?.availIds||[]).slice(0,3).filter(Boolean); if(!ids.length) return null;
+        const sp=(await Promise.all(ids.map(id=>getPitcherSplits(id,yr)))).filter(Boolean); if(!sp.length) return null;
+        const avg=a=>a.reduce((x,y)=>x+y,0)/a.length; return {vL:+avg(sp.map(s=>s.vL)).toFixed(3), vR:+avg(sp.map(s=>s.vR)).toFixed(3)}; };
+      const [hBullSplit,aBullSplit]=await Promise.all([relSplit(hBull),relSplit(aBull)]);
+      const bullPlatoonF=(sp,hands)=>{ if(!sp||sp.vL==null||sp.vR==null) return 1; const base=(sp.vL+sp.vR)/2; if(base<=0) return 1;
+        let L=0,R=0; (hands||[]).forEach(h=>{ if(h==='L')L++; else if(h==='R')R++; else {L+=.5;R+=.5;} }); const n=L+R; if(!n) return 1;
+        return cl(((L/n)*sp.vL+(R/n)*sp.vR)/base, .96, 1.04); };
+      const aBullPlatF=bullPlatoonF(aBullSplit,homeHands), hBullPlatF=bullPlatoonF(hBullSplit,awayHands);   // pen visitante vs manos LOCALES
       // Calidad ofensiva del lineup (Statcast): xwOBA maneja la ofensiva (blend con OPS)
       const aOffQ=lineupOffQuality(SC,BQ,BT,aLU), hOffQ=lineupOffQuality(SC,BQ,BT,hLU);
       // Clutch (RISP peso bajo, bases llenas muy bajo) relativo al OPS general del equipo
@@ -1503,6 +1512,7 @@ async function runAnalysis() {
         homeForm: homeForm*homeLineupF, awayForm: awayForm*awayLineupF,
         homeBullpen: hBull, awayBullpen: aBull,                   // bullpen con calidad DISPONIBLE
         awayBullXwF: aBullLM?.xwobaF ?? null, homeBullXwF: hBullLM?.xwobaF ?? null,   // matchup arsenal del pen vs la alineación
+        awayBullPlatF: aBullPlatF, homeBullPlatF: hBullPlatF,   // platoon del pen (splits L/R) vs la alineación
         homePTrend: hTrend, awayPTrend: aTrend,                  // K/9 reciente del abridor
         awayTravel: aCtx?.awayStreak||0,                        // racha de juegos de visita del equipo visitante
         homePXera: SC.pitchers?.[hpId]?.xera, awayPXera: SC.pitchers?.[apId]?.xera,   // Statcast: xERA (contact suppression)

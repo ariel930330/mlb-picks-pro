@@ -2020,9 +2020,9 @@ async function runAnalysis() {
     allBatters = batchBatters;
     allParlays = buildParlays(results);
 
-    // Save to Supabase — historial: solo los 5 MEJORES picks de juego de la jornada por edge
-    const best5Games = [...results].filter(g=>g.picks&&g.picks.length)
-      .sort((a,b)=>(b.picks[0].edge??-1)-(a.picks[0].edge??-1)).slice(0,5);
+    // Save to Supabase — historial TODO por edge: por juego el pick de mayor edge, y los 5 juegos con más edge
+    const best5Games = [...results].map(g=>({g,bp:bestEdgePick(g)})).filter(x=>x.bp)
+      .sort((a,b)=>(b.bp.edge??-1)-(a.bp.edge??-1)).slice(0,5).map(x=>x.g);
     await savePredictions(date, best5Games);
 
     // Update UI
@@ -2073,15 +2073,17 @@ async function savePropPicks(date){
   }catch(e){ console.warn('savePropPicks:',e.message); }
 }
 
+// El pick de MAYOR edge del juego (busca en TODOS los mercados, no solo el top-3 por probabilidad)
+const bestEdgePick = g => (g.allPicks||g.picks||[]).filter(Boolean).slice().sort((a,b)=>(b.edge??-1)-(a.edge??-1))[0];
 async function savePredictions(date, games) {
   for(const g of games){
-    const top = g.picks[0];
+    const top = bestEdgePick(g);
     if(!top) continue;
     const row = {
       game_date: date, away:g.away, home:g.home, venue:g.venue||'',
       fav: g.homeWP>=g.awayWP?g.home:g.away,
       fav_prob: +Math.max(g.homeWP,g.awayWP).toFixed(4),
-      confidence: top.conf||'Low',
+      confidence: top.conf||confOf(top),
       predicted_total: g.total||0,
       home_wp:+g.homeWP.toFixed(4), away_wp:+g.awayWP.toFixed(4),
       home_ml:g.homeML||'', away_ml:g.awayML||'',

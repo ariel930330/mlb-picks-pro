@@ -510,6 +510,20 @@ const regress = (rate,n,lg,prior) => (rate*n + lg*prior)/(n+prior);
 const RELK={ops:280,obp:300,iso:320,slg:320,avg:460,kpct:60,bbpct:120,woba:200,k9:120,bf:150,ip:80,bbe:150};
 const reliab=(n,metric)=>{ const K=RELK[metric]||200; return n>0?cl(n/(n+K),0,1):0; };
 const relLabel=r=> r>=.7?'alta':r>=.4?'media':r>=.2?'baja':'muy baja';
+// ── DATA WINDOWS ────────────────────────────────────────────────────────────────
+// Para cada métrica se guardan varias ventanas (carrera / año previo / temporada / L30 / L15 / L7)
+// y se COMBINAN por shrinkage: media ponderada por RECENCIA × muestra, regresada al prior de liga.
+// NO elige la que mejor se ve: las mezcla y encoge según cuánta info aporta cada una.
+// wins: [{v, pa, w}] (valor, muestra, peso de recencia). Recencias sugeridas (RECW).
+const RECW={career:.30,prev:.50,season:1.0,d30:.80,d15:.60,d7:.40};
+function blendWindows(wins, leaguePrior, regPA=200){
+  let sw=0, swv=0, tPA=0;
+  for(const w of (wins||[])){ if(!w||w.v==null||!isFinite(w.v)) continue; const pa=Math.max(0,w.pa||0); const eff=(w.w||1)*pa; if(eff<=0) continue; sw+=eff; swv+=eff*w.v; tPA+=pa; }
+  if(sw<=0) return leaguePrior!=null?{v:leaguePrior,pa:0,rel:0}:null;
+  const blended=swv/sw;                                                   // ponderada por recencia×muestra
+  const v = leaguePrior!=null ? (blended*sw + leaguePrior*regPA)/(sw+regPA) : blended;   // regresión a liga
+  return { v:+v.toFixed(3), pa:Math.round(tPA), rel:+cl(sw/(sw+regPA),0,1).toFixed(2) };
+}
 // Promedios de liga (MLB ~2024) para regresar
 const LG = {ba:.243,obp:.312,slg:.399,hr:.033, era:4.10,fip:4.10,k9:8.6,bb9:3.1};
 const sig = x => 1/(1+Math.exp(-Math.max(-20,Math.min(20,x))));
@@ -674,8 +688,8 @@ function computePicks(data) {
   const blendOff = (ops,xw,extra=0) => { const e = xw!=null ? xw*2.31 : null; if(e==null) return ops; const wE=cl(.30+extra,.30,.55); return (1-wE)*ops+wE*e; };
   // OPS vs la MANO del abridor rival (split L/R) mezclado con xwOBA × forma × platoon × matchup arsenal × clutch; menos lesiones y viaje
   const travelPen = Math.min(.015, Math.max(0,(data.awayTravel||0)-5)*.004);   // gira larga => ofensiva algo cansada
-  const aOPS = blendOff(sf(data.awaySplit?.['v'+data.homePHand] ?? awayStats?.hitting?.ops, .72), data.awayOffXwoba, aBatLuck.extra)*(data.awayForm||1)*pPlatoonF(data.homePSplit,data.homePHand,data.awayHands)*xwOff(data.awayOffXwF)*(data.awayClutchF||1)*(data.awayDefF||1)*(data.awayFrameF||1)*(data.awayBrunF||1)*(data.awayFatF||1)*(data.umpRun||1) - (awayInj?.length>=3?.02:(awayInj?.length>=1?.01:0)) - travelPen;
-  const hOPS = blendOff(sf(data.homeSplit?.['v'+data.awayPHand] ?? homeStats?.hitting?.ops, .72), data.homeOffXwoba, hBatLuck.extra)*(data.homeForm||1)*pPlatoonF(data.awayPSplit,data.awayPHand,data.homeHands)*xwOff(data.homeOffXwF)*(data.homeClutchF||1)*(data.homeDefF||1)*(data.homeFrameF||1)*(data.homeBrunF||1)*(data.homeFatF||1)*(data.umpRun||1) - (homeInj?.length>=3?.02:(homeInj?.length>=1?.01:0));
+  const aOPS = blendOff(sf(data.awaySplit?.['v'+data.homePHand] ?? data.awayBaseOPS ?? awayStats?.hitting?.ops, .72), data.awayOffXwoba, aBatLuck.extra)*(data.awayForm||1)*pPlatoonF(data.homePSplit,data.homePHand,data.awayHands)*xwOff(data.awayOffXwF)*(data.awayClutchF||1)*(data.awayDefF||1)*(data.awayFrameF||1)*(data.awayBrunF||1)*(data.awayFatF||1)*(data.umpRun||1) - (awayInj?.length>=3?.02:(awayInj?.length>=1?.01:0)) - travelPen;
+  const hOPS = blendOff(sf(data.homeSplit?.['v'+data.awayPHand] ?? data.homeBaseOPS ?? homeStats?.hitting?.ops, .72), data.homeOffXwoba, hBatLuck.extra)*(data.homeForm||1)*pPlatoonF(data.awayPSplit,data.awayPHand,data.homeHands)*xwOff(data.homeOffXwF)*(data.homeClutchF||1)*(data.homeDefF||1)*(data.homeFrameF||1)*(data.homeBrunF||1)*(data.homeFatF||1)*(data.umpRun||1) - (homeInj?.length>=3?.02:(homeInj?.length>=1?.01:0));
   // Bullpen: ERA real de relevistas + penalización si lanzaron mucho en su último juego (fatiga)
   // Bullpen efectivo: calidad DISPONIBLE (FIP de los brazos listos, no el de temporada) + ERA regresado,
   // con penalización si faltan brazos de alta leverage (top-3 por FIP). Compat con número suelto/viejo.
@@ -1582,7 +1596,7 @@ async function runAnalysis() {
       const hId=g.teams.home.team.id, aId=g.teams.away.team.id;
       const hpId=g.teams.home.probablePitcher?.id, apId=g.teams.away.probablePitcher?.id;
 
-      const [hpSt,apSt,hTSt,aTSt,hWL,aWL,hInj,aInj,hBat,aBat,wx,hSplit,aSplit,hHand,aHand,hWin,aWin,hBull,aBull,hTrend,aTrend,hCtx,aCtx,hPSplit,aPSplit,hClutch,aClutch] = await Promise.all([
+      const [hpSt,apSt,hTSt,aTSt,hWL,aWL,hInj,aInj,hBat,aBat,wx,hSplit,aSplit,hHand,aHand,hWin,aWin,hBull,aBull,hTrend,aTrend,hCtx,aCtx,hPSplit,aPSplit,hClutch,aClutch,hTStP,aTStP] = await Promise.all([
         getPitcherStats(hpId,yr), getPitcherStats(apId,yr),
         getTeamStats(hId,yr), getTeamStats(aId,yr),
         getRecentGames(hId,yr), getRecentGames(aId,yr),
@@ -1597,12 +1611,21 @@ async function runAnalysis() {
         getTeamCtx(hId,date,yr), getTeamCtx(aId,date,yr),     // viaje + fatiga de bullpen
         getPitcherSplits(hpId,yr), getPitcherSplits(apId,yr), // OPS permitido vs L/R del abridor
         getTeamClutch(hId,yr), getTeamClutch(aId,yr),         // clutch: OPS con RISP y bases llenas
+        getTeamStats(hId,yr-1), getTeamStats(aId,yr-1),       // año PREVIO (2025): estabiliza el baseline
       ]);
       // Forma reciente multi-ventana: la TEMPORADA siempre domina (50%); 30/15/7 días con peso
       // decreciente. Nunca reemplaza la temporada por el last-7. Acotado ±10%.
       // Además, la desviación se AMORTIGUA si lo subyacente (K% e ISO recientes) no la respalda:
       // un OPS caliente de puro AVG/BABIP (sin mejor K%/ISO) = señal débil -> se descuenta.
-      const _hOps=sf(hTSt?.hitting?.ops,.72), _aOps=sf(aTSt?.hitting?.ops,.72);
+      // DATA WINDOWS: baseline "true talent" = mezcla año PREVIO (2025) + temporada (2026), regresada a liga.
+      // Las ventanas cortas (L30/L15/L7) van aparte en formFactor (forma reciente) → sin doble conteo.
+      const LG_OPS=.720;
+      const stabOPS=(cur,prev)=>{ const cO=parseFloat(cur?.ops), cP=+cur?.plateAppearances||0, pO=parseFloat(prev?.ops), pP=+prev?.plateAppearances||0;
+        const wins=[]; if(isFinite(cO)&&cP>0) wins.push({v:cO,pa:cP,w:RECW.season}); if(isFinite(pO)&&pP>0) wins.push({v:pO,pa:pP,w:RECW.prev});
+        return blendWindows(wins,LG_OPS,250)||{v:isFinite(cO)?cO:.72,pa:0,rel:0}; };
+      const hStab=stabOPS(hTSt?.hitting,hTStP?.hitting), aStab=stabOPS(aTSt?.hitting,aTStP?.hitting);
+      const _hOpsRaw=sf(hTSt?.hitting?.ops,.72), _aOpsRaw=sf(aTSt?.hitting?.ops,.72);   // 2026 crudo (display)
+      const _hOps=hStab.v, _aOps=aStab.v;   // baseline estabilizado (temporada 2026 domina al acumular PA; 2025 pesa temprano)
       const seasonK=st=>{ const pa=+st?.plateAppearances||0,k=+st?.strikeOuts||0; return pa?k/pa*100:null; };
       const seasonISO=st=>{ const slg=parseFloat(st?.slg),avg=parseFloat(st?.avg); return (isFinite(slg)&&isFinite(avg))?slg-avg:null; };
       const formFactor=(win,seasonOPS,sK,sIso)=>{
@@ -1729,6 +1752,7 @@ async function runAnalysis() {
         awayPitcherId: apId, homePitcherId: hpId,
         awayPitcher: apSt, homePitcher: hpSt,
         awayStats: aTSt, homeStats: hTSt,
+        awayBaseOPS: _aOps, homeBaseOPS: _hOps,   // DATA WINDOWS: baseline estabilizado (2025+2026 → liga)
         awayRecent: aWL, homeRecent: hWL,
         awayInj: aInj, homeInj: hInj, wx, kprops,
         homeSplit: hSplit, awaySplit: aSplit, homePHand: hHand, awayPHand: aHand,
@@ -1779,6 +1803,9 @@ async function runAnalysis() {
       gd.awayBrun  = aBrun;  gd.homeBrun  = hBrun;  // baserunning (run value, sprint speed, SB)
       gd.awayBull  = aBull; gd.homeBull = hBull;    // bullpen (ERA/FIP/K9)
       gd.awayFormW = aWin;  gd.homeFormW = hWin;    // ventanas de forma (7/15/30d)
+      // DATA WINDOWS: stack completo por equipo (2026/L30/L15/L7/2025 + baseline estabilizado)
+      gd.awayWin = {y26:_aOpsRaw, y25:parseFloat(aTStP?.hitting?.ops)||null, d30:aWin?.d30?.ops??null, d15:aWin?.d15?.ops??null, d7:aWin?.d7?.ops??null, stab:aStab.v};
+      gd.homeWin = {y26:_hOpsRaw, y25:parseFloat(hTStP?.hitting?.ops)||null, d30:hWin?.d30?.ops??null, d15:hWin?.d15?.ops??null, d7:hWin?.d7?.ops??null, stab:hStab.v};
       gd.awayFormF = awayForm; gd.homeFormF = homeForm;   // factor de forma resultante
       gd.awayFormC = aFF.conf; gd.homeFormC = hFF.conf;   // confirmación subyacente (ok/neutral/weak)
       results.push(gd);
@@ -1934,6 +1961,7 @@ function renderPicks(games) {
       ${(g.awayLU||g.homeLU)?(lu=>`<div class="game-footer" style="border-top:none;padding-top:0">Alineación · ${g.away} ${lu(g.awayLU)} · ${g.home} ${lu(g.homeLU)}</div>`)(i=>i?`${i.conf?'<b style="color:var(--gtx)">✓ confirmada</b>':'proyectada'} · ${i.nR}R/${i.nL}L${i.nS?`/${i.nS}S`:''}${i.kpct!=null?` · K ${i.kpct}%`:''}${i.bbpct!=null?` · BB ${i.bbpct}%`:''}${i.missing&&i.missing.length?` · <span style="color:var(--rtx)">⚠ sin ${i.missing.join(', ')}</span>`:''}`:'—'):''}
       ${(g.awayOffQ||g.homeOffQ)?(oq=>`<div class="game-footer" style="border-top:none;padding-top:0">Ofensiva (lineup) · ${g.away} ${oq(g.awayOffQ)} · ${g.home} ${oq(g.homeOffQ)}</div>`)(q=>q?`<b>Rating ${q.rating??'—'}</b> · xwOBA ${q.xwoba??'—'}${q.wrc!=null?` · wRC+ ${q.wrc}`:''}${q.xslg!=null?` · xSLG ${q.xslg}`:''}${q.iso!=null?` · ISO ${q.iso}`:''}${q.barrel!=null?` · Brl ${q.barrel}%`:''}${q.hardhit!=null?` · HH ${q.hardhit}%`:''}${q.ev!=null?` · EV ${q.ev}`:''}${q.batspeed!=null?` · BatSpd ${q.batspeed}`:''}${q.squaredup!=null?` · Sq ${q.squaredup}%`:''}${q.blast!=null?` · Blast ${q.blast}%`:''}`:'—'):''}
       ${(g.awayFormW||g.homeFormW)?(ff=>`<div class="game-footer" style="border-top:none;padding-top:0">Forma OPS · ${g.away} ${ff(g.awayFormW,g.awayFormF,g.awayFormC)} · ${g.home} ${ff(g.homeFormW,g.homeFormF,g.homeFormC)}</div>`)((w,f,conf)=>{const d=f!=null?Math.round((f-1)*100):0;const tag=conf==='ok'?' <span style="color:var(--gtx)">✓ respaldado</span>':conf==='weak'?' <span style="color:var(--rtx)">⚠ sin respaldo</span>':'';return `<b>${d>=0?'+':''}${d}%</b>${tag}`+(w?` (7d ${w.d7?.ops??'—'} · 15d ${w.d15?.ops??'—'} · 30d ${w.d30?.ops??'—'})`:'');}):''}
+      ${(g.awayWin||g.homeWin)?(wf=>`<div class="game-footer" style="border-top:none;padding-top:0">🪟 Ventanas OPS (2026·L30·L15·L7·2025 → estabilizado) · ${g.away} ${wf(g.awayWin)} · ${g.home} ${wf(g.homeWin)}</div>`)(w=>{if(!w)return '—';const s=v=>v!=null?(+v).toFixed(3):'—';return `${s(w.y26)}·${s(w.d30)}·${s(w.d15)}·${s(w.d7)}·${s(w.y25)} → <b style="color:var(--blue)">${s(w.stab)}</b>`;}):''}
       ${(g.awayBrun||g.homeBrun)?(br=>`<div class="game-footer" style="border-top:none;padding-top:0">🏃 Baserunning · ${g.away} ${br(g.awayBrun)} · ${g.home} ${br(g.homeBrun)}</div>`)(b=>b?`RV ${b.brv>=0?'+':''}${b.brv}${b.speed!=null?` · ${b.speed} ft/s`:''}${b.sb!=null?` · ${b.sb}SB/${b.cs}CS`:''}`:'—'):''}
       ${g.move?(m=>`<div class="game-footer" style="border-top:none;padding-top:0">📈 Mercado (desde apertura) · ${m}</div>`)([g.move.mlH?`ML ${amFmt(g.move.mlH.o)}→${amFmt(g.move.mlH.c)}`:'',g.move.tot?`Total ${g.move.tot.o}→${g.move.tot.c}`:'',g.move.rlH?`RL ${g.move.rlH.o>0?'+':''}${g.move.rlH.o}→${g.move.rlH.c>0?'+':''}${g.move.rlH.c}`:''].filter(Boolean).join(' · ')):''}
       ${g.luck?(L=>{const tag=z=>z>=.45?'<span style="color:var(--rtx)">⚠️ suerte</span>':z<=-.45?'<span style="color:var(--gtx)">🎯 mala suerte</span>':z>=.25?'↗ leve suerte':z<=-.25?'↘ leve mala suerte':null;

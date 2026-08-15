@@ -442,17 +442,39 @@ const VENUE_GEO = {
   146:{lat:25.78,lon:-80.22,dome:1}, 147:{lat:40.83,lon:-73.93}, 158:{lat:43.03,lon:-87.97,dome:1}
 };
 // Factor climático sobre carreras: ~0.3%/°F respecto a 70°F base; acotado a ±6%
-const wxFactor = wx => (!wx || wx.temp==null) ? 1 : cl(1+(wx.temp-70)*0.003, 0.94, 1.06);
+// Carry por clima (lo que el park factor NO captura): temperatura + humedad. El aire caliente y
+// húmedo es MENOS denso -> la bola viaja más. (La altitud queda en el park factor.)
+const wxFactor = wx => { if(!wx || wx.temp==null) return 1;
+  let f = 1 + (wx.temp-70)*0.003;                       // temperatura (~0.3%/°F)
+  if(wx.humid!=null) f += (wx.humid-50)*0.0004;         // humedad (chico)
+  return cl(f, 0.94, 1.06); };
+// Densidad del aire (kg/m³) — informativa: temp + presión de superficie + humedad
+function airDensity(tempF, pressHpa, rh){
+  if(tempF==null) return null;
+  const Tc=(tempF-32)*5/9, T=Tc+273.15, P=(pressHpa??1013)*100, RH=(rh??50)/100;
+  const es=6.1078*Math.pow(10,(7.5*Tc)/(237.3+Tc))*100, Pv=RH*es, Pd=P-Pv;
+  return +((Pd*0.0289644+Pv*0.018016)/(8.31447*T)).toFixed(3);
+}
 // Orientación aproximada home->jardín central (grados, 0=N) por estadio, para el viento
 const VENUE_BEARING = {108:45,110:33,111:45,112:30,113:60,114:5,115:0,116:30,118:50,119:25,120:30,121:25,133:60,134:70,135:45,136:60,137:80,138:70,142:75,143:30,144:70,145:55,147:30};
 // Factor por VIENTO: componente que sopla hacia el jardín (sale = más carreras). Acotado ±4%.
 // dir = de dónde viene el viento (meteorológico); sopla hacia (dir+180).
-const windFactor = (wx,bearing) => {
+const windFactor = (wx,bearing,amp=1) => {
   if(!wx || wx.wind==null || wx.windDir==null || bearing==null) return 1;
   const toward=(wx.windDir+180)%360, diff=(toward-bearing+540)%360-180;   // ángulo vs el central
   const outward=Math.cos(diff*Math.PI/180)*wx.wind;                        // mph soplando hacia afuera (+) o adentro (-)
-  return cl(1+outward*0.004, 0.96, 1.04);                                  // ~0.4%/mph, acotado
+  return cl(1+outward*0.004*amp, 0.955, 1.045);                            // ~0.4%/mph × fly-ball env, acotado
 };
+// Descripción direccional del viento: "12 mph OUT a LF" / "IN de RF" / "cruzado". bearing = home->CF.
+function windDesc(wx,bearing){
+  if(!wx || wx.wind==null || wx.windDir==null || bearing==null) return '';
+  const mph=Math.round(wx.wind); if(mph<3) return `${mph} mph calmo`;
+  const toward=(wx.windDir+180)%360, diff=(toward-bearing+540)%360-180;
+  const out=Math.cos(diff*Math.PI/180)*wx.wind, side=Math.abs(diff)<30?'CF':(diff>0?'RF':'LF');
+  if(out>3) return `${mph} mph ↗ OUT a ${side}`;
+  if(out<-3) return `${mph} mph ↘ IN de ${side}`;
+  return `${mph} mph → cruzado`;
+}
 
 // ── Imágenes: logos de equipos (SVG oficial) y fotos de jugadores (headshots) ──
 const teamLogo  = id => id?`https://www.mlbstatic.com/team-logos/${id}.svg`:'';
@@ -652,7 +674,7 @@ function computePicks(data) {
   const hwp=sig(logit), awp=1-hwp;
 
   const lg=4.4;
-  const wxF=wxFactor(data.wx)*windFactor(data.wx,VENUE_BEARING[homeId]);   // temperatura × viento (1.0 si techado)
+  const wxF=wxFactor(data.wx)*windFactor(data.wx,VENUE_BEARING[homeId],data.windAmp||1);   // (temp+humedad) × viento×fly-ball (1.0 si techado)
   // El abridor lanza ~60% del juego; el bullpen cubre el resto (cerca del promedio).
   // Mezclar abridor+bullpen evita sub-proyectar totales en duelos de ases (antes daba ~5.5 irreal).
   const SF=.6, KP=.6;                            // fracción del abridor · fuerza de supresión
@@ -1391,15 +1413,18 @@ async function getWeather(geo, date, gameISO) {
   try {
     const next = new Date(new Date(date).getTime() + 864e5).toISOString().slice(0,10);
     const url = `https://api.open-meteo.com/v1/forecast?latitude=${geo.lat}&longitude=${geo.lon}`
-      + `&hourly=temperature_2m,wind_speed_10m,wind_direction_10m&temperature_unit=fahrenheit&wind_speed_unit=mph`
-      + `&timezone=UTC&start_date=${date}&end_date=${next}`;
+      + `&hourly=temperature_2m,relative_humidity_2m,precipitation,surface_pressure,wind_speed_10m,wind_direction_10m`
+      + `&temperature_unit=fahrenheit&wind_speed_unit=mph&timezone=UTC&start_date=${date}&end_date=${next}`;
     const r = await fetch(url); if (!r.ok) return null;
     const d = await r.json();
     const times = d.hourly?.time || []; if (!times.length) return null;
     const target = new Date(gameISO).getTime();
     let bi = 0, bd = Infinity;
     times.forEach((t,i)=>{ const diff=Math.abs(new Date(t+'Z').getTime()-target); if(diff<bd){bd=diff;bi=i;} });
-    return { temp: d.hourly.temperature_2m[bi], wind: d.hourly.wind_speed_10m[bi], windDir: d.hourly.wind_direction_10m[bi] };
+    const h=d.hourly, temp=h.temperature_2m[bi], humid=h.relative_humidity_2m?.[bi]??null, press=h.surface_pressure?.[bi]??null;
+    const hr=new Date(gameISO).getUTCHours();   // día/noche aprox (hora local del estadio ~ UTC-5..-8)
+    return { temp, humid, press, precip:h.precipitation?.[bi]??null, wind:h.wind_speed_10m[bi], windDir:h.wind_direction_10m[bi],
+      density: airDensity(temp,press,humid), night: (gameISO&&(hr>=23||hr<6)) };
   } catch { return null; }
 }
 
@@ -1545,6 +1570,8 @@ async function runAnalysis() {
       const defFactor = oaa => (oaa==null||!isFinite(oaa))?1:cl(1-(oaa*.75/162)/4.5, .955, 1.045);
       const aDefF=defFactor(effOAA(hDef,gbTend(hpSt))), hDefF=defFactor(effOAA(aDef,gbTend(apSt)));   // ofensiva vs defensa rival detrás del abridor rival
       const aOAA=aDef?.oaa, hOAA=hDef?.oaa;
+      // Amplitud del viento por ambiente de fly-ball: juego con más elevados => el viento pesa más
+      const windAmp=cl(1+(.5-(gbTend(hpSt)+gbTend(apSt))/2)*1.5, .7, 1.3);
       // Catcher edge del rival: framing+blocking+throwing en runs suprimen la ofensiva propia (±4%)
       const aCatch=FRAME[aId], hCatch=FRAME[hId];
       const catcherFactor = c => (!c||c.total==null)?1:cl(1-(c.total/162)/4.5, .96, 1.04);
@@ -1586,6 +1613,7 @@ async function runAnalysis() {
         homePTrend: hTrend, awayPTrend: aTrend,                  // K/9 reciente del abridor
         awayTravel: aCtx?.awayStreak||0,                        // racha de juegos de visita del equipo visitante
         homePShape: SHAPE[hpId]||null, awayPShape: SHAPE[apId]||null,   // pitch-shape (velo/iVB) del abridor
+        windAmp,   // amplitud del viento por ambiente fly-ball del juego
         homePXera: SC.pitchers?.[hpId]?.xera, awayPXera: SC.pitchers?.[apId]?.xera,   // Statcast: xERA (contact suppression)
         homePXwoba: SC.pitchers?.[hpId]?.xwoba, awayPXwoba: SC.pitchers?.[apId]?.xwoba,   // Statcast: xwOBA allowed
         homePDisc: DISC[hpId]||null, awayPDisc: DISC[apId]||null,   // plate discipline (whiff/chase/K-BB%)
@@ -1764,7 +1792,7 @@ function renderPicks(games) {
           </div>`;
         }).join('')}
       </div>
-      <div class="game-footer">PF ${g.pf} · Total proy. ${g.total} runs${g.wx?.temp!=null?` · 🌡 ${Math.round(g.wx.temp)}°F`+(g.wx.wind!=null?` · 💨 ${Math.round(g.wx.wind)} mph${(wf=>wf>1.01?' ↗ sale':wf<0.99?' ↘ entra':'')(windFactor(g.wx,VENUE_BEARING[g.homeId]))}`:''):''}${(g.awayOAA!=null||g.homeOAA!=null)?` · 🧤 OAA ${g.away} ${g.awayOAA>=0?'+':''}${g.awayOAA??'—'}${g.awayDef?` (IF ${g.awayDef.ifOAA>=0?'+':''}${g.awayDef.ifOAA}/OF ${g.awayDef.ofOAA>=0?'+':''}${g.awayDef.ofOAA}, FRV ${g.awayDef.frv>=0?'+':''}${g.awayDef.frv})`:''} / ${g.home} ${g.homeOAA>=0?'+':''}${g.homeOAA??'—'}${g.homeDef?` (IF ${g.homeDef.ifOAA>=0?'+':''}${g.homeDef.ifOAA}/OF ${g.homeDef.ofOAA>=0?'+':''}${g.homeDef.ofOAA}, FRV ${g.homeDef.frv>=0?'+':''}${g.homeDef.frv})`:''}`:''}${(g.awayCatch||g.homeCatch)?(cd=>` · 🎯 Catcher ${g.away} ${cd(g.awayCatch)} / ${g.home} ${cd(g.homeCatch)}`)(c=>c?`${c.total>=0?'+':''}${c.total} (Fr ${c.framing>=0?'+':''}${c.framing}, Bl ${c.blocking>=0?'+':''}${c.blocking}, Th ${c.throwing>=0?'+':''}${c.throwing}${c.pop?`, pop ${c.pop}`:''})`:'—'):''}${(g.awayBull?.fip||g.homeBull?.fip)?` · 🔥 Bull FIP(disp) ${g.away} ${g.awayBull?.availFip??g.awayBull?.fip??'—'}${g.awayBull?.top3Avail!=null?` [${g.awayBull.top3Avail}/3]`:''} / ${g.home} ${g.homeBull?.availFip??g.homeBull?.fip??'—'}${g.homeBull?.top3Avail!=null?` [${g.homeBull.top3Avail}/3]`:''}`:''} · ${g.pitchers.away.name.split(' ').slice(-1)[0]} vs ${g.pitchers.home.name.split(' ').slice(-1)[0]}</div>
+      <div class="game-footer">PF ${g.pf} · Total proy. ${g.total} runs${g.wx?.temp!=null?` · 🌡 ${Math.round(g.wx.temp)}°F`+(g.wx.humid!=null?` · 💧 ${Math.round(g.wx.humid)}%`:'')+(g.wx.wind!=null?` · 💨 ${windDesc(g.wx,VENUE_BEARING[g.homeId])}`:'')+(g.wx.density!=null?` · ρ ${g.wx.density}`:'')+(g.wx.precip>0?` · 🌧 ${g.wx.precip}mm`:'')+(g.wx.night!=null?` · ${g.wx.night?'🌙':'☀️'}`:''):(g.wx===null?' · 🏟 techado':'')}${(g.awayOAA!=null||g.homeOAA!=null)?` · 🧤 OAA ${g.away} ${g.awayOAA>=0?'+':''}${g.awayOAA??'—'}${g.awayDef?` (IF ${g.awayDef.ifOAA>=0?'+':''}${g.awayDef.ifOAA}/OF ${g.awayDef.ofOAA>=0?'+':''}${g.awayDef.ofOAA}, FRV ${g.awayDef.frv>=0?'+':''}${g.awayDef.frv})`:''} / ${g.home} ${g.homeOAA>=0?'+':''}${g.homeOAA??'—'}${g.homeDef?` (IF ${g.homeDef.ifOAA>=0?'+':''}${g.homeDef.ifOAA}/OF ${g.homeDef.ofOAA>=0?'+':''}${g.homeDef.ofOAA}, FRV ${g.homeDef.frv>=0?'+':''}${g.homeDef.frv})`:''}`:''}${(g.awayCatch||g.homeCatch)?(cd=>` · 🎯 Catcher ${g.away} ${cd(g.awayCatch)} / ${g.home} ${cd(g.homeCatch)}`)(c=>c?`${c.total>=0?'+':''}${c.total} (Fr ${c.framing>=0?'+':''}${c.framing}, Bl ${c.blocking>=0?'+':''}${c.blocking}, Th ${c.throwing>=0?'+':''}${c.throwing}${c.pop?`, pop ${c.pop}`:''})`:'—'):''}${(g.awayBull?.fip||g.homeBull?.fip)?` · 🔥 Bull FIP(disp) ${g.away} ${g.awayBull?.availFip??g.awayBull?.fip??'—'}${g.awayBull?.top3Avail!=null?` [${g.awayBull.top3Avail}/3]`:''} / ${g.home} ${g.homeBull?.availFip??g.homeBull?.fip??'—'}${g.homeBull?.top3Avail!=null?` [${g.homeBull.top3Avail}/3]`:''}`:''} · ${g.pitchers.away.name.split(' ').slice(-1)[0]} vs ${g.pitchers.home.name.split(' ').slice(-1)[0]}</div>
       ${(g.awayOffQ||g.homeOffQ)?(oq=>`<div class="game-footer" style="border-top:none;padding-top:0">Ofensiva (lineup) · ${g.away} ${oq(g.awayOffQ)} · ${g.home} ${oq(g.homeOffQ)}</div>`)(q=>q?`<b>Rating ${q.rating??'—'}</b> · xwOBA ${q.xwoba??'—'}${q.wrc!=null?` · wRC+ ${q.wrc}`:''}${q.xslg!=null?` · xSLG ${q.xslg}`:''}${q.iso!=null?` · ISO ${q.iso}`:''}${q.barrel!=null?` · Brl ${q.barrel}%`:''}${q.hardhit!=null?` · HH ${q.hardhit}%`:''}${q.ev!=null?` · EV ${q.ev}`:''}${q.batspeed!=null?` · BatSpd ${q.batspeed}`:''}${q.squaredup!=null?` · Sq ${q.squaredup}%`:''}${q.blast!=null?` · Blast ${q.blast}%`:''}`:'—'):''}
       ${(g.awayFormW||g.homeFormW)?(ff=>`<div class="game-footer" style="border-top:none;padding-top:0">Forma OPS · ${g.away} ${ff(g.awayFormW,g.awayFormF,g.awayFormC)} · ${g.home} ${ff(g.homeFormW,g.homeFormF,g.homeFormC)}</div>`)((w,f,conf)=>{const d=f!=null?Math.round((f-1)*100):0;const tag=conf==='ok'?' <span style="color:var(--gtx)">✓ respaldado</span>':conf==='weak'?' <span style="color:var(--rtx)">⚠ sin respaldo</span>':'';return `<b>${d>=0?'+':''}${d}%</b>${tag}`+(w?` (7d ${w.d7?.ops??'—'} · 15d ${w.d15?.ops??'—'} · 30d ${w.d30?.ops??'—'})`:'');}):''}
       ${(g.awayBrun||g.homeBrun)?(br=>`<div class="game-footer" style="border-top:none;padding-top:0">🏃 Baserunning · ${g.away} ${br(g.awayBrun)} · ${g.home} ${br(g.homeBrun)}</div>`)(b=>b?`RV ${b.brv>=0?'+':''}${b.brv}${b.speed!=null?` · ${b.speed} ft/s`:''}${b.sb!=null?` · ${b.sb}SB/${b.cs}CS`:''}`:'—'):''}

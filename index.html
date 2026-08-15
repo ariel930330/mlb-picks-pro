@@ -599,6 +599,46 @@ function pitcherRating(m){
   return cl(parts.reduce((a,p)=>a+p.s*p.w,0)/tw, .02, .98);
 }
 
+// ── REGRESSION / LUCK FLAGS ────────────────────────────────────────────────────
+// El resultado REAL vs el ESPERADO (Statcast). Cuando divergen mucho, el bueno/malo
+// número tiene suerte pendiente de regresión: un ERA 2.61 con xERA 4.28 NO es élite.
+// z>0 = SOBRE-rendimiento (suerte, regresa a peor);  z<0 = SUB-rendimiento (mala suerte, regresa a mejor).
+// Señales periféricas desde la línea CRUDA (vs promedios de liga), independientes del xERA.
+function luckPeripherals(st){
+  if(!st) return [];
+  const H=sf(st.hits,0),HR=sf(st.homeRuns,0),BB=sf(st.baseOnBalls,0),HBP=sf(st.hitByPitch,0),
+        K=sf(st.strikeOuts,0),R=sf(st.runs,0),BF=sf(st.battersFaced,0);
+  const out=[];
+  const bipDen=BF-BB-HBP-K-HR;   // ~ bolas en juego
+  if(bipDen>50){ const babip=(H-HR)/bipDen; out.push(cl((.295-babip)/.05,-1,1)); }   // BABIP permitido BAJO => suerte (+z)
+  const lobDen=H+BB+HBP-1.4*HR;
+  if(lobDen>20){ const lob=(H+BB+HBP-R)/lobDen; out.push(cl((lob-.72)/.10,-1,1)); }   // LOB% ALTO => suerte (+z)
+  return out;
+}
+// Suerte del abridor: xERA−ERA y xwOBA−wOBA permitido (+ BABIP/LOB% de la línea cruda como confirmación).
+// Devuelve {z, extra, flag}: extra = peso adicional a mover hacia el xERA (0..0.30) según la magnitud.
+function pitchLuck(era,xera,woba,xwoba,st){
+  const core=[];
+  if(xera!=null&&isFinite(era)) core.push(cl((xera-era)/1.5,-1,1));    // xERA−ERA: + = suerte
+  if(xwoba!=null&&woba!=null)   core.push(cl((xwoba-woba)/.04,-1,1));  // xwOBA−wOBA: + = suerte
+  if(!core.length) return {z:0,extra:0,flag:null};
+  const per=luckPeripherals(st);   // BABIP/LOB% aportan la mitad de peso c/u
+  const num=core.reduce((a,b)=>a+b,0)+per.reduce((a,b)=>a+b*.5,0);
+  const den=core.length+per.length*.5;
+  const z=cl(num/den,-1,1);
+  const extra=+ (Math.abs(z)*0.30).toFixed(2);   // hasta +30% de peso hacia el xERA en gaps extremos
+  const flag = z>=.45?'suerte':(z<=-.45?'mala suerte':null);
+  return {z:+z.toFixed(2),extra,flag};
+}
+// Suerte del lineup: wOBA real vs xwOBA. + = bateando por ENCIMA de lo esperado (racha vacía, regresa a peor).
+function batLuck(woba,xwoba){
+  if(woba==null||xwoba==null) return {z:0,extra:0,flag:null};
+  const z=cl((woba-xwoba)/.03,-1,1);
+  const extra=+ (Math.abs(z)*0.25).toFixed(2);   // hasta +25% extra de peso hacia lo esperado
+  const flag = z>=.5?'suerte':(z<=-.5?'mala suerte':null);
+  return {z:+z.toFixed(2),extra,flag};
+}
+
 // ── Picks computation ─────────────────────────────────────────────────────────
 function computePicks(data) {
   const {away,home,awayId,homeId,awayPitcherId,homePitcherId,awayPitcher,homePitcher,awayStats,homeStats,awayRecent,homeRecent,awayInj,homeInj,odds} = data;
@@ -622,11 +662,13 @@ function computePicks(data) {
   const xwOff = f => f!=null ? cl(1+(f-1)*.5,.94,1.06) : 1;
   // Calidad ofensiva Statcast: mezcla el OPS real con el OPS-equivalente del xwOBA del lineup
   // (wOBA .312 ≈ OPS .72 → factor 2.31). Así xwOBA/xSLG MANEJAN la ofensiva, no solo el OPS.
-  const blendOff = (ops,xw) => { const e = xw!=null ? xw*2.31 : null; return e!=null ? .70*ops+.30*e : ops; };
+  // LUCK FLAG del lineup: si el wOBA real supera al xwOBA (racha vacía), se mueve más peso a lo esperado.
+  const aBatLuck=batLuck(data.awayOffWoba,data.awayOffXwoba), hBatLuck=batLuck(data.homeOffWoba,data.homeOffXwoba);
+  const blendOff = (ops,xw,extra=0) => { const e = xw!=null ? xw*2.31 : null; if(e==null) return ops; const wE=cl(.30+extra,.30,.55); return (1-wE)*ops+wE*e; };
   // OPS vs la MANO del abridor rival (split L/R) mezclado con xwOBA × forma × platoon × matchup arsenal × clutch; menos lesiones y viaje
   const travelPen = Math.min(.015, Math.max(0,(data.awayTravel||0)-5)*.004);   // gira larga => ofensiva algo cansada
-  const aOPS = blendOff(sf(data.awaySplit?.['v'+data.homePHand] ?? awayStats?.hitting?.ops, .72), data.awayOffXwoba)*(data.awayForm||1)*pPlatoonF(data.homePSplit,data.homePHand,data.awayHands)*xwOff(data.awayOffXwF)*(data.awayClutchF||1)*(data.awayDefF||1)*(data.awayFrameF||1)*(data.awayBrunF||1)*(data.awayFatF||1)*(data.umpRun||1) - (awayInj?.length>=3?.02:(awayInj?.length>=1?.01:0)) - travelPen;
-  const hOPS = blendOff(sf(data.homeSplit?.['v'+data.awayPHand] ?? homeStats?.hitting?.ops, .72), data.homeOffXwoba)*(data.homeForm||1)*pPlatoonF(data.awayPSplit,data.awayPHand,data.homeHands)*xwOff(data.homeOffXwF)*(data.homeClutchF||1)*(data.homeDefF||1)*(data.homeFrameF||1)*(data.homeBrunF||1)*(data.homeFatF||1)*(data.umpRun||1) - (homeInj?.length>=3?.02:(homeInj?.length>=1?.01:0));
+  const aOPS = blendOff(sf(data.awaySplit?.['v'+data.homePHand] ?? awayStats?.hitting?.ops, .72), data.awayOffXwoba, aBatLuck.extra)*(data.awayForm||1)*pPlatoonF(data.homePSplit,data.homePHand,data.awayHands)*xwOff(data.awayOffXwF)*(data.awayClutchF||1)*(data.awayDefF||1)*(data.awayFrameF||1)*(data.awayBrunF||1)*(data.awayFatF||1)*(data.umpRun||1) - (awayInj?.length>=3?.02:(awayInj?.length>=1?.01:0)) - travelPen;
+  const hOPS = blendOff(sf(data.homeSplit?.['v'+data.awayPHand] ?? homeStats?.hitting?.ops, .72), data.homeOffXwoba, hBatLuck.extra)*(data.homeForm||1)*pPlatoonF(data.awayPSplit,data.awayPHand,data.homeHands)*xwOff(data.homeOffXwF)*(data.homeClutchF||1)*(data.homeDefF||1)*(data.homeFrameF||1)*(data.homeBrunF||1)*(data.homeFatF||1)*(data.umpRun||1) - (homeInj?.length>=3?.02:(homeInj?.length>=1?.01:0));
   // Bullpen: ERA real de relevistas + penalización si lanzaron mucho en su último juego (fatiga)
   // Bullpen efectivo: calidad DISPONIBLE (FIP de los brazos listos, no el de temporada) + ERA regresado,
   // con penalización si faltan brazos de alta leverage (top-3 por FIP). Compat con número suelto/viejo.
@@ -650,8 +692,12 @@ function computePicks(data) {
   // Regresados a la media por innings lanzados; luego mezclados con xERA de Statcast
   // (si el ERA está inflado/desinflado respecto al contacto real, se corrige hacia el xERA).
   const apERAr=regress(apERA0,apIPr,LG.era,50), hpERAr=regress(hpERA0,hpIPr,LG.era,50);
-  const apERA=data.awayPXera?+(0.55*apERAr+0.45*data.awayPXera).toFixed(2):apERAr;
-  const hpERA=data.homePXera?+(0.55*hpERAr+0.45*data.homePXera).toFixed(2):hpERAr;
+  // LUCK FLAG del abridor: si ERA diverge de xERA (y BABIP/LOB% confirman), se mueve MÁS peso al xERA.
+  const apLuck=pitchLuck(apERA0,data.awayPXera,data.awayPWoba,data.awayPXwoba,awayPitcher);
+  const hpLuck=pitchLuck(hpERA0,data.homePXera,data.homePWoba,data.homePXwoba,homePitcher);
+  const apWx=cl(0.45+apLuck.extra,.45,.75), hpWx=cl(0.45+hpLuck.extra,.45,.75);   // 45%→75% xERA
+  const apERA=data.awayPXera?+((1-apWx)*apERAr+apWx*data.awayPXera).toFixed(2):apERAr;
+  const hpERA=data.homePXera?+((1-hpWx)*hpERAr+hpWx*data.homePXera).toFixed(2):hpERAr;
   const apFIP=regress(apFIP0,apIPr,LG.fip,40), hpFIP=regress(hpFIP0,hpIPr,LG.fip,40);
   const apXFIP0=calcXFIP(awayPitcher||{},apERA0), hpXFIP0=calcXFIP(homePitcher||{},hpERA0);
   const apXFIP=regress(apXFIP0,apIPr,LG.fip,40), hpXFIP=regress(hpXFIP0,hpIPr,LG.fip,40);
@@ -798,8 +844,9 @@ function computePicks(data) {
     awayWP:+awp.toFixed(4),homeWP:+hwp.toFixed(4),
     awayML:p2ml(awp),homeML:p2ml(hwp),
     total,totalLine,pf,
-    pitchers:{away:{id:awayPitcherId,name:data.awayPitcherName||'TBD',era:+apERA0.toFixed(2),fip:+apFIP0.toFixed(2),xfip:+apXFIP0.toFixed(2),xera:data.awayPXera?+(+data.awayPXera).toFixed(2):null,whiff:aD?.whiff??null,chase:aD?.chase??null,shape:data.awayPShape,k9:+apK90.toFixed(1),kExp:apKExp,kLine:apKLine,kMkt:aKMkt,rating:+aps.toFixed(3)},
-              home:{id:homePitcherId,name:data.homePitcherName||'TBD',era:+hpERA0.toFixed(2),fip:+hpFIP0.toFixed(2),xfip:+hpXFIP0.toFixed(2),xera:data.homePXera?+(+data.homePXera).toFixed(2):null,whiff:hD?.whiff??null,chase:hD?.chase??null,shape:data.homePShape,k9:+hpK90.toFixed(1),kExp:hpKExp,kLine:hpKLine,kMkt:hKMkt,rating:+hps.toFixed(3)}},
+    pitchers:{away:{id:awayPitcherId,name:data.awayPitcherName||'TBD',era:+apERA0.toFixed(2),fip:+apFIP0.toFixed(2),xfip:+apXFIP0.toFixed(2),xera:data.awayPXera?+(+data.awayPXera).toFixed(2):null,whiff:aD?.whiff??null,chase:aD?.chase??null,shape:data.awayPShape,k9:+apK90.toFixed(1),kExp:apKExp,kLine:apKLine,kMkt:aKMkt,rating:+aps.toFixed(3),luck:apLuck},
+              home:{id:homePitcherId,name:data.homePitcherName||'TBD',era:+hpERA0.toFixed(2),fip:+hpFIP0.toFixed(2),xfip:+hpXFIP0.toFixed(2),xera:data.homePXera?+(+data.homePXera).toFixed(2):null,whiff:hD?.whiff??null,chase:hD?.chase??null,shape:data.homePShape,k9:+hpK90.toFixed(1),kExp:hpKExp,kLine:hpKLine,kMkt:hKMkt,rating:+hps.toFixed(3),luck:hpLuck}},
+    luck:{awayPitch:apLuck,homePitch:hpLuck,awayBat:aBatLuck,homeBat:hBatLuck},
     picks:top3,allPicks:picks,
     features:{hps,aps,hos,aos,hbs,abs:abs2,str},
   };
@@ -1681,10 +1728,12 @@ async function runAnalysis() {
         windAmp,   // amplitud del viento por ambiente fly-ball del juego
         homePXera: SC.pitchers?.[hpId]?.xera, awayPXera: SC.pitchers?.[apId]?.xera,   // Statcast: xERA (contact suppression)
         homePXwoba: SC.pitchers?.[hpId]?.xwoba, awayPXwoba: SC.pitchers?.[apId]?.xwoba,   // Statcast: xwOBA allowed
+        homePWoba: SC.pitchers?.[hpId]?.woba, awayPWoba: SC.pitchers?.[apId]?.woba,   // wOBA REAL permitido (luck flag vs xwOBA)
         homePDisc: DISC[hpId]||null, awayPDisc: DISC[apId]||null,   // plate discipline (whiff/chase/K-BB%)
         homePSplit: hPSplit, awayPSplit: aPSplit,   // OPS permitido del abridor vs L/R
         homeHands, awayHands,   // manos de bateo de cada alineación (composición real platoon)
         awayOffXwoba: aOffQ?.xwoba, homeOffXwoba: hOffQ?.xwoba,   // xwOBA del lineup (blend con OPS)
+        awayOffWoba: aOffQ?.woba, homeOffWoba: hOffQ?.woba,   // wOBA REAL del lineup (luck flag vs xwOBA)
         awayClutchF: aClutchF, homeClutchF: hClutchF,   // clutch RISP/bases llenas (peso bajo)
         awayDefF: aDefF, homeDefF: hDefF,   // defensa OAA del rival que suprime la ofensiva propia
         awayFrameF: aFrameF, homeFrameF: hFrameF,   // catcher framing del rival
@@ -1873,6 +1922,10 @@ function renderPicks(games) {
       ${(g.awayFormW||g.homeFormW)?(ff=>`<div class="game-footer" style="border-top:none;padding-top:0">Forma OPS · ${g.away} ${ff(g.awayFormW,g.awayFormF,g.awayFormC)} · ${g.home} ${ff(g.homeFormW,g.homeFormF,g.homeFormC)}</div>`)((w,f,conf)=>{const d=f!=null?Math.round((f-1)*100):0;const tag=conf==='ok'?' <span style="color:var(--gtx)">✓ respaldado</span>':conf==='weak'?' <span style="color:var(--rtx)">⚠ sin respaldo</span>':'';return `<b>${d>=0?'+':''}${d}%</b>${tag}`+(w?` (7d ${w.d7?.ops??'—'} · 15d ${w.d15?.ops??'—'} · 30d ${w.d30?.ops??'—'})`:'');}):''}
       ${(g.awayBrun||g.homeBrun)?(br=>`<div class="game-footer" style="border-top:none;padding-top:0">🏃 Baserunning · ${g.away} ${br(g.awayBrun)} · ${g.home} ${br(g.homeBrun)}</div>`)(b=>b?`RV ${b.brv>=0?'+':''}${b.brv}${b.speed!=null?` · ${b.speed} ft/s`:''}${b.sb!=null?` · ${b.sb}SB/${b.cs}CS`:''}`:'—'):''}
       ${g.move?(m=>`<div class="game-footer" style="border-top:none;padding-top:0">📈 Mercado (desde apertura) · ${m}</div>`)([g.move.mlH?`ML ${amFmt(g.move.mlH.o)}→${amFmt(g.move.mlH.c)}`:'',g.move.tot?`Total ${g.move.tot.o}→${g.move.tot.c}`:'',g.move.rlH?`RL ${g.move.rlH.o>0?'+':''}${g.move.rlH.o}→${g.move.rlH.c>0?'+':''}${g.move.rlH.c}`:''].filter(Boolean).join(' · ')):''}
+      ${g.luck?(L=>{const tag=z=>z>=.45?'<span style="color:var(--rtx)">⚠️ suerte</span>':z<=-.45?'<span style="color:var(--gtx)">🎯 mala suerte</span>':z>=.25?'↗ leve suerte':z<=-.25?'↘ leve mala suerte':null;
+        const it=[['SP',g.away,L.awayPitch],['SP',g.home,L.homePitch],['bate',g.away,L.awayBat],['bate',g.home,L.homeBat]]
+          .map(([k,t,x])=>x&&(x.flag||Math.abs(x.z||0)>=.25)?`${t} ${k} ${tag(x.z)}`:'').filter(Boolean);
+        return it.length?`<div class="game-footer" style="border-top:none;padding-top:0">⚖️ Regresión (real vs esperado) · ${it.join(' · ')}</div>`:'';})(g.luck):''}
       ${(g.awayFat||g.homeFat)?(ft=>`<div class="game-footer" style="border-top:none;padding-top:0">😴 Fatiga · ${g.away} ${ft(g.awayFat)} · ${g.home} ${ft(g.homeFat)}</div>`)(x=>{if(!x)return '—';const tags=[];x.rest!=null&&tags.push(`${x.rest}d rest`);x.g7!=null&&tags.push(`${x.g7}/7`);x.mi>300&&tags.push(`✈ ${x.mi}mi`);x.dan&&tags.push('☀️tras🌙');x.dh&&tags.push('DH');x.xtra&&tags.push('extras');const d=x.f!=null?Math.round((x.f-1)*100):0;return `${d<0?`<span style="color:var(--rtx)">${d}%</span>`:'ok'}${tags.length?' · '+tags.join(', '):''}`;}):''}
     </div>`;
   }).join('');
@@ -2004,6 +2057,7 @@ function renderPitchers(games) {
             <div style="font-size:14px;font-weight:700;color:${['K/9','Ks Exp.'].includes(l)?'var(--green)':'var(--text)'}">${v}</div>
           </div>`).join('')}
       </div>
+      ${p.luck&&p.luck.flag?`<div style="padding:0 12px 4px;font-size:10px">${p.luck.z>0?`<span style="color:var(--rtx)">⚠️ Regresión: ERA por debajo de su xERA (suerte) — no lo tomes como élite</span>`:`<span style="color:var(--gtx)">🎯 Regresión: ERA por encima de su xERA (mala suerte) — mejor de lo que parece</span>`}</div>`:''}
       <div style="padding:6px 12px 10px;font-size:10px;color:var(--text2)">${sub}</div>
     </div>`;
   }).join('');

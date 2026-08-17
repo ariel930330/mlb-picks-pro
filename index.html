@@ -146,6 +146,33 @@ a{color:var(--blue);text-decoration:none}
   .er-row{grid-template-columns:64px 1fr 42px}
 }
 
+/* ── Switch de deporte ── */
+.sport-switch{display:inline-flex;background:var(--bg3);border:1px solid var(--border);border-radius:99px;padding:2px;gap:2px}
+.sport-btn{border:none;background:none;font-family:inherit;font-size:12px;font-weight:700;color:var(--text2);padding:5px 12px;border-radius:99px;cursor:pointer;white-space:nowrap}
+.sport-btn.active{background:var(--gold);color:#fff}
+.sport-btn:hover:not(.active){color:var(--text)}
+
+/* ── Fútbol ── */
+.lg-chks{display:flex;gap:8px;flex-wrap:wrap}
+.lg-chk{display:inline-flex;align-items:center;gap:4px;font-size:11px;font-weight:600;color:var(--text2);cursor:pointer;background:var(--bg3);border:1px solid var(--border);border-radius:99px;padding:4px 9px}
+.lg-chk input{accent-color:var(--gold);cursor:pointer;margin:0}
+.sboard-row{display:grid;grid-template-columns:minmax(0,1fr) 118px 58px 52px;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--border);font-size:12px;cursor:pointer;text-decoration:none;color:inherit;transition:background .12s}
+.sboard-row:last-child{border-bottom:none}
+.sboard-row:hover{background:var(--bg3)}
+.sb-mu{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb-pick{font-size:11px;color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sb-ev{font-weight:800;text-align:right;font-variant-numeric:tabular-nums}
+.sb-price{font-weight:700;text-align:right;color:var(--gold);font-variant-numeric:tabular-nums}
+.s1x2{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:10px 12px}
+.s1x2-col{background:var(--bg3);border-radius:var(--rs);padding:8px 6px;text-align:center}
+.s1x2-lbl{font-size:9px;color:var(--text3);font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-bottom:3px}
+.s1x2-fair{font-size:16px;font-weight:800;line-height:1;font-variant-numeric:tabular-nums}
+.s1x2-price{font-size:11px;font-weight:700;color:var(--gold);margin-top:2px;font-variant-numeric:tabular-nums}
+.s1x2-ev{font-size:11px;font-weight:800;margin-top:1px;font-variant-numeric:tabular-nums}
+.s-ou{font-size:10px;color:var(--text2);padding:0 12px 6px}
+.s-best{margin:0 12px 11px;padding:8px 11px;background:var(--bg3);border-radius:var(--rs);font-size:11px}
+@media(max-width:560px){.sboard-row{grid-template-columns:minmax(0,1fr) 52px 48px;gap:8px}.sb-pick{display:none}}
+
 /* ── Batter prop rows (chips, sin overlap) ── */
 .bt-row{display:grid;grid-template-columns:18px auto minmax(0,1fr) auto;align-items:start;gap:9px;padding:9px 12px;border-bottom:1px solid var(--border)}
 .bt-row:last-child{border-bottom:none}
@@ -285,6 +312,10 @@ body{background:radial-gradient(1200px 600px at 70% -10%,#f7f9fc,var(--bg)) fixe
       </div>
     </div>
     <div class="hdr-right">
+      <div class="sport-switch">
+        <button id="sport-mlb" class="sport-btn active" onclick="setSport('mlb')">⚾ MLB</button>
+        <button id="sport-soccer" class="sport-btn" onclick="setSport('soccer')">⚽ Fútbol</button>
+      </div>
       <span id="cloud-badge" class="badge">Conectando...</span>
       <span id="hdr-date" class="badge"></span>
       <button id="auth-btn" class="btn-sm" onclick="toggleAuth()"><i class="ti ti-lock"></i> <span id="auth-label">Entrar</span></button>
@@ -454,6 +485,17 @@ body{background:radial-gradient(1200px 600px at 70% -10%,#f7f9fc,var(--bg)) fixe
         </div>
       </div>
       <div id="props-area"><div class="empty">Cargando…</div></div>
+    </div>
+
+    <!-- FÚTBOL (5 grandes ligas) -->
+    <div class="tab-pane" id="tab-soccer">
+      <div class="toolbar">
+        <button class="btn" id="soccer-run-btn" onclick="analyzeSoccer()"><i class="ti ti-refresh"></i>Analizar jornada</button>
+        <span id="soccer-leagues" class="lg-chks"></span>
+        <span id="soccer-remaining" style="font-size:11px;color:var(--text3);margin-left:auto"></span>
+      </div>
+      <div style="font-size:10px;color:var(--text3);margin-bottom:10px">v1 de <b>mercado</b>: consenso de-vig de todas las casas vs el <b>mejor precio</b> disponible. El <b>EV</b> es el valor real de tomar la mejor cuota (line-shopping). Usa tu misma key de The Odds API. El modelo de goles/xG llega después.</div>
+      <div id="soccer-area"><div class="empty">Elige las ligas y dale a <b>Analizar jornada</b>.</div></div>
     </div>
 
   </div>
@@ -1683,6 +1725,169 @@ function pickOdds(map, home, away, gameISO) {
   if (arr.length === 1 || !gameISO) return arr[0];
   const t = new Date(gameISO).getTime();
   return arr.reduce((b, o) => Math.abs(new Date(o.commence).getTime() - t) < Math.abs(new Date(b.commence).getTime() - t) ? o : b);
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ── FÚTBOL (5 grandes ligas europeas) — v1 de MERCADO (The Odds API, CORS) ──────
+// Modelo v1 = consenso de-vig de TODAS las casas vs el MEJOR precio disponible.
+// El edge = valor real de line-shopping (mejor cuota vs prob justa), independiente
+// del mercado. Gancho listo para enchufar un modelo de goles/xG cuando haya key.
+// ══════════════════════════════════════════════════════════════════════════════
+const SOCCER_LEAGUES = [
+  {key:'soccer_epl',                name:'Premier League', short:'EPL', flag:'🏴',  cc:'Inglaterra'},
+  {key:'soccer_spain_la_liga',      name:'La Liga',        short:'LAL', flag:'🇪🇸', cc:'España'},
+  {key:'soccer_italy_serie_a',      name:'Serie A',        short:'SEA', flag:'🇮🇹', cc:'Italia'},
+  {key:'soccer_germany_bundesliga', name:'Bundesliga',     short:'BUN', flag:'🇩🇪', cc:'Alemania'},
+  {key:'soccer_france_ligue_one',   name:'Ligue 1',        short:'FL1', flag:'🇫🇷', cc:'Francia'},
+];
+const decProb = d => (d>1 ? 1/d : null);            // prob implícita de una cuota decimal (con vig)
+const bestDec = arr => Math.max(...arr);            // mejor precio = cuota decimal más alta (line shopping)
+// De-vig de un mercado de N vías: promedia por casa las probs normalizadas (quita el margen).
+// books = [[dHome,dDraw,dAway], ...] (o 2 vías). Devuelve las probs justas promedio.
+function devigMulti(books){
+  if(!books.length) return null;
+  const n=books[0].length, acc=new Array(n).fill(0);
+  for(const b of books){ const imp=b.map(decProb); const sum=imp.reduce((s,x)=>s+(x||0),0); if(sum<=0) continue; imp.forEach((p,i)=>acc[i]+=p/sum); }
+  return acc.map(x=>x/books.length);
+}
+// Trae fixtures + cuotas (1X2 + Over/Under) de las 5 ligas. 1 request por liga.
+async function getSoccerOdds(leagueKeys){
+  const key=getOddsKey();
+  if(!key) return {matches:[], noKey:true};
+  const wanted = leagueKeys && leagueKeys.length ? SOCCER_LEAGUES.filter(l=>leagueKeys.includes(l.key)) : SOCCER_LEAGUES;
+  const matches=[];
+  for(const lg of wanted){
+    try{
+      const url=`${ODDS_BASE}/sports/${lg.key}/odds?apiKey=${key}&regions=eu,uk&markets=h2h,totals&oddsFormat=decimal`;
+      const r=await fetch(url);
+      if(!r.ok){ console.warn('soccer '+lg.key+':',r.status); continue; }
+      oddsRemaining=r.headers.get('x-requests-remaining');
+      const events=await r.json();
+      for(const ev of events){ const m=computeSoccerMatch(ev, lg); if(m) matches.push(m); }
+    }catch(e){ console.warn('soccer '+lg.key+':',e.message); }
+  }
+  // Ordena por horario
+  matches.sort((a,b)=>new Date(a.commence)-new Date(b.commence));
+  return {matches};
+}
+// Construye el partido: de-vig 1X2 + O/U, mejor precio y VALUE EV por resultado.
+function computeSoccerMatch(ev, lg){
+  const home=ev.home_team, away=ev.away_team;
+  const h2hBooks=[], ouBooks=[];   // 1X2: [dH,dDraw,dA] · O/U: {point,over,under}
+  for(const bk of ev.bookmakers||[]){
+    for(const mk of bk.markets||[]){
+      if(mk.key==='h2h'){
+        let h,d,a; for(const oc of mk.outcomes){ if(oc.name===home)h=oc.price; else if(oc.name===away)a=oc.price; else if(oc.name==='Draw'||oc.name==='Empate')d=oc.price; }
+        if(h&&d&&a) h2hBooks.push([h,d,a]);
+      } else if(mk.key==='totals'){
+        let ov,un,pt; for(const oc of mk.outcomes){ if(oc.name==='Over'){ov=oc.price;pt=oc.point;} else if(oc.name==='Under')un=oc.price; }
+        if(ov&&un) ouBooks.push({point:pt,over:ov,under:un});
+      }
+    }
+  }
+  if(!h2hBooks.length) return null;
+  // 1X2
+  const fair=devigMulti(h2hBooks);   // [fH,fD,fA]
+  const best=[0,1,2].map(i=>bestDec(h2hBooks.map(b=>b[i])));   // mejor cuota por resultado
+  const ev1x2=[0,1,2].map(i=>+(fair[i]*best[i]-1).toFixed(3)); // EV con el mejor precio (>0 = valor)
+  // Over/Under — agrupa por la línea más común (usualmente 2.5)
+  let ou=null;
+  if(ouBooks.length){
+    const pts=ouBooks.map(b=>b.point); const line=median(pts);
+    const atLine=ouBooks.filter(b=>b.point===line);
+    if(atLine.length){
+      const f=devigMulti(atLine.map(b=>[b.over,b.under]));   // [fOver,fUnder]
+      const bOver=bestDec(atLine.map(b=>b.over)), bUnder=bestDec(atLine.map(b=>b.under));
+      ou={line, fairOver:f[0], fairUnder:f[1], bestOver:bOver, bestUnder:bUnder,
+          evOver:+(f[0]*bOver-1).toFixed(3), evUnder:+(f[1]*bUnder-1).toFixed(3)};
+    }
+  }
+  // Mejor apuesta de valor del partido (entre 1X2 y O/U)
+  const cand=[
+    {mkt:'1', label:`${home}`, fair:fair[0], price:best[0], ev:ev1x2[0]},
+    {mkt:'X', label:`Empate`,  fair:fair[1], price:best[1], ev:ev1x2[1]},
+    {mkt:'2', label:`${away}`, fair:fair[2], price:best[2], ev:ev1x2[2]},
+  ];
+  if(ou){ cand.push({mkt:'O', label:`Over ${ou.line}`, fair:ou.fairOver, price:ou.bestOver, ev:ou.evOver});
+          cand.push({mkt:'U', label:`Under ${ou.line}`, fair:ou.fairUnder, price:ou.bestUnder, ev:ou.evUnder}); }
+  cand.sort((a,b)=>b.ev-a.ev);
+  const bestBet=cand[0];
+  return { league:lg, home, away, commence:ev.commence_time, nBooks:h2hBooks.length,
+           fair, best, ev1x2, ou, bestBet, cand };
+}
+
+// ── Fútbol: UI (switch de deporte, análisis, render) ──────────────────────────
+let SPORT='mlb', soccerMatches=[];
+function setSport(s){
+  SPORT=s;
+  document.getElementById('sport-mlb').classList.toggle('active',s==='mlb');
+  document.getElementById('sport-soccer').classList.toggle('active',s==='soccer');
+  const mlbTabs=document.querySelector('.tabs'), soccer=document.getElementById('tab-soccer');
+  if(s==='soccer'){
+    mlbTabs.style.display='none';
+    document.querySelectorAll('.tab-pane').forEach(p=>p.classList.remove('active'));
+    soccer.classList.add('active');
+    document.querySelector('.hdr-title').textContent='Fútbol Picks Pro';
+    document.querySelector('.hdr-sub').textContent='The Odds API · 5 grandes ligas · valor de mercado';
+    setupSoccerLeagues();
+  } else {
+    mlbTabs.style.display='';
+    soccer.classList.remove('active');
+    showTab('picks');
+    document.querySelector('.hdr-title').textContent='MLB Picks Pro';
+    document.querySelector('.hdr-sub').textContent='MLB Stats API · Supabase · Modelo estadístico';
+  }
+}
+const getSoccerLeagueSel = () => { const s=localStorage.getItem('soccer_leagues'); return s?JSON.parse(s):SOCCER_LEAGUES.map(l=>l.key); };
+function saveSoccerLeagues(){ const keys=[...document.querySelectorAll('#soccer-leagues input:checked')].map(i=>i.value); localStorage.setItem('soccer_leagues',JSON.stringify(keys.length?keys:SOCCER_LEAGUES.map(l=>l.key))); }
+function setupSoccerLeagues(){
+  const el=document.getElementById('soccer-leagues'); if(!el||el.dataset.done) return;
+  const sel=getSoccerLeagueSel();
+  el.innerHTML=SOCCER_LEAGUES.map(l=>`<label class="lg-chk"><input type="checkbox" value="${l.key}" ${sel.includes(l.key)?'checked':''} onchange="saveSoccerLeagues()"> ${l.flag} ${l.short}</label>`).join('');
+  el.dataset.done='1';
+}
+async function analyzeSoccer(){
+  const area=document.getElementById('soccer-area');
+  if(!getOddsKey()){ area.innerHTML='<div class="empty">Falta tu <b>The Odds API key</b>. Ponla en la pestaña ⚾ MLB (campo "The Odds API key") — es la misma para fútbol.</div>'; return; }
+  const btn=document.getElementById('soccer-run-btn'); if(btn) btn.disabled=true;
+  area.innerHTML='<div class="loading"><div class="spin"></div>Trayendo cuotas de las ligas…</div>';
+  try{
+    const {matches}=await getSoccerOdds(getSoccerLeagueSel());
+    soccerMatches=matches;
+    const rem=document.getElementById('soccer-remaining'); if(rem&&oddsRemaining!=null) rem.textContent=`${oddsRemaining} peticiones restantes`;
+    renderSoccer(matches);
+  }catch(e){ area.innerHTML=`<div class="empty">Error: ${e.message}</div>`; }
+  if(btn) btn.disabled=false;
+}
+const evColor = v => v>=.03?'var(--green)':v>=0?'var(--gold)':'var(--text3)';
+const kickoff = iso => { try{ return new Date(iso).toLocaleString('es-MX',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}); }catch{ return ''; } };
+function renderSoccer(matches){
+  const area=document.getElementById('soccer-area');
+  if(!matches.length){ area.innerHTML='<div class="empty">No hay partidos con cuotas ahora mismo en las ligas elegidas (quizá no hay jornada próxima).</div>'; return; }
+  const fmtEv=v=>`${v>=0?'+':''}${(v*100).toFixed(1)}%`;
+  const p1=x=>Math.round(x*100)+'%', d2=x=>(+x).toFixed(2);
+  // Tablero de valor (ordenado por mejor EV)
+  const board=[...matches].map((m,i)=>({m,i})).sort((a,b)=>b.m.bestBet.ev-a.m.bestBet.ev);
+  const boardHtml=`<div class="board"><div class="board-hd"><span class="t">⚽ TABLERO DE VALOR</span><span class="s">${matches.length} partidos · mejor cuota vs consenso · por EV</span></div>${
+    board.map(({m,i})=>`<a class="sboard-row" href="#sm-${i}">
+      <span class="sb-mu">${m.league.flag} <b>${m.home}</b> <span style="color:var(--text3)">v</span> <b>${m.away}</b></span>
+      <span class="sb-pick">${m.bestBet.label}</span>
+      <span class="sb-ev" style="color:${evColor(m.bestBet.ev)}">${fmtEv(m.bestBet.ev)}</span>
+      <span class="sb-price">@${d2(m.bestBet.price)}</span>
+    </a>`).join('')}</div>`;
+  // Cards por partido (en orden de horario)
+  const cards=matches.map((m,i)=>{
+    const col=(lbl,fair,price,ev)=>`<div class="s1x2-col"><div class="s1x2-lbl">${lbl}</div><div class="s1x2-fair">${p1(fair)}</div><div class="s1x2-price">@${d2(price)}</div><div class="s1x2-ev" style="color:${evColor(ev)}">${fmtEv(ev)}</div></div>`;
+    const ou=m.ou?`<div class="s-ou">O/U ${m.ou.line} · <b>Over</b> ${p1(m.ou.fairOver)} @${d2(m.ou.bestOver)} <span style="color:${evColor(m.ou.evOver)}">${fmtEv(m.ou.evOver)}</span> · <b>Under</b> ${p1(m.ou.fairUnder)} @${d2(m.ou.bestUnder)} <span style="color:${evColor(m.ou.evUnder)}">${fmtEv(m.ou.evUnder)}</span></div>`:'';
+    const bb=m.bestBet;
+    return `<div class="card" id="sm-${i}">
+      <div class="card-hdr"><span class="card-hdr-title">${m.league.flag} ${m.home} <span style="color:var(--text3);font-weight:400">v</span> ${m.away}</span><span style="font-size:10px;color:var(--text3)">${m.league.short} · ${kickoff(m.commence)} · ${m.nBooks} casas</span></div>
+      <div class="s1x2">${col('Local ('+m.home.split(' ').slice(-1)[0]+')',m.fair[0],m.best[0],m.ev1x2[0])}${col('Empate',m.fair[1],m.best[1],m.ev1x2[1])}${col('Visita ('+m.away.split(' ').slice(-1)[0]+')',m.fair[2],m.best[2],m.ev1x2[2])}</div>
+      ${ou?`<div class="game-footer" style="border-top:none">${ou}</div>`:''}
+      <div class="s-best" style="border-left:3px solid ${evColor(bb.ev)}">⭐ <b>Mejor valor:</b> ${bb.label} @${d2(bb.price)} · <span style="color:${evColor(bb.ev)};font-weight:800">${fmtEv(bb.ev)} EV</span>${bb.ev<=0?' <span style="color:var(--text3)">(sin valor claro — el mercado está eficiente)</span>':''}</div>
+    </div>`;
+  }).join('');
+  area.innerHTML=boardHtml+cards;
 }
 
 // ── Clima (Open-Meteo, gratis y sin API key) ────────────────────────────────

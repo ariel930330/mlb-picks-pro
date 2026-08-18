@@ -1791,7 +1791,7 @@ function devigMulti(books){
 }
 // ── Motor de disciplina Baker's Picks (spec §6-8,11-15) ──────────────────────
 const SC_CFG = { evOfficial:.05, evLean:.025, edgeOfficial:.03, edgeLean:.02,
-                 dqOfficial:80, dqLean:70, kellyFrac:.25, targetEV:.05 };
+                 dqOfficial:80, dqLean:70, kellyFrac:.25, targetEV:.05, minProbNoModel:.15 };
 const kellyDec = (p,dec)=>{ const b=dec-1; return b<=0?0:Math.max(0,(p*dec-1)/b); };
 // Calidad de dato 0-100 de una selección (§8): consenso de casas, acuerdo, línea, modelo.
 function scDQ(nBooks, disp, hasOU, hasModel){
@@ -1803,12 +1803,15 @@ function scDQ(nBooks, disp, hasOU, hasModel){
   return Math.max(0,Math.min(100,Math.round(dq)));
 }
 // Clasifica una selección: con modelo → umbrales de edge (§11); sin modelo → valor de línea.
-function scClassify(edgePP, ev, dq, hasModel){
+function scClassify(edgePP, ev, dq, hasModel, prob){
   if(hasModel){
     if(edgePP>=SC_CFG.edgeOfficial*100 && ev>=SC_CFG.evOfficial && dq>=SC_CFG.dqOfficial) return 'OFFICIAL PLAY';
     if(edgePP>=SC_CFG.edgeLean*100    && ev>=SC_CFG.evLean    && dq>=SC_CFG.dqLean)     return 'STRONG LEAN';
     return 'NO BET';
   }
+  // Sin modelo: solo valor de línea. Piso de probabilidad para no perseguir longshots
+  // (con pocas casas el +EV en cuotas altas es ruido de de-vig / sesgo favorito-longshot).
+  if(prob<SC_CFG.minProbNoModel) return 'NO BET';
   if(ev>=SC_CFG.evOfficial && dq>=58) return 'VALOR DE LÍNEA';
   if(ev>=SC_CFG.evLean) return 'VALOR MENOR';
   return 'NO BET';
@@ -1846,7 +1849,7 @@ function scCand(mkt, label, modelP, noVig, prices, nBooks, hasOU, hasModel){
     breakeven:+(1/best).toFixed(4), minOdds:adjP>0?+((1+SC_CFG.targetEV)/adjP).toFixed(2):null,
     priceQ, dq, units:scUnits(ev,dq), kelly:+(SC_CFG.kellyFrac*kellyDec(adjP,best)).toFixed(3),
     nBooks, hasModel, price:best};
-  c.rank=scRank(c); c.tier=scClassify(edgePP,ev,dq,hasModel);
+  c.rank=scRank(c); c.tier=scClassify(edgePP,ev,dq,hasModel,adjP);
   return c;
 }
 // ── Modelo independiente Dixon-Coles de goles (spec §4.1) ────────────────────
@@ -1961,12 +1964,14 @@ function finalizeSoccerMatch(home, away, commence, lg, h2hBooks, ouBooks, model=
   const fair=devigMulti(h2hBooks);   // [fH,fD,fA] no-vig del mercado
   const best=[0,1,2].map(i=>bestDec(h2hBooks.map(b=>b[i])));
   const mp=[0,1,2].map(i=> hasModel && model.p1x2 ? model.p1x2[i] : fair[i]);   // prob de modelo (o mercado)
-  // Over/Under — línea más común
+  // Over/Under — elige la línea PRINCIPAL (la más equilibrada ~ even), no la mediana de alternas
   let ou=null, ouCands=[];
   if(ouBooks.length){
-    const line=median(ouBooks.map(b=>b.point));
-    const atLine=ouBooks.filter(b=>b.point===line);
-    if(atLine.length){
+    const byPt={}; ouBooks.forEach(b=>(byPt[b.point]=byPt[b.point]||[]).push(b));
+    let line=null,bal=2;
+    for(const pt in byPt){ const f=devigMulti(byPt[pt].map(b=>[b.over,b.under])); const d=Math.abs(f[0]-0.5); if(d<bal){bal=d;line=+pt;} }
+    const atLine=byPt[line];
+    if(atLine&&atLine.length){
       const f=devigMulti(atLine.map(b=>[b.over,b.under]));   // [fOver,fUnder]
       const mo = hasModel && model.ou && model.ou[line] ? model.ou[line] : f;
       ou={line, fairOver:f[0], fairUnder:f[1],
@@ -2012,6 +2017,9 @@ function computeSoccerMatch(ev, lg){
 // ── Proveedor odds-api.io (v3, 500 req/día) ──────────────────────────────────
 // Flujo: /leagues (resolver slugs) → /events?league= (fixtures) → /odds/multi (cuotas x10).
 const IO_BASE = 'https://api.odds-api.io/v3';
+// Plan gratis: máx. 2 casas seleccionadas en la cuenta (recreativas; sharps/exchanges son de pago).
+// Debe coincidir con lo elegido vía PUT /bookmakers/selected/select. /odds y /odds/multi exigen este param.
+const IO_BOOKS = 'Bet365,1xbet';
 const getOddsIoKey  = () => localStorage.getItem('oddsio_key') || '';
 const saveOddsIoKey = v => { v=(v||'').trim(); v?localStorage.setItem('oddsio_key',v):localStorage.removeItem('oddsio_key'); };
 async function ioGet(path){
@@ -2086,7 +2094,7 @@ async function getSoccerOddsIO(compKeys){
       const list=(Array.isArray(evs)?evs:evs?.events||evs?.data||[]).filter(e=>e&&e.id!=null&&(e.bookmakerCount==null||e.bookmakerCount>0)&&!['settled','finished','cancelled','postponed'].includes((e.status||'').toLowerCase()));
       for(let i=0;i<list.length;i+=10){
         const batch=list.slice(i,i+10);
-        const od=await ioGet(`/odds/multi?eventIds=${batch.map(e=>e.id).join(',')}`);
+        const od=await ioGet(`/odds/multi?eventIds=${batch.map(e=>e.id).join(',')}&bookmakers=${encodeURIComponent(IO_BOOKS)}`);
         const oddsMap=normalizeOddsIO(od);   // id → objeto bookmakers
         for(const e of batch){ const bms=oddsMap[e.id]; if(!bms) continue;
           const m=computeSoccerMatchIO({home:e.home, away:e.away, date:e.date, bookmakers:bms}, comp, str); if(m) matches.push(m); }
@@ -2122,7 +2130,11 @@ function parseMlbEventIO(e, bms){
     o.spread={homePoint:t, awayPoint:-t, fairHomeCover:fhc, fairAwayCover:1-fhc, priceHome:decToAm(bestDec(pairs.map(p=>p.h))), priceAway:decToAm(bestDec(pairs.map(p=>p.a)))}; }
   // Total: la línea con más casas (la principal)
   const totLines=Object.keys(totByLine).map(Number);
-  if(totLines.length){ const line=totLines.reduce((b,x)=>totByLine[x].length>totByLine[b].length?x:b); const pairs=totByLine[line];
+  if(totLines.length){
+    // línea principal = la más equilibrada (over/under ~ even), no una alterna
+    let line=totLines[0], bal=2;
+    for(const x of totLines){ const p=totByLine[x]; const fo=avg(p.map(q=>{const io=1/q.over,iu=1/q.under;return io/(io+iu);})); const d=Math.abs(fo-0.5); if(d<bal){bal=d;line=x;} }
+    const pairs=totByLine[line];
     const fo=avg(pairs.map(p=>{ const io=1/p.over, iu=1/p.under; return io/(io+iu); }));
     o.total={point:line, fairOver:fo, fairUnder:1-fo, priceOver:decToAm(bestDec(pairs.map(p=>p.over))), priceUnder:decToAm(bestDec(pairs.map(p=>p.under)))}; }
   return o;
@@ -2136,7 +2148,7 @@ async function getMlbOddsIO(date){
     const list=(Array.isArray(evs)?evs:evs?.events||evs?.data||[]).filter(e=>e&&e.id!=null);
     for(let i=0;i<list.length;i+=10){
       const batch=list.slice(i,i+10);
-      const od=await ioGet(`/odds/multi?eventIds=${batch.map(e=>e.id).join(',')}`);
+      const od=await ioGet(`/odds/multi?eventIds=${batch.map(e=>e.id).join(',')}&bookmakers=${encodeURIComponent(IO_BOOKS)}`);
       const oddsMap=normalizeOddsIO(od);
       for(const e of batch){ const bms=oddsMap[e.id]; if(!bms) continue; const o=parseMlbEventIO(e, bms); if(o){ const k=normName(e.home)+'|'+normName(e.away); (map[k]=map[k]||[]).push(o); } }
     }

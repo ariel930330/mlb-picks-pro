@@ -517,6 +517,10 @@ body{background:radial-gradient(1200px 600px at 70% -10%,#f7f9fc,var(--bg)) fixe
     <div class="tab-pane" id="tab-soccer">
       <div class="toolbar">
         <button class="btn" id="soccer-run-btn" onclick="analyzeSoccer()"><i class="ti ti-refresh"></i>Analizar jornada</button>
+        <input type="date" id="soccer-date" title="Ver una fecha específica (vacío = próximos días)" onchange="analyzeSoccer()"
+          style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:6px 9px;font-size:12px;color:var(--text);font-family:inherit;outline:none">
+        <button class="btn-ghost" id="soccer-date-clear" onclick="clearSoccerDate()" title="Volver a próximos días"
+          style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--rs);padding:6px 10px;font-size:11px;color:var(--text2);cursor:pointer">Próximos</button>
         <input type="password" id="oddsio-key" placeholder="odds-api.io key (cuotas, 500/día)" autocomplete="off"
           style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:7px 10px;font-size:12px;color:var(--text);font-family:inherit;outline:none;min-width:190px"
           onchange="saveOddsIoKey(this.value)">
@@ -2093,12 +2097,14 @@ function normalizeOddsIO(od){
   return map;
 }
 // Trae fixtures+cuotas de las competencias elegidas vía odds-api.io.
-async function getSoccerOddsIO(compKeys){
+async function getSoccerOddsIO(compKeys, dateStr){
   if(!getOddsIoKey()) return {matches:[], noKey:true};
   const wanted=SOCCER_LEAGUES.filter(l=>!compKeys?.length||compKeys.includes(l.key));
   const leagues=await getLeaguesIO('football');
   const from=new Date(Date.now()-45*864e5).toISOString();  // cosecha 45 días atrás…
-  const to=new Date(Date.now()+8*864e5).toISOString();     // …hasta 8 días adelante
+  // …hasta 8 días adelante (o hasta la fecha elegida, si es más lejana)
+  const toMs=Math.max(Date.now()+8*864e5, dateStr? new Date(dateStr+'T23:59:59').getTime()+864e5 : 0);
+  const to=new Date(toMs).toISOString();
   const matches=[], unresolved=[], harvest=[];
   for(const comp of wanted){
     const slug=resolveSlugIO(comp, leagues);
@@ -2208,6 +2214,9 @@ function setSport(s){
   }
 }
 const getSoccerLeagueSel = () => { const s=localStorage.getItem('soccer_leagues'); return s?JSON.parse(s):SOCCER_LEAGUES.map(l=>l.key); };
+const getSoccerDate = () => (document.getElementById('soccer-date')?.value || '');
+const soccerDay = iso => { const d=new Date(iso); return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; };
+function clearSoccerDate(){ const el=document.getElementById('soccer-date'); if(el) el.value=''; analyzeSoccer(); }
 function saveSoccerLeagues(){ const keys=[...document.querySelectorAll('#soccer-leagues input:checked')].map(i=>i.value); localStorage.setItem('soccer_leagues',JSON.stringify(keys.length?keys:SOCCER_LEAGUES.map(l=>l.key))); }
 function setupSoccerLeagues(){
   const el=document.getElementById('soccer-leagues'); if(!el||el.dataset.done) return;
@@ -2221,12 +2230,15 @@ async function analyzeSoccer(){
   const useIO=!!getOddsIoKey();
   if(!useIO && !getOddsKey()){ area.innerHTML='<div class="empty">Falta tu <b>API key</b>. Pon la de <b>odds-api.io</b> (500/día) en el campo de esta pestaña, o la de The Odds API en ⚾ MLB.</div>'; return; }
   const btn=document.getElementById('soccer-run-btn'); if(btn) btn.disabled=true;
+  const dateStr=getSoccerDate();
   area.innerHTML='<div class="loading"><div class="spin"></div>Trayendo cuotas de las ligas…</div>';
   try{
-    const res = useIO ? await getSoccerOddsIO(getSoccerLeagueSel()) : await getSoccerOdds(getSoccerLeagueSel());
-    soccerMatches=res.matches;
+    const res = useIO ? await getSoccerOddsIO(getSoccerLeagueSel(), dateStr) : await getSoccerOdds(getSoccerLeagueSel());
+    let matches=res.matches;
+    if(dateStr) matches=matches.filter(m=>soccerDay(m.commence)===dateStr);   // solo la fecha elegida
+    soccerMatches=matches;
     const rem=document.getElementById('soccer-remaining'); if(rem&&oddsRemaining!=null) rem.textContent=`${oddsRemaining} peticiones restantes${useIO?'/día':''}`;
-    renderSoccer(res.matches, res.unresolved);
+    renderSoccer(matches, res.unresolved, dateStr);
   }catch(e){ area.innerHTML=`<div class="empty">Error: ${e.message}</div>`; }
   if(btn) btn.disabled=false;
 }
@@ -2241,10 +2253,11 @@ function buildSlate(matches){
   const near=all.filter(x=>!qual.includes(x)).sort((a,b)=>b.c.ev-a.c.ev).slice(0,3);
   return { best:qual[0]||null, alts:qual.slice(1,4), near, hasModel:matches.some(m=>m.hasModel) };
 }
-function renderSoccer(matches, unresolved){
+function renderSoccer(matches, unresolved, dateStr){
   const area=document.getElementById('soccer-area');
+  const dLabel = dateStr ? new Date(dateStr+'T12:00:00').toLocaleDateString('es-MX',{weekday:'long',day:'numeric',month:'long'}) : '';
   const warn = unresolved&&unresolved.length ? `<div style="font-size:10px;color:var(--rtx);margin-bottom:8px">⚠ No se pudo resolver la liga: ${unresolved.join(', ')} (dímelo y ajusto el slug).</div>` : '';
-  if(!matches.length){ area.innerHTML=warn+'<div class="empty">No hay partidos con cuotas ahora mismo en las ligas elegidas (quizá no hay jornada próxima).</div>'; return; }
+  if(!matches.length){ area.innerHTML=warn+`<div class="empty">${dateStr?`No hay partidos con cuotas para <b>${dLabel}</b> en las ligas elegidas (las cuotas suelen aparecer ~1 semana antes; para fechas pasadas ya se jugaron).`:'No hay partidos con cuotas ahora mismo en las ligas elegidas (quizá no hay jornada próxima).'}</div>`; return; }
   const fmtEv=v=>`${v>=0?'+':''}${(v*100).toFixed(1)}%`;
   const p1=x=>Math.round(x*100)+'%', d2=x=>(+x).toFixed(2), pp=v=>`${v>=0?'+':''}${v.toFixed(1)}`;
   const slate=buildSlate(matches);
@@ -2332,7 +2345,8 @@ function renderSoccer(matches, unresolved){
       <div class="s-best" style="border-left:3px solid ${evColor(bb.ev)}">⭐ <b>Mejor valor:</b> ${bb.label} @${d2(bb.price)} · <span style="color:${evColor(bb.ev)};font-weight:800">${fmtEv(bb.ev)} EV</span>${bb.ev<=0?' <span style="color:var(--text3)">(sin valor claro — el mercado está eficiente)</span>':''}</div>
     </div>`;
   }).join('');
-  const head=`<div class="bp-head"><span>🍞 Baker's Picks · Motor de valor</span><span>${stamp}</span></div>
+  const scopeLbl = dateStr ? `📅 ${dLabel}` : `próximos días`;
+  const head=`<div class="bp-head"><span>🍞 Baker's Picks · ${scopeLbl} · ${matches.length} partidos</span><span>${stamp}</span></div>
     <div class="bp-model">${modelNote}</div>`;
   area.innerHTML=warn+head+hero+altsHtml+boardHtml+cards;
 }

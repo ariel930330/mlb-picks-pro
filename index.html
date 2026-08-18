@@ -520,13 +520,10 @@ body{background:radial-gradient(1200px 600px at 70% -10%,#f7f9fc,var(--bg)) fixe
         <input type="password" id="oddsio-key" placeholder="odds-api.io key (cuotas, 500/día)" autocomplete="off"
           style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:7px 10px;font-size:12px;color:var(--text);font-family:inherit;outline:none;min-width:190px"
           onchange="saveOddsIoKey(this.value)">
-        <input type="password" id="af-key" placeholder="API-Football key (stats, 100/día)" autocomplete="off"
-          style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:7px 10px;font-size:12px;color:var(--text);font-family:inherit;outline:none;min-width:190px"
-          onchange="saveAfKey(this.value)">
         <span id="soccer-leagues" class="lg-chks"></span>
         <span id="soccer-remaining" style="font-size:11px;color:var(--text3);margin-left:auto"></span>
       </div>
-      <div style="font-size:10px;color:var(--text3);margin-bottom:10px"><b>Cuotas</b> (odds-api.io): consenso de-vig de todas las casas vs. el mejor precio. <b>Modelo</b> (API-Football, gratis en <b>dashboard.api-football.com</b>): tabla → fuerzas ataque/defensa → Dixon-Coles → <b>edge de modelo</b>. Sin la llave de stats verás solo valor de línea; con ella, el edge real del spec.</div>
+      <div style="font-size:10px;color:var(--text3);margin-bottom:10px"><b>Cuotas</b> (odds-api.io, Bet365+1xbet): consenso de-vig vs. mejor precio. <b>Modelo</b>: cada análisis guarda los resultados finales en Supabase y, al juntar ≥30 partidos de la temporada por liga, se enciende el <b>Dixon-Coles</b> (fuerzas ataque/defensa → <b>edge de modelo</b> del spec). Hasta entonces, solo valor de línea.</div>
       <div id="soccer-area"><div class="empty">Elige las ligas y dale a <b>Analizar jornada</b>.</div></div>
     </div>
 
@@ -1913,27 +1910,44 @@ function matchLambdas(str, homeName, awayName){
   return { lh:Math.max(.15, str.lgHome*h.atkH*a.defA), la:Math.max(.15, str.lgAway*a.atkA*h.defH),
            played:Math.min(h.played,a.played), hName:h.name, aName:a.name };
 }
-// ── API-Football (v3, gratis 100/día): tabla → fuerzas. 1 request por liga. ──
-const AF_BASE  = 'https://v3.football.api-sports.io';
-const getAfKey = () => localStorage.getItem('af_key') || '';
-const saveAfKey= v => { v=(v||'').trim(); v?localStorage.setItem('af_key',v):localStorage.removeItem('af_key'); };
+// ── Modelo desde resultados propios cosechados en Supabase (spec §17) ────────
+// El Free de API-Football solo da hasta 2024-25 (viejo). En su lugar guardamos
+// los marcadores 'settled' de odds-api.io y con la temporada ACTUAL armamos las fuerzas.
 const soccerSeason = () => { const d=new Date(); const y=d.getUTCFullYear(); return d.getUTCMonth()>=6?y:y-1; };
-let _afCache={};
-async function getStrengthsAF(comp){
-  if(!getAfKey()||!comp.afId) return null;
-  const season=soccerSeason(), ck=comp.afId+'-'+season;
-  if(ck in _afCache) return _afCache[ck];
+const SC_MINGAMES = 30;   // partidos mínimos en la liga (temporada actual) para encender el modelo
+let _sbStrCache={};
+// Convierte un evento settled de odds-api.io en fila de resultado (o null).
+function settledToRow(e, compKey){
+  if((e.status||'').toLowerCase()!=='settled') return null;
+  const sc=e.scores?.periods?.ft || e.scores || {};
+  const hg=+sc.home, ag=+sc.away;
+  if(!isFinite(hg)||!isFinite(ag)) return null;
+  const d=new Date(e.date), season=(d.getUTCMonth()>=6?d.getUTCFullYear():d.getUTCFullYear()-1);
+  return { event_id:String(e.id), league:compKey, season, match_date:e.date,
+           home:e.home, away:e.away, home_goals:hg, away_goals:ag };
+}
+// Guarda (upsert) los resultados cosechados. Requiere sesión (RLS: escritura autenticada).
+async function saveSoccerResults(rows){
+  if(!rows.length) return 0;
+  try{ const {error}=await sb.from('soccer_results').upsert(rows,{onConflict:'event_id'});
+    if(error){ console.warn('sb results:',error.message); return 0; } return rows.length;
+  }catch(e){ console.warn('sb results:',e.message); return 0; }
+}
+// Lee los resultados de la temporada actual de una liga y arma las fuerzas (o null).
+async function getStrengthsSB(comp){
+  const season=soccerSeason(), ck=comp.key+'-'+season;
+  if(ck in _sbStrCache) return _sbStrCache[ck];
   try{
-    const r=await fetch(`${AF_BASE}/standings?league=${comp.afId}&season=${season}`,{headers:{'x-apisports-key':getAfKey()}});
-    if(!r.ok){ console.warn('AF '+comp.short+':',r.status); return _afCache[ck]=null; }
-    const d=await r.json();
-    const rows=[];
-    (d?.response?.[0]?.league?.standings||[]).flat().forEach(t=>{ if(!t?.team) return;
-      rows.push({name:t.team.name, hp:t.home?.played||0, hf:t.home?.goals?.for||0, ha:t.home?.goals?.against||0,
-        ap:t.away?.played||0, af:t.away?.goals?.for||0, aa:t.away?.goals?.against||0}); });
-    const played=rows.reduce((s,r)=>s+r.hp+r.ap,0);
-    return _afCache[ck]= played>=20 ? buildStrengths(rows) : null;   // sin muestra suficiente → sin modelo
-  }catch(e){ console.warn('AF '+comp.short+':',e.message); return _afCache[ck]=null; }
+    const {data,error}=await sb.from('soccer_results')
+      .select('home,away,home_goals,away_goals').eq('league',comp.key).eq('season',season);
+    if(error||!data||data.length<SC_MINGAMES) return _sbStrCache[ck]=null;
+    const T={}, get=n=>T[n]||(T[n]={name:n,hp:0,hf:0,ha:0,ap:0,af:0,aa:0});
+    data.forEach(r=>{ const h=get(r.home), a=get(r.away);
+      h.hp++; h.hf+=r.home_goals; h.ha+=r.away_goals;
+      a.ap++; a.af+=r.away_goals; a.aa+=r.home_goals; });
+    const str=buildStrengths(Object.values(T)); str.games=data.length;
+    return _sbStrCache[ck]=str;
+  }catch(e){ console.warn('sb strengths '+comp.short+':',e.message); return _sbStrCache[ck]=null; }
 }
 // Trae fixtures + cuotas (1X2 + Over/Under) de las 5 ligas. 1 request por liga.
 async function getSoccerOdds(leagueKeys){
@@ -2083,15 +2097,20 @@ async function getSoccerOddsIO(compKeys){
   if(!getOddsIoKey()) return {matches:[], noKey:true};
   const wanted=SOCCER_LEAGUES.filter(l=>!compKeys?.length||compKeys.includes(l.key));
   const leagues=await getLeaguesIO('football');
-  const to=new Date(Date.now()+8*864e5).toISOString();   // próximos 8 días
-  const matches=[], unresolved=[];
+  const from=new Date(Date.now()-45*864e5).toISOString();  // cosecha 45 días atrás…
+  const to=new Date(Date.now()+8*864e5).toISOString();     // …hasta 8 días adelante
+  const matches=[], unresolved=[], harvest=[];
   for(const comp of wanted){
     const slug=resolveSlugIO(comp, leagues);
     if(!slug){ unresolved.push(comp.short); continue; }
-    const str=await getStrengthsAF(comp);   // modelo Dixon-Coles (si hay llave API-Football)
+    const str=await getStrengthsSB(comp);   // fuerzas de la temporada actual (Supabase), o null
     try{
-      const evs=await ioGet(`/events?sport=football&league=${encodeURIComponent(slug)}&to=${encodeURIComponent(to)}`);
-      const list=(Array.isArray(evs)?evs:evs?.events||evs?.data||[]).filter(e=>e&&e.id!=null&&(e.bookmakerCount==null||e.bookmakerCount>0)&&!['settled','finished','cancelled','postponed'].includes((e.status||'').toLowerCase()));
+      const evs=await ioGet(`/events?sport=football&league=${encodeURIComponent(slug)}&from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`);
+      const all=(Array.isArray(evs)?evs:evs?.events||evs?.data||[]).filter(e=>e&&e.id!=null);
+      // Cosecha: guarda los marcadores finales para engordar el modelo
+      for(const e of all){ const row=settledToRow(e, comp.key); if(row) harvest.push(row); }
+      // Próximos con cuotas para analizar
+      const list=all.filter(e=>(e.bookmakerCount==null||e.bookmakerCount>0)&&!['settled','finished','cancelled','postponed'].includes((e.status||'').toLowerCase()));
       for(let i=0;i<list.length;i+=10){
         const batch=list.slice(i,i+10);
         const od=await ioGet(`/odds/multi?eventIds=${batch.map(e=>e.id).join(',')}&bookmakers=${encodeURIComponent(IO_BOOKS)}`);
@@ -2101,6 +2120,8 @@ async function getSoccerOddsIO(compKeys){
       }
     }catch(e){ console.warn('io '+comp.short+':',e.message); }
   }
+  const saved=await saveSoccerResults(harvest);   // upsert (dedup por event_id)
+  if(saved) console.log(`cosecha fútbol: ${saved} resultados guardados`);
   matches.sort((a,b)=>new Date(a.commence)-new Date(b.commence));
   return {matches, unresolved};
 }
@@ -2194,7 +2215,6 @@ function setupSoccerLeagues(){
   el.innerHTML=SOCCER_LEAGUES.map(l=>`<label class="lg-chk"><input type="checkbox" value="${l.key}" ${sel.includes(l.key)?'checked':''} onchange="saveSoccerLeagues()"> ${l.flag} ${l.short}</label>`).join('');
   el.dataset.done='1';
   const kin=document.getElementById('oddsio-key'); if(kin) kin.value=getOddsIoKey();
-  const afin=document.getElementById('af-key'); if(afin) afin.value=getAfKey();
 }
 async function analyzeSoccer(){
   const area=document.getElementById('soccer-area');
@@ -2231,8 +2251,8 @@ function renderSoccer(matches, unresolved){
   const stamp=new Date().toLocaleString('es-MX',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
   // Aviso del estado del modelo (edge real vs. solo valor de línea)
   const modelNote = slate.hasModel
-    ? `<span style="color:var(--gtx)">✓ modelo Dixon-Coles conectado</span>`
-    : `<span style="color:var(--gold)">⚠ modelo de stats sin conectar — el "edge" mostrado es <b>valor de línea</b> (mejor precio vs. consenso), no edge de modelo</span>`;
+    ? `<span style="color:var(--gtx)">✓ modelo Dixon-Coles activo (fuerzas de la temporada actual)</span>`
+    : `<span style="color:var(--gold)">⚠ modelo aún juntando datos — cada análisis guarda resultados; al llegar a ≥30 partidos por liga se enciende. Por ahora el número es <b>valor de línea</b> (mejor precio vs. consenso), no edge de modelo</span>`;
   // Un renglón "por qué" y "riesgos" a partir de la métrica disponible
   const whyOf=x=>{ const c=x.c, L=[];
     if(c.priceQ>.01) L.push(`Mejor precio @${d2(c.best)} supera el consenso @${d2(c.cons)} (+${(c.priceQ*100).toFixed(1)}% de precio)`);

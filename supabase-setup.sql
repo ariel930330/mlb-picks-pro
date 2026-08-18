@@ -156,6 +156,30 @@ create policy "props auth write"   on public.prop_picks for insert to authentica
 create policy "props auth update"  on public.prop_picks for update to authenticated using (true) with check (true);
 create policy "props auth delete"  on public.prop_picks for delete to authenticated using (true);
 
+-- Resultados de fútbol cosechados de odds-api.io (alimentan el modelo Dixon-Coles) ----
+--  Cada análisis guarda aquí los marcadores finales ('settled'); al juntar >=30
+--  partidos por liga de la temporada actual, se encienden las fuerzas del modelo.
+create table if not exists public.soccer_results (
+  event_id   text primary key,       -- id del evento en odds-api.io (dedup por upsert)
+  league     text,                    -- key interna (soccer_epl, soccer_mexico_ligamx, …)
+  season     integer,                 -- año de inicio de la temporada (jul→jun)
+  match_date timestamptz,
+  home       text,
+  away       text,
+  home_goals integer,
+  away_goals integer,
+  created_at timestamptz default now()
+);
+create index if not exists soccer_results_league_season on public.soccer_results (league, season);
+
+alter table public.soccer_results enable row level security;
+drop policy if exists "soccer_results public read" on public.soccer_results;
+drop policy if exists "soccer_results auth write"   on public.soccer_results;
+drop policy if exists "soccer_results auth update"  on public.soccer_results;
+create policy "soccer_results public read" on public.soccer_results for select using (true);
+create policy "soccer_results auth write"  on public.soccer_results for insert to authenticated with check (true);
+create policy "soccer_results auth update" on public.soccer_results for update to authenticated using (true) with check (true);
+
 -- Listo. Con esto:
 --   • Visitantes anónimos: solo pueden LEER (ver picks e historial).
 --   • Tú (autenticado): puedes generar, guardar, calificar y borrar.

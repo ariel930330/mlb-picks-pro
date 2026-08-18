@@ -517,13 +517,16 @@ body{background:radial-gradient(1200px 600px at 70% -10%,#f7f9fc,var(--bg)) fixe
     <div class="tab-pane" id="tab-soccer">
       <div class="toolbar">
         <button class="btn" id="soccer-run-btn" onclick="analyzeSoccer()"><i class="ti ti-refresh"></i>Analizar jornada</button>
-        <input type="password" id="oddsio-key" placeholder="odds-api.io key (500/día)" autocomplete="off"
+        <input type="password" id="oddsio-key" placeholder="odds-api.io key (cuotas, 500/día)" autocomplete="off"
           style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:7px 10px;font-size:12px;color:var(--text);font-family:inherit;outline:none;min-width:190px"
           onchange="saveOddsIoKey(this.value)">
+        <input type="password" id="af-key" placeholder="API-Football key (stats, 100/día)" autocomplete="off"
+          style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:7px 10px;font-size:12px;color:var(--text);font-family:inherit;outline:none;min-width:190px"
+          onchange="saveAfKey(this.value)">
         <span id="soccer-leagues" class="lg-chks"></span>
         <span id="soccer-remaining" style="font-size:11px;color:var(--text3);margin-left:auto"></span>
       </div>
-      <div style="font-size:10px;color:var(--text3);margin-bottom:10px">v1 de <b>mercado</b> vía <b>odds-api.io</b> (500/día): consenso de-vig de todas las casas vs el <b>mejor precio</b> disponible. El <b>EV</b> es el valor real de tomar la mejor cuota (line-shopping). El modelo de goles/xG llega después.</div>
+      <div style="font-size:10px;color:var(--text3);margin-bottom:10px"><b>Cuotas</b> (odds-api.io): consenso de-vig de todas las casas vs. el mejor precio. <b>Modelo</b> (API-Football, gratis en <b>dashboard.api-football.com</b>): tabla → fuerzas ataque/defensa → Dixon-Coles → <b>edge de modelo</b>. Sin la llave de stats verás solo valor de línea; con ella, el edge real del spec.</div>
       <div id="soccer-area"><div class="empty">Elige las ligas y dale a <b>Analizar jornada</b>.</div></div>
     </div>
 
@@ -1764,17 +1767,17 @@ function pickOdds(map, home, away, gameISO) {
 // ══════════════════════════════════════════════════════════════════════════════
 // key=The Odds API sport key · slug=odds-api.io best-guess · m/x=tokens para resolver el slug real
 const SOCCER_LEAGUES = [
-  {key:'soccer_epl',                name:'Premier League', short:'EPL', flag:'🏴',  cc:'Inglaterra',  slug:'england-premier-league',    m:['england','premier'], x:['women','u21','u23','youth']},
-  {key:'soccer_spain_la_liga',      name:'La Liga',        short:'LAL', flag:'🇪🇸', cc:'España',      slug:'spain-la-liga',             m:['spain','liga'],      x:['segunda','2','women','rfef']},
-  {key:'soccer_italy_serie_a',      name:'Serie A',        short:'SEA', flag:'🇮🇹', cc:'Italia',      slug:'italy-serie-a',             m:['italy','serie'],     x:['serieb','seriec','women','femminile']},
-  {key:'soccer_germany_bundesliga', name:'Bundesliga',     short:'BUN', flag:'🇩🇪', cc:'Alemania',    slug:'germany-bundesliga',        m:['germany','bundesliga'], x:['2bundesliga','3','frauen','women']},
-  {key:'soccer_france_ligue_one',   name:'Ligue 1',        short:'FL1', flag:'🇫🇷', cc:'Francia',     slug:'france-ligue-1',            m:['france','ligue'],    x:['ligue2','feminine','women']},
-  {key:'soccer_uefa_champs_league',              name:'Champions League', short:'UCL',  flag:'🏆', cc:'UEFA', slug:'uefa-champions-league',            m:['champions','league'], x:['women','youth','afc','concacaf','conmebol','caf','oceania','w']},
-  {key:'soccer_uefa_europa_league',              name:'Europa League',    short:'UEL',  flag:'🧡', cc:'UEFA', slug:'uefa-europa-league',               m:['europa','league'],    x:['conference','women','youth']},
-  {key:'soccer_uefa_europa_conference_league',   name:'Conference League',short:'UECL', flag:'💚', cc:'UEFA', slug:'uefa-europa-conference-league',    m:['conference'],         x:['women','youth']},
-  {key:'soccer_mexico_ligamx',      name:'Liga MX',        short:'MX',  flag:'🇲🇽', cc:'México',      slug:'mexico-liga-mx',            m:['mexico','liga'],     x:['expansion','femenil','women','u20']},
-  {key:'soccer_portugal_primeira_liga', name:'Liga Portugal', short:'POR', flag:'🇵🇹', cc:'Portugal', slug:'portugal-primeira-liga',    m:['portugal','liga'],   x:['liga2','2liga','taca','women','u23']},
-  {key:'soccer_netherlands_eredivisie', name:'Eredivisie',    short:'NED', flag:'🇳🇱', cc:'Países Bajos', slug:'netherlands-eredivisie', m:['netherlands','eredivisie'], x:['women','eerste','youth']},
+  {key:'soccer_epl',                name:'Premier League', short:'EPL', flag:'🏴',  cc:'Inglaterra',  slug:'england-premier-league',    afId:39,  m:['england','premier'], x:['women','u21','u23','youth']},
+  {key:'soccer_spain_la_liga',      name:'La Liga',        short:'LAL', flag:'🇪🇸', cc:'España',      slug:'spain-la-liga',             afId:140, m:['spain','liga'],      x:['segunda','2','women','rfef']},
+  {key:'soccer_italy_serie_a',      name:'Serie A',        short:'SEA', flag:'🇮🇹', cc:'Italia',      slug:'italy-serie-a',             afId:135, m:['italy','serie'],     x:['serieb','seriec','women','femminile']},
+  {key:'soccer_germany_bundesliga', name:'Bundesliga',     short:'BUN', flag:'🇩🇪', cc:'Alemania',    slug:'germany-bundesliga',        afId:78,  m:['germany','bundesliga'], x:['2bundesliga','3','frauen','women']},
+  {key:'soccer_france_ligue_one',   name:'Ligue 1',        short:'FL1', flag:'🇫🇷', cc:'Francia',     slug:'france-ligue-1',            afId:61,  m:['france','ligue'],    x:['ligue2','feminine','women']},
+  {key:'soccer_uefa_champs_league',              name:'Champions League', short:'UCL',  flag:'🏆', cc:'UEFA', slug:'uefa-champions-league',            afId:2,   m:['champions','league'], x:['women','youth','afc','concacaf','conmebol','caf','oceania','w']},
+  {key:'soccer_uefa_europa_league',              name:'Europa League',    short:'UEL',  flag:'🧡', cc:'UEFA', slug:'uefa-europa-league',               afId:3,   m:['europa','league'],    x:['conference','women','youth']},
+  {key:'soccer_uefa_europa_conference_league',   name:'Conference League',short:'UECL', flag:'💚', cc:'UEFA', slug:'uefa-europa-conference-league',    afId:848, m:['conference'],         x:['women','youth']},
+  {key:'soccer_mexico_ligamx',      name:'Liga MX',        short:'MX',  flag:'🇲🇽', cc:'México',      slug:'mexico-liga-mx',            afId:262, m:['mexico','liga'],     x:['expansion','femenil','women','u20']},
+  {key:'soccer_portugal_primeira_liga', name:'Liga Portugal', short:'POR', flag:'🇵🇹', cc:'Portugal', slug:'portugal-primeira-liga',    afId:94,  m:['portugal','liga'],   x:['liga2','2liga','taca','women','u23']},
+  {key:'soccer_netherlands_eredivisie', name:'Eredivisie',    short:'NED', flag:'🇳🇱', cc:'Países Bajos', slug:'netherlands-eredivisie', afId:88,  m:['netherlands','eredivisie'], x:['women','eerste','youth']},
 ];
 const decProb = d => (d>1 ? 1/d : null);            // prob implícita de una cuota decimal (con vig)
 const bestDec = arr => Math.max(...arr);            // mejor precio = cuota decimal más alta (line shopping)
@@ -1830,7 +1833,9 @@ function scCand(mkt, label, modelP, noVig, prices, nBooks, hasOU, hasModel){
   const best=bestDec(prices), cons=avg(prices);
   const imps=prices.map(d=>1/d), mean=avg(imps);
   const disp=mean>0?(Math.max(...imps)-Math.min(...imps))/mean:1;
-  const dq=scDQ(nBooks, disp, hasOU, hasModel);
+  let dq=scDQ(nBooks, disp, hasOU, hasModel);
+  // §9: castiga discrepancias grandes modelo-mercado (probable error del modelo, no edge)
+  if(hasModel){ const dis=Math.abs(modelP-noVig); if(dis>.08) dq=Math.max(35, dq-Math.round((dis-.08)*120)); }
   const qw=dq/100;
   const adjP=qw*modelP+(1-qw)*noVig;                     // §8 shrinkage al mercado
   const edgePP=+((adjP-noVig)*100).toFixed(2);           // §7 edge de modelo (pp)
@@ -1843,6 +1848,89 @@ function scCand(mkt, label, modelP, noVig, prices, nBooks, hasOU, hasModel){
     nBooks, hasModel, price:best};
   c.rank=scRank(c); c.tier=scClassify(edgePP,ev,dq,hasModel);
   return c;
+}
+// ── Modelo independiente Dixon-Coles de goles (spec §4.1) ────────────────────
+const _fact = n => { let r=1; for(let i=2;i<=n;i++) r*=i; return r; };
+const _pois = (k,l) => Math.exp(-l)*Math.pow(l,k)/_fact(k);
+// Ajuste de baja anotación Dixon-Coles (correlación en 0-0,1-0,0-1,1-1)
+function _dcTau(x,y,lh,la,rho){
+  if(x===0&&y===0) return 1-lh*la*rho;
+  if(x===0&&y===1) return 1+lh*rho;
+  if(x===1&&y===0) return 1+la*rho;
+  if(x===1&&y===1) return 1-rho;
+  return 1;
+}
+// λ local, λ visita → 1X2 + over/under de las líneas pedidas.
+function dcModel(lh, la, lines=[2.5], rho=-0.05, MAX=10){
+  let pH=0,pD=0,pA=0,norm=0; const over={}; lines.forEach(L=>over[L]=0);
+  for(let x=0;x<=MAX;x++) for(let y=0;y<=MAX;y++) norm+=_dcTau(x,y,lh,la,rho)*_pois(x,lh)*_pois(y,la);
+  for(let x=0;x<=MAX;x++) for(let y=0;y<=MAX;y++){
+    const p=_dcTau(x,y,lh,la,rho)*_pois(x,lh)*_pois(y,la)/norm;
+    if(x>y)pH+=p; else if(x===y)pD+=p; else pA+=p;
+    const tot=x+y; lines.forEach(L=>{ if(tot>L) over[L]+=p; });
+  }
+  const ou={}; lines.forEach(L=>ou[L]=[over[L],1-over[L]]);   // [over,under]
+  return { p1x2:[pH,pD,pA], ou, lambda:{h:lh,a:la} };
+}
+// Fuerzas ataque/defensa (local/visita) desde la tabla, con shrinkage por # de partidos.
+function buildStrengths(rows){
+  const K=4;   // partidos de prior a la media de liga (regresa el arranque de temporada)
+  let HF=0,HP=0,AF=0,AP=0; rows.forEach(r=>{ HF+=r.hf; HP+=r.hp; AF+=r.af; AP+=r.ap; });
+  const lgHome=HP>0?HF/HP:1.45, lgAway=AP>0?AF/AP:1.15;   // media de liga: goles local / visita
+  const map={};
+  rows.forEach(r=>{
+    map[normName(r.name)]={
+      atkH:((r.hf+K*lgHome)/(r.hp+K))/lgHome, defH:((r.ha+K*lgAway)/(r.hp+K))/lgAway,
+      atkA:((r.af+K*lgAway)/(r.ap+K))/lgAway, defA:((r.aa+K*lgHome)/(r.ap+K))/lgHome,
+      name:r.name, played:r.hp+r.ap };
+  });
+  return {map, lgHome, lgAway};
+}
+// Empareja un nombre de equipo entre proveedores (odds-api.io ↔ API-Football).
+const _TSTOP=['fc','cf','ac','sc','ss','as','sv','cd','rc','afc','vfl','vfb','tsg','fsv','ssc','ogc','sd','ca',
+  'club','de','the','calcio','sporting','1'];
+const _TALIAS={spurs:'tottenham', wolves:'wolverhampton', inter:'internazionale', atleti:'atletico', psg:'paris'};
+function _teamToks(s){ return (s||'').toLowerCase().replace(/[^a-z0-9 ]/g,' ').split(/\s+/)
+  .filter(w=>w.length>1 && !_TSTOP.includes(w)).map(w=>_TALIAS[w]||w); }
+const _tokMatch=(a,b)=> a===b || (a.length>=3&&b.length>=3&&(a.startsWith(b)||b.startsWith(a)));
+function findTeam(map, name){
+  const n=normName(name); if(map[n]) return map[n];
+  const q=_teamToks(name); if(!q.length) return null;
+  let best=null,bs=0;
+  for(const k in map){ const tt=_teamToks(map[k].name); if(!tt.length) continue;
+    let s=0; q.forEach(w=>{ if(tt.some(t=>_tokMatch(w,t))) s++; });
+    const frac=s/Math.max(q.length,tt.length);
+    if(frac>bs){ bs=frac; best=map[k]; } }
+  return bs>=0.5?best:null;
+}
+// λ del partido a partir de las fuerzas.
+function matchLambdas(str, homeName, awayName){
+  const h=findTeam(str.map,homeName), a=findTeam(str.map,awayName);
+  if(!h||!a) return null;
+  return { lh:Math.max(.15, str.lgHome*h.atkH*a.defA), la:Math.max(.15, str.lgAway*a.atkA*h.defH),
+           played:Math.min(h.played,a.played), hName:h.name, aName:a.name };
+}
+// ── API-Football (v3, gratis 100/día): tabla → fuerzas. 1 request por liga. ──
+const AF_BASE  = 'https://v3.football.api-sports.io';
+const getAfKey = () => localStorage.getItem('af_key') || '';
+const saveAfKey= v => { v=(v||'').trim(); v?localStorage.setItem('af_key',v):localStorage.removeItem('af_key'); };
+const soccerSeason = () => { const d=new Date(); const y=d.getUTCFullYear(); return d.getUTCMonth()>=6?y:y-1; };
+let _afCache={};
+async function getStrengthsAF(comp){
+  if(!getAfKey()||!comp.afId) return null;
+  const season=soccerSeason(), ck=comp.afId+'-'+season;
+  if(ck in _afCache) return _afCache[ck];
+  try{
+    const r=await fetch(`${AF_BASE}/standings?league=${comp.afId}&season=${season}`,{headers:{'x-apisports-key':getAfKey()}});
+    if(!r.ok){ console.warn('AF '+comp.short+':',r.status); return _afCache[ck]=null; }
+    const d=await r.json();
+    const rows=[];
+    (d?.response?.[0]?.league?.standings||[]).flat().forEach(t=>{ if(!t?.team) return;
+      rows.push({name:t.team.name, hp:t.home?.played||0, hf:t.home?.goals?.for||0, ha:t.home?.goals?.against||0,
+        ap:t.away?.played||0, af:t.away?.goals?.for||0, aa:t.away?.goals?.against||0}); });
+    const played=rows.reduce((s,r)=>s+r.hp+r.ap,0);
+    return _afCache[ck]= played>=20 ? buildStrengths(rows) : null;   // sin muestra suficiente → sin modelo
+  }catch(e){ console.warn('AF '+comp.short+':',e.message); return _afCache[ck]=null; }
 }
 // Trae fixtures + cuotas (1X2 + Over/Under) de las 5 ligas. 1 request por liga.
 async function getSoccerOdds(leagueKeys){
@@ -1953,7 +2041,7 @@ function resolveSlugIO(comp, leagues){
   return comp.slug||null;
 }
 // Parsea un EventResponse de odds-api.io y delega la matemática compartida.
-function computeSoccerMatchIO(ev, lg){
+function computeSoccerMatchIO(ev, lg, str){
   const home=ev.home, away=ev.away, bms=ev.bookmakers||{};
   const h2hBooks=[], ouBooks=[];
   for(const bkName in bms){
@@ -1966,7 +2054,11 @@ function computeSoccerMatchIO(ev, lg){
       }
     }
   }
-  return finalizeSoccerMatch(home, away, ev.date, lg, h2hBooks, ouBooks);
+  let model=null;
+  if(str){ const lam=matchLambdas(str, home, away);
+    if(lam){ const lines=ouBooks.length?[...new Set(ouBooks.map(b=>b.point))]:[2.5];
+      model=dcModel(lam.lh, lam.la, lines); model.played=lam.played; } }
+  return finalizeSoccerMatch(home, away, ev.date, lg, h2hBooks, ouBooks, model);
 }
 // Normaliza la respuesta de /odds/multi a un mapa id → objeto bookmakers (soporta varias formas).
 function normalizeOddsIO(od){
@@ -1988,6 +2080,7 @@ async function getSoccerOddsIO(compKeys){
   for(const comp of wanted){
     const slug=resolveSlugIO(comp, leagues);
     if(!slug){ unresolved.push(comp.short); continue; }
+    const str=await getStrengthsAF(comp);   // modelo Dixon-Coles (si hay llave API-Football)
     try{
       const evs=await ioGet(`/events?sport=football&league=${encodeURIComponent(slug)}&to=${encodeURIComponent(to)}`);
       const list=(Array.isArray(evs)?evs:evs?.events||evs?.data||[]).filter(e=>e&&e.id!=null&&(e.bookmakerCount==null||e.bookmakerCount>0)&&!['settled','finished','cancelled','postponed'].includes((e.status||'').toLowerCase()));
@@ -1996,7 +2089,7 @@ async function getSoccerOddsIO(compKeys){
         const od=await ioGet(`/odds/multi?eventIds=${batch.map(e=>e.id).join(',')}`);
         const oddsMap=normalizeOddsIO(od);   // id → objeto bookmakers
         for(const e of batch){ const bms=oddsMap[e.id]; if(!bms) continue;
-          const m=computeSoccerMatchIO({home:e.home, away:e.away, date:e.date, bookmakers:bms}, comp); if(m) matches.push(m); }
+          const m=computeSoccerMatchIO({home:e.home, away:e.away, date:e.date, bookmakers:bms}, comp, str); if(m) matches.push(m); }
       }
     }catch(e){ console.warn('io '+comp.short+':',e.message); }
   }
@@ -2089,6 +2182,7 @@ function setupSoccerLeagues(){
   el.innerHTML=SOCCER_LEAGUES.map(l=>`<label class="lg-chk"><input type="checkbox" value="${l.key}" ${sel.includes(l.key)?'checked':''} onchange="saveSoccerLeagues()"> ${l.flag} ${l.short}</label>`).join('');
   el.dataset.done='1';
   const kin=document.getElementById('oddsio-key'); if(kin) kin.value=getOddsIoKey();
+  const afin=document.getElementById('af-key'); if(afin) afin.value=getAfKey();
 }
 async function analyzeSoccer(){
   const area=document.getElementById('soccer-area');

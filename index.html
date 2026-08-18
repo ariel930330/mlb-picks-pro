@@ -172,6 +172,29 @@ a{color:var(--blue);text-decoration:none}
 .s-ou{font-size:10px;color:var(--text2);padding:0 12px 6px}
 .s-best{margin:0 12px 11px;padding:8px 11px;background:var(--bg3);border-radius:var(--rs);font-size:11px}
 @media(max-width:560px){.sboard-row{grid-template-columns:minmax(0,1fr) 52px 48px;gap:8px}.sb-pick{display:none}}
+.bp-head{display:flex;justify-content:space-between;align-items:center;font-size:11px;font-weight:800;color:var(--text2);margin-bottom:6px}
+.bp-model{font-size:10.5px;margin-bottom:10px;padding:6px 10px;background:var(--bg3);border-radius:var(--rs);line-height:1.4}
+.bp-card{background:var(--bg2);border:2px solid;border-radius:var(--r);padding:13px 15px;margin-bottom:12px;box-shadow:var(--shadow)}
+.bp-hd{display:flex;justify-content:space-between;align-items:center;margin-bottom:9px}
+.bp-tag{color:#fff;font-size:10px;font-weight:800;padding:3px 9px;border-radius:20px;letter-spacing:.3px}
+.bp-cls{font-size:12px;font-weight:800}
+.bp-sel{font-size:16px;font-weight:800;margin-bottom:2px}
+.bp-mkt{font-size:10px;font-weight:700;color:var(--text3);background:var(--bg3);padding:2px 7px;border-radius:5px;vertical-align:middle}
+.bp-mu{font-size:11px;color:var(--text2);margin-bottom:10px}
+.bp-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px;margin-bottom:10px}
+.bp-cell{background:var(--bg3);border-radius:var(--rs);padding:7px 8px;display:flex;flex-direction:column;gap:2px}
+.bp-cell span{font-size:9px;color:var(--text3);font-weight:700}
+.bp-cell b{font-size:14px;font-variant-numeric:tabular-nums}
+.bp-cell.hl{background:var(--bg4)}
+.bp-timing{font-size:11px;font-weight:800;color:var(--blue);padding:7px 10px;background:var(--bg3);border-radius:var(--rs);margin-bottom:9px}
+.bp-why{font-size:10.5px;margin-bottom:7px}
+.bp-why b{display:block;color:var(--text2);margin-bottom:3px;font-size:10px;text-transform:uppercase;letter-spacing:.3px}
+.bp-why ol{margin:0;padding-left:18px;color:var(--text2);line-height:1.5}
+.bp-near-hd{font-size:10px;font-weight:800;color:var(--text2);margin:10px 0 6px;text-transform:uppercase}
+.bp-near{padding:6px 0;border-top:1px solid var(--border)}
+.bp-near-mu{font-size:12px;font-weight:700}
+.bp-near-m{font-size:10px;color:var(--text2);margin-top:2px}
+@media(max-width:560px){.bp-grid{grid-template-columns:repeat(2,1fr)}}
 
 /* ── Batter prop rows (chips, sin overlap) ── */
 .bt-row{display:grid;grid-template-columns:18px auto minmax(0,1fr) auto;align-items:start;gap:9px;padding:9px 12px;border-bottom:1px solid var(--border)}
@@ -1763,6 +1786,64 @@ function devigMulti(books){
   for(const b of books){ const imp=b.map(decProb); const sum=imp.reduce((s,x)=>s+(x||0),0); if(sum<=0) continue; imp.forEach((p,i)=>acc[i]+=p/sum); }
   return acc.map(x=>x/books.length);
 }
+// ── Motor de disciplina Baker's Picks (spec §6-8,11-15) ──────────────────────
+const SC_CFG = { evOfficial:.05, evLean:.025, edgeOfficial:.03, edgeLean:.02,
+                 dqOfficial:80, dqLean:70, kellyFrac:.25, targetEV:.05 };
+const kellyDec = (p,dec)=>{ const b=dec-1; return b<=0?0:Math.max(0,(p*dec-1)/b); };
+// Calidad de dato 0-100 de una selección (§8): consenso de casas, acuerdo, línea, modelo.
+function scDQ(nBooks, disp, hasOU, hasModel){
+  let dq = 46;
+  dq += Math.min(22,(nBooks-1)*4.5);                     // consenso: 6+ casas ≈ +22
+  dq += disp<=.04?12 : disp<=.08?7 : disp<=.14?2 : -4;   // acuerdo entre casas
+  dq += hasOU?5:0;
+  dq += hasModel?18:-6;                                   // modelo independiente conectado
+  return Math.max(0,Math.min(100,Math.round(dq)));
+}
+// Clasifica una selección: con modelo → umbrales de edge (§11); sin modelo → valor de línea.
+function scClassify(edgePP, ev, dq, hasModel){
+  if(hasModel){
+    if(edgePP>=SC_CFG.edgeOfficial*100 && ev>=SC_CFG.evOfficial && dq>=SC_CFG.dqOfficial) return 'OFFICIAL PLAY';
+    if(edgePP>=SC_CFG.edgeLean*100    && ev>=SC_CFG.evLean    && dq>=SC_CFG.dqLean)     return 'STRONG LEAN';
+    return 'NO BET';
+  }
+  if(ev>=SC_CFG.evOfficial && dq>=58) return 'VALOR DE LÍNEA';
+  if(ev>=SC_CFG.evLean) return 'VALOR MENOR';
+  return 'NO BET';
+}
+const scQualifies = t => t!=='NO BET';
+// Unidades sugeridas (§15) sin bankroll: rating por fuerza del edge.
+function scUnits(ev, dq){
+  if(ev<SC_CFG.evLean) return 0;
+  if(ev>=.12 && dq>=82) return 1.0;
+  if(ev>=.08 && dq>=76) return .75;
+  if(ev>=.05) return .5;
+  return .25;
+}
+// Puntaje de ranking 0-100 (§12, con los insumos disponibles).
+function scRank(c){
+  const evS=Math.max(0,Math.min(1,c.ev/.15)), edgeS=Math.max(0,Math.min(1,c.edgePP/6)),
+        dqS=c.dq/100, liqS=Math.max(0,Math.min(1,(c.nBooks-1)/6)), pS=Math.max(0,Math.min(1,c.priceQ/.10));
+  return Math.round(100*(.40*evS+.25*edgeS+.20*dqS+.10*liqS+.05*pS));
+}
+// Construye una selección con toda la métrica del spec (§7-8,12,14-15).
+function scCand(mkt, label, modelP, noVig, prices, nBooks, hasOU, hasModel){
+  const best=bestDec(prices), cons=avg(prices);
+  const imps=prices.map(d=>1/d), mean=avg(imps);
+  const disp=mean>0?(Math.max(...imps)-Math.min(...imps))/mean:1;
+  const dq=scDQ(nBooks, disp, hasOU, hasModel);
+  const qw=dq/100;
+  const adjP=qw*modelP+(1-qw)*noVig;                     // §8 shrinkage al mercado
+  const edgePP=+((adjP-noVig)*100).toFixed(2);           // §7 edge de modelo (pp)
+  const ev=+(adjP*best-1).toFixed(4);                    // §7 EV con el mejor precio
+  const priceQ=cons>0?best/cons-1:0;
+  const c={mkt,label,modelP,noVig,adjP,best,cons,
+    edgePP, ev, fairOdds:modelP>0?+(1/modelP).toFixed(2):null,
+    breakeven:+(1/best).toFixed(4), minOdds:adjP>0?+((1+SC_CFG.targetEV)/adjP).toFixed(2):null,
+    priceQ, dq, units:scUnits(ev,dq), kelly:+(SC_CFG.kellyFrac*kellyDec(adjP,best)).toFixed(3),
+    nBooks, hasModel, price:best};
+  c.rank=scRank(c); c.tier=scClassify(edgePP,ev,dq,hasModel);
+  return c;
+}
 // Trae fixtures + cuotas (1X2 + Over/Under) de las 5 ligas. 1 request por liga.
 async function getSoccerOdds(leagueKeys){
   const key=getOddsKey();
@@ -1785,36 +1866,42 @@ async function getSoccerOdds(leagueKeys){
 }
 // Matemática COMPARTIDA (cualquier proveedor): de-vig 1X2 + O/U, mejor precio y VALUE EV.
 // h2hBooks = [[dHome,dDraw,dAway], …] · ouBooks = [{point,over,under}, …]
-function finalizeSoccerMatch(home, away, commence, lg, h2hBooks, ouBooks){
+function finalizeSoccerMatch(home, away, commence, lg, h2hBooks, ouBooks, model=null){
   if(!h2hBooks.length) return null;
-  // 1X2
-  const fair=devigMulti(h2hBooks);   // [fH,fD,fA]
-  const best=[0,1,2].map(i=>bestDec(h2hBooks.map(b=>b[i])));   // mejor cuota por resultado
-  const ev1x2=[0,1,2].map(i=>+(fair[i]*best[i]-1).toFixed(3)); // EV con el mejor precio (>0 = valor)
-  // Over/Under — agrupa por la línea más común (usualmente 2.5)
-  let ou=null;
+  const nB=h2hBooks.length, hasModel=!!model;
+  // 1X2 — de-vig del mercado (prob sin margen) = prob de referencia (§6)
+  const fair=devigMulti(h2hBooks);   // [fH,fD,fA] no-vig del mercado
+  const best=[0,1,2].map(i=>bestDec(h2hBooks.map(b=>b[i])));
+  const mp=[0,1,2].map(i=> hasModel && model.p1x2 ? model.p1x2[i] : fair[i]);   // prob de modelo (o mercado)
+  // Over/Under — línea más común
+  let ou=null, ouCands=[];
   if(ouBooks.length){
-    const pts=ouBooks.map(b=>b.point); const line=median(pts);
+    const line=median(ouBooks.map(b=>b.point));
     const atLine=ouBooks.filter(b=>b.point===line);
     if(atLine.length){
       const f=devigMulti(atLine.map(b=>[b.over,b.under]));   // [fOver,fUnder]
-      const bOver=bestDec(atLine.map(b=>b.over)), bUnder=bestDec(atLine.map(b=>b.under));
-      ou={line, fairOver:f[0], fairUnder:f[1], bestOver:bOver, bestUnder:bUnder,
-          evOver:+(f[0]*bOver-1).toFixed(3), evUnder:+(f[1]*bUnder-1).toFixed(3)};
+      const mo = hasModel && model.ou && model.ou[line] ? model.ou[line] : f;
+      ou={line, fairOver:f[0], fairUnder:f[1],
+          bestOver:bestDec(atLine.map(b=>b.over)), bestUnder:bestDec(atLine.map(b=>b.under))};
+      ouCands=[
+        scCand('O',`Over ${line}`,  mo[0], f[0], atLine.map(b=>b.over),  atLine.length, true, hasModel),
+        scCand('U',`Under ${line}`, mo[1], f[1], atLine.map(b=>b.under), atLine.length, true, hasModel),
+      ];
+      ou.evOver=ouCands[0].ev; ou.evUnder=ouCands[1].ev;
     }
   }
-  // Mejor apuesta de valor del partido (entre 1X2 y O/U)
+  // Todas las selecciones con métrica completa del spec
   const cand=[
-    {mkt:'1', label:`${home}`, fair:fair[0], price:best[0], ev:ev1x2[0]},
-    {mkt:'X', label:`Empate`,  fair:fair[1], price:best[1], ev:ev1x2[1]},
-    {mkt:'2', label:`${away}`, fair:fair[2], price:best[2], ev:ev1x2[2]},
+    scCand('1', home,     mp[0], fair[0], h2hBooks.map(b=>b[0]), nB, !!ou, hasModel),
+    scCand('X','Empate',  mp[1], fair[1], h2hBooks.map(b=>b[1]), nB, !!ou, hasModel),
+    scCand('2', away,     mp[2], fair[2], h2hBooks.map(b=>b[2]), nB, !!ou, hasModel),
+    ...ouCands,
   ];
-  if(ou){ cand.push({mkt:'O', label:`Over ${ou.line}`, fair:ou.fairOver, price:ou.bestOver, ev:ou.evOver});
-          cand.push({mkt:'U', label:`Under ${ou.line}`, fair:ou.fairUnder, price:ou.bestUnder, ev:ou.evUnder}); }
-  cand.sort((a,b)=>b.ev-a.ev);
-  const bestBet=cand[0];
-  return { league:lg, home, away, commence, nBooks:h2hBooks.length,
-           fair, best, ev1x2, ou, bestBet, cand };
+  const byMkt=m=>cand.find(c=>c.mkt===m);
+  const ev1x2=['1','X','2'].map(m=>byMkt(m)?.ev ?? 0);
+  cand.sort((a,b)=> b.rank-a.rank || b.ev-a.ev);
+  return { league:lg, home, away, commence, nBooks:nB, hasModel, model,
+           fair, best, ev1x2, ou, bestBet:cand[0], cand };
 }
 // The Odds API: parsea el evento y delega la matemática.
 function computeSoccerMatch(ev, lg){
@@ -1984,7 +2071,7 @@ function setSport(s){
     document.querySelectorAll('.tab-pane').forEach(p=>p.classList.remove('active'));
     soccer.classList.add('active');
     document.querySelector('.hdr-title').textContent='Fútbol Picks Pro';
-    document.querySelector('.hdr-sub').textContent='The Odds API · 5 grandes ligas · valor de mercado';
+    document.querySelector('.hdr-sub').textContent="Motor Baker's Picks · 11 competiciones · valor + disciplina";
     setupSoccerLeagues();
   } else {
     mlbTabs.style.display='';
@@ -2019,15 +2106,88 @@ async function analyzeSoccer(){
 }
 const evColor = v => v>=.03?'var(--green)':v>=0?'var(--gold)':'var(--text3)';
 const kickoff = iso => { try{ return new Date(iso).toLocaleString('es-MX',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}); }catch{ return ''; } };
+const tierColor = t => t==='OFFICIAL PLAY'||t==='VALOR DE LÍNEA'?'var(--green)' : t==='STRONG LEAN'||t==='VALOR MENOR'?'var(--gold)' : 'var(--text3)';
+const dqColorS  = d => d>=80?'var(--gtx)' : d>=65?'var(--gold)' : 'var(--rtx)';
+// Arma el "slate" del spec §18: mejor jugada, hasta 3 alternativas, y NO BET si nada califica.
+function buildSlate(matches){
+  const all=[]; matches.forEach((m,i)=>m.cand.forEach(c=>all.push({c,m,mi:i})));
+  const qual=all.filter(x=>scQualifies(x.c.tier)&&x.c.ev>0).sort((a,b)=>b.c.rank-a.c.rank||b.c.ev-a.c.ev);
+  const near=all.filter(x=>!qual.includes(x)).sort((a,b)=>b.c.ev-a.c.ev).slice(0,3);
+  return { best:qual[0]||null, alts:qual.slice(1,4), near, hasModel:matches.some(m=>m.hasModel) };
+}
 function renderSoccer(matches, unresolved){
   const area=document.getElementById('soccer-area');
   const warn = unresolved&&unresolved.length ? `<div style="font-size:10px;color:var(--rtx);margin-bottom:8px">⚠ No se pudo resolver la liga: ${unresolved.join(', ')} (dímelo y ajusto el slug).</div>` : '';
   if(!matches.length){ area.innerHTML=warn+'<div class="empty">No hay partidos con cuotas ahora mismo en las ligas elegidas (quizá no hay jornada próxima).</div>'; return; }
   const fmtEv=v=>`${v>=0?'+':''}${(v*100).toFixed(1)}%`;
-  const p1=x=>Math.round(x*100)+'%', d2=x=>(+x).toFixed(2);
-  // Tablero de valor (ordenado por mejor EV)
-  const board=[...matches].map((m,i)=>({m,i})).sort((a,b)=>b.m.bestBet.ev-a.m.bestBet.ev);
-  const boardHtml=`<div class="board"><div class="board-hd"><span class="t">⚽ TABLERO DE VALOR</span><span class="s">${matches.length} partidos · mejor cuota vs consenso · por EV</span></div>${
+  const p1=x=>Math.round(x*100)+'%', d2=x=>(+x).toFixed(2), pp=v=>`${v>=0?'+':''}${v.toFixed(1)}`;
+  const slate=buildSlate(matches);
+  const stamp=new Date().toLocaleString('es-MX',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+  // Aviso del estado del modelo (edge real vs. solo valor de línea)
+  const modelNote = slate.hasModel
+    ? `<span style="color:var(--gtx)">✓ modelo Dixon-Coles conectado</span>`
+    : `<span style="color:var(--gold)">⚠ modelo de stats sin conectar — el "edge" mostrado es <b>valor de línea</b> (mejor precio vs. consenso), no edge de modelo</span>`;
+  // Un renglón "por qué" y "riesgos" a partir de la métrica disponible
+  const whyOf=x=>{ const c=x.c, L=[];
+    if(c.priceQ>.01) L.push(`Mejor precio @${d2(c.best)} supera el consenso @${d2(c.cons)} (+${(c.priceQ*100).toFixed(1)}% de precio)`);
+    if(c.nBooks>=4) L.push(`${c.nBooks} casas de acuerdo → consenso confiable`);
+    if(c.hasModel) L.push(`Modelo asigna ${p1(c.modelP)} vs mercado ${p1(c.noVig)} (edge ${pp(c.edgePP)} pp)`);
+    else L.push(`EV positivo por diferencia de precio; sin modelo de stats el edge de modelo es 0`);
+    return L.slice(0,3); };
+  const riskOf=x=>{ const c=x.c, L=['Alineaciones sin confirmar (no hay feed de titulares)'];
+    if(!c.hasModel) L.push('Modelo estadístico no conectado — solo se mide precio');
+    if(c.nBooks<3) L.push('Pocas casas → consenso débil');
+    if(c.dq<70) L.push('Calidad de dato baja');
+    return L.slice(0,3); };
+  const timing=c => c.best<c.minOdds ? 'PASA · precio bajo el mínimo aceptable'
+    : !c.hasModel ? 'Tómalo si sigue disponible (es valor de precio)'
+    : c.dq>=80 ? 'BET NOW' : 'Espera alineación confirmada';
+  // ── BEST PLAY (§18) ──
+  let hero;
+  if(slate.best){ const {c,m}=slate.best;
+    hero=`<div class="bp-card" style="border-color:${tierColor(c.tier)}">
+      <div class="bp-hd"><span class="bp-tag" style="background:${tierColor(c.tier)}">⭐ MEJOR JUGADA</span><span class="bp-cls" style="color:${tierColor(c.tier)}">${c.tier}</span></div>
+      <div class="bp-sel">${m.league.flag} <b>${c.label}</b> <span class="bp-mkt">${c.mkt==='O'||c.mkt==='U'?'Total goles':c.mkt==='X'?'Empate (1X2)':'Ganador (1X2)'}</span></div>
+      <div class="bp-mu">${m.home} <span style="color:var(--text3)">v</span> ${m.away} · ${m.league.short} · ${kickoff(m.commence)}</div>
+      <div class="bp-grid">
+        <div class="bp-cell"><span>Mejor cuota</span><b>@${d2(c.best)}</b></div>
+        <div class="bp-cell"><span>Cuota justa</span><b>${c.fairOdds?'@'+d2(c.fairOdds):'—'}</b></div>
+        <div class="bp-cell"><span>Consenso</span><b>@${d2(c.cons)}</b></div>
+        <div class="bp-cell"><span>Cuota mínima</span><b>${c.minOdds?'@'+d2(c.minOdds):'—'}</b></div>
+        <div class="bp-cell"><span>Prob. modelo</span><b>${p1(c.modelP)}</b></div>
+        <div class="bp-cell"><span>Prob. ajustada</span><b>${p1(c.adjP)}</b></div>
+        <div class="bp-cell"><span>Mercado s/vig</span><b>${p1(c.noVig)}</b></div>
+        <div class="bp-cell"><span>Break-even</span><b>${p1(c.breakeven)}</b></div>
+        <div class="bp-cell hl"><span>Edge (pp)</span><b style="color:${c.edgePP>0?'var(--gtx)':'var(--text3)'}">${c.hasModel?pp(c.edgePP):'n/d'}</b></div>
+        <div class="bp-cell hl"><span>EV</span><b style="color:${evColor(c.ev)}">${fmtEv(c.ev)}</b></div>
+        <div class="bp-cell hl"><span>Calidad dato</span><b style="color:${dqColorS(c.dq)}">${c.dq}/100</b></div>
+        <div class="bp-cell hl"><span>Unidades</span><b>${c.units.toFixed(2)}u${c.kelly>0?` · Kelly ${(c.kelly*100).toFixed(1)}%`:''}</b></div>
+      </div>
+      <div class="bp-timing">⏱ ${timing(c)}</div>
+      <div class="bp-why"><b>Por qué hay valor</b><ol>${whyOf(slate.best).map(t=>`<li>${t}</li>`).join('')}</ol></div>
+      <div class="bp-why"><b>Riesgos</b><ol>${riskOf(slate.best).map(t=>`<li>${t}</li>`).join('')}</ol></div>
+    </div>`;
+  } else {
+    const near=slate.near.map(x=>{const c=x.c,m=x.m; const failEV=c.ev<SC_CFG.evLean, failDQ=c.dq<58;
+      const need=(c.adjP>0?((1+SC_CFG.evOfficial)/c.adjP):null);
+      return `<div class="bp-near"><div class="bp-near-mu">${m.league.flag} <b>${c.label}</b> · ${m.home} v ${m.away}</div>
+        <div class="bp-near-m">@${d2(c.best)} · EV ${fmtEv(c.ev)} · DQ ${c.dq}/100 · <span style="color:var(--rtx)">falló: ${failEV?'EV<'+(SC_CFG.evLean*100)+'%':failDQ?'DQ<58':'sin valor'}</span>${need?` · reconsiderar desde @${d2(need)}`:''}</div></div>`;}).join('');
+    hero=`<div class="bp-card" style="border-color:var(--text3)">
+      <div class="bp-hd"><span class="bp-tag" style="background:var(--text3)">NO OFFICIAL PLAY FOUND</span></div>
+      <div class="bp-mu">Ninguna selección superó los umbrales del spec (§11). No se fuerza una jugada.</div>
+      ${near?`<div class="bp-near-hd">Las que estuvieron más cerca</div>${near}`:''}
+    </div>`;
+  }
+  // ── TOP ALTERNATIVES (§18) ──
+  const altsHtml = slate.alts.length ? `<div class="board"><div class="board-hd"><span class="t">TOP ALTERNATIVAS</span><span class="s">máx. 3 · califican pero rankean bajo la mejor</span></div>${
+    slate.alts.map(x=>{const c=x.c,m=x.m;return `<a class="sboard-row" href="#sm-${x.mi}">
+      <span class="sb-mu">${m.league.flag} <b>${c.label}</b> <span style="color:var(--text3)">·</span> ${m.home.split(' ').slice(-1)} v ${m.away.split(' ').slice(-1)}</span>
+      <span class="sb-pick" style="color:${tierColor(c.tier)}">${c.tier}</span>
+      <span class="sb-ev" style="color:${evColor(c.ev)}">${fmtEv(c.ev)}</span>
+      <span class="sb-price">@${d2(c.best)}</span></a>`;}).join('')}</div>` : '';
+  // Tablero de valor (ordenado por ranking)
+  const board=[...matches].map((m,i)=>({m,i})).sort((a,b)=>b.m.bestBet.rank-a.m.bestBet.rank);
+  const boardHtml=`<div class="board"><div class="board-hd"><span class="t">⚽ TABLERO DE VALOR</span><span class="s">${matches.length} partidos · mejor cuota vs consenso · por ranking</span></div>${
     board.map(({m,i})=>`<a class="sboard-row" href="#sm-${i}">
       <span class="sb-mu">${m.league.flag} <b>${m.home}</b> <span style="color:var(--text3)">v</span> <b>${m.away}</b></span>
       <span class="sb-pick">${m.bestBet.label}</span>
@@ -2046,7 +2206,9 @@ function renderSoccer(matches, unresolved){
       <div class="s-best" style="border-left:3px solid ${evColor(bb.ev)}">⭐ <b>Mejor valor:</b> ${bb.label} @${d2(bb.price)} · <span style="color:${evColor(bb.ev)};font-weight:800">${fmtEv(bb.ev)} EV</span>${bb.ev<=0?' <span style="color:var(--text3)">(sin valor claro — el mercado está eficiente)</span>':''}</div>
     </div>`;
   }).join('');
-  area.innerHTML=warn+boardHtml+cards;
+  const head=`<div class="bp-head"><span>🍞 Baker's Picks · Motor de valor</span><span>${stamp}</span></div>
+    <div class="bp-model">${modelNote}</div>`;
+  area.innerHTML=warn+head+hero+altsHtml+boardHtml+cards;
 }
 
 // ── Clima (Open-Meteo, gratis y sin API key) ────────────────────────────────

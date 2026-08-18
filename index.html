@@ -359,8 +359,11 @@ body{background:radial-gradient(1200px 600px at 70% -10%,#f7f9fc,var(--bg)) fixe
       <div class="toolbar">
         <input type="date" id="date-pick">
         <button class="btn" id="run-btn" onclick="runAnalysis()"><i class="ti ti-refresh"></i>Analizar partidos</button>
-        <input type="password" id="odds-key" placeholder="The Odds API key (opcional)" autocomplete="off"
-          style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:7px 10px;font-size:12px;color:var(--text);font-family:inherit;outline:none;min-width:200px"
+        <input type="password" id="oddsio-key-mlb" placeholder="odds-api.io key (500/día)" autocomplete="off"
+          style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:7px 10px;font-size:12px;color:var(--text);font-family:inherit;outline:none;min-width:180px"
+          onchange="saveOddsIoKey(this.value)">
+        <input type="password" id="odds-key" placeholder="The Odds API key (fallback)" autocomplete="off"
+          style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:7px 10px;font-size:12px;color:var(--text);font-family:inherit;outline:none;min-width:170px"
           onchange="saveOddsKey(this.value)">
         <label title="Trae la línea real de ponches por pitcher. Usa 1 petición extra por partido." style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer">
           <input type="checkbox" id="kprops-chk" onchange="saveKProps(this.checked)" style="accent-color:var(--gold)"> Props Ks reales
@@ -1843,14 +1846,15 @@ async function ioGet(path){
   const rem=r.headers.get('x-requests-remaining')||r.headers.get('x-ratelimit-remaining'); if(rem!=null) oddsRemaining=rem;
   return r.json();
 }
-let _ioLeagues=null;
-async function getFootballLeaguesIO(){
-  if(_ioLeagues) return _ioLeagues;
-  try{ const d=await ioGet('/leagues?sport=football&all=true');
+const decToAm = d => d>=2 ? Math.round((d-1)*100) : Math.round(-100/(d-1));   // cuota decimal → americana
+let _ioLeagues={};
+async function getLeaguesIO(sport){
+  if(_ioLeagues[sport]) return _ioLeagues[sport];
+  try{ const d=await ioGet(`/leagues?sport=${sport}&all=true`);
     const arr=Array.isArray(d)?d:(d?.leagues||d?.data||[]);
-    _ioLeagues=arr.map(l=>({name:l.name||'', slug:l.slug||'', count:+(l.eventCount??l.events??l.count??0)||0}));
-  }catch(e){ console.warn('io /leagues:',e.message); _ioLeagues=[]; }
-  return _ioLeagues;
+    _ioLeagues[sport]=arr.map(l=>({name:l.name||'', slug:l.slug||'', count:+(l.eventCount??l.events??l.count??0)||0}));
+  }catch(e){ console.warn('io /leagues '+sport+':',e.message); _ioLeagues[sport]=[]; }
+  return _ioLeagues[sport];
 }
 // Resuelve el slug real de una competencia: slug exacto → tokens (mayor conteo) → fallback.
 function resolveSlugIO(comp, leagues){
@@ -1891,7 +1895,7 @@ function normalizeOddsIO(od){
 async function getSoccerOddsIO(compKeys){
   if(!getOddsIoKey()) return {matches:[], noKey:true};
   const wanted=SOCCER_LEAGUES.filter(l=>!compKeys?.length||compKeys.includes(l.key));
-  const leagues=await getFootballLeaguesIO();
+  const leagues=await getLeaguesIO('football');
   const to=new Date(Date.now()+8*864e5).toISOString();   // próximos 8 días
   const matches=[], unresolved=[];
   for(const comp of wanted){
@@ -1911,6 +1915,61 @@ async function getSoccerOddsIO(compKeys){
   }
   matches.sort((a,b)=>new Date(a.commence)-new Date(b.commence));
   return {matches, unresolved};
+}
+
+// ── MLB vía odds-api.io: devuelve el MISMO shape que getOdds (precios AMERICANOS) ──
+const _devig2 = pairs => avg(pairs.map(p=>{ const ih=1/p.h, ia=1/p.a; return ih/(ih+ia); }));
+function parseMlbEventIO(e, bms){
+  const home=e.home, away=e.away, mlPairs=[], spByLine={}, totByLine={};
+  for(const bkName in bms){
+    for(const mk of (bms[bkName]||[])){
+      const nm=(mk.name||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+      if(nm==='ml'||nm==='moneyline'){ const o=(mk.odds||[])[0]; if(o){ const h=+o.home,a=+o.away; if(h>1&&a>1) mlPairs.push({h,a}); } }
+      else if(nm==='spread'||nm==='spreads'||nm==='handicap'||nm==='runline'||nm==='asianhandicap'){
+        for(const o of (mk.odds||[])){ const hp=+(o.hdp??o.line??o.point), h=+o.home, a=+o.away; if(h>1&&a>1&&isFinite(hp)) (spByLine[hp]=spByLine[hp]||[]).push({h,a}); } }
+      else if(nm==='totals'||nm==='total'||nm==='overunder'||nm==='ou'){
+        for(const o of (mk.odds||[])){ const pt=+(o.hdp??o.line??o.point??o.total), ov=+o.over, un=+o.under; if(ov>1&&un>1&&isFinite(pt)) (totByLine[pt]=totByLine[pt]||[]).push({over:ov,under:un}); } }
+    }
+  }
+  if(!mlPairs.length) return null;
+  const o={commence:e.date};
+  const fh=_devig2(mlPairs);
+  o.ml={fairHome:fh, fairAway:1-fh, priceHome:decToAm(bestDec(mlPairs.map(p=>p.h))), priceAway:decToAm(bestDec(mlPairs.map(p=>p.a)))};
+  // Run line: la línea de home cuyo |hdp| esté más cerca de 1.5 (evita alternas ±2.5/±3.5)
+  const spLines=Object.keys(spByLine).map(Number);
+  if(spLines.length){ const t=spLines.reduce((b,x)=>Math.abs(Math.abs(x)-1.5)<Math.abs(Math.abs(b)-1.5)?x:b); const pairs=spByLine[t];
+    const fhc=_devig2(pairs);
+    o.spread={homePoint:t, awayPoint:-t, fairHomeCover:fhc, fairAwayCover:1-fhc, priceHome:decToAm(bestDec(pairs.map(p=>p.h))), priceAway:decToAm(bestDec(pairs.map(p=>p.a)))}; }
+  // Total: la línea con más casas (la principal)
+  const totLines=Object.keys(totByLine).map(Number);
+  if(totLines.length){ const line=totLines.reduce((b,x)=>totByLine[x].length>totByLine[b].length?x:b); const pairs=totByLine[line];
+    const fo=avg(pairs.map(p=>{ const io=1/p.over, iu=1/p.under; return io/(io+iu); }));
+    o.total={point:line, fairOver:fo, fairUnder:1-fo, priceOver:decToAm(bestDec(pairs.map(p=>p.over))), priceUnder:decToAm(bestDec(pairs.map(p=>p.under)))}; }
+  return o;
+}
+async function getMlbOddsIO(date){
+  const leagues=await getLeaguesIO('baseball');
+  const slug=resolveSlugIO({slug:'usa-mlb', m:['mlb'], x:['minor','triplea','doublea','college','ncaa','women','kbo','npb','winter']}, leagues) || 'usa-mlb';
+  const from=`${date}T00:00:00Z`, to=`${date}T23:59:59Z`, map={};
+  try{
+    const evs=await ioGet(`/events?sport=baseball&league=${encodeURIComponent(slug)}&from=${from}&to=${to}`);
+    const list=(Array.isArray(evs)?evs:evs?.events||evs?.data||[]).filter(e=>e&&e.id!=null);
+    for(let i=0;i<list.length;i+=10){
+      const batch=list.slice(i,i+10);
+      const od=await ioGet(`/odds/multi?eventIds=${batch.map(e=>e.id).join(',')}`);
+      const oddsMap=normalizeOddsIO(od);
+      for(const e of batch){ const bms=oddsMap[e.id]; if(!bms) continue; const o=parseMlbEventIO(e, bms); if(o){ const k=normName(e.home)+'|'+normName(e.away); (map[k]=map[k]||[]).push(o); } }
+    }
+  }catch(e){ console.warn('mlb io:',e.message); }
+  return map;
+}
+// Dispatcher de cuotas MLB: odds-api.io (500/día) si hay su key; si no, The Odds API.
+async function getMlbOdds(date){
+  if(getOddsIoKey()){
+    const map=await getMlbOddsIO(date);
+    return {map, kprops:{}, bprops:{}};   // props (Ks/bateadores) llegan en la siguiente iteración
+  }
+  return getOdds(date);
 }
 
 // ── Fútbol: UI (switch de deporte, análisis, render) ──────────────────────────
@@ -2068,7 +2127,7 @@ async function runAnalysis() {
     if(!games.length){$('picks-area').innerHTML=`<div class="empty">${allG.length?`Los ${allG.length} partidos de esta fecha ya empezaron o terminaron.<br>El modelo solo analiza juegos por comenzar (las cuotas en vivo dan edges falsos).`:'No hay partidos para esta fecha.'}</div>`;return;}
     $('run-status').textContent=`Analizando ${games.length} partidos...`+(started?` (${started} ya empezaron, excluidos)`:'');
 
-    const {map:oddsMap, kprops, bprops} = await getOdds(date);
+    const {map:oddsMap, kprops, bprops} = await getMlbOdds(date);
     const oddsCount = Object.keys(oddsMap).length;
     allBProps = bprops || {};
     const SC = await getStatcast(yr);   // Statcast (xwOBA/xERA/xSLG) una sola vez
@@ -2895,7 +2954,7 @@ async function captureClose(){
   if(!requireAuth()) return;
   const date=$('date-pick').value;
   $('valid-area').insertAdjacentHTML('afterbegin','<div class="loading" id="cap-msg"><div class="spin"></div>Capturando cuotas de cierre…</div>');
-  const {map}=await getOdds(date);
+  const {map}=await getMlbOdds(date);
   const {data:rows}=await sb.from('predictions').select('*').eq('game_date',date);
   let n=0;
   for(const r of (rows||[])){
@@ -3173,6 +3232,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('date-pick').value=todayLocal(today);
   $('hdr-date').textContent=today.toLocaleDateString('es-MX',{weekday:'short',month:'short',day:'numeric'});
   $('odds-key').value=getOddsKey();
+  const kio=$('oddsio-key-mlb'); if(kio) kio.value=getOddsIoKey();
   $('kprops-chk').checked=getKProps();
   $('bprops-chk').checked=getBProps();
   $('bvp-chk').checked=getBvPOn();

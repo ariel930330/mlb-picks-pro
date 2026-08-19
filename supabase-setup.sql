@@ -98,18 +98,6 @@ create table if not exists public.signals (
   result          text,      -- ML del equipo señalado: 'win' | 'loss' | 'push' | null
   f5_result       text       -- F5 del equipo señalado: 'win' | 'loss' | 'push' | null
 );
--- Mejor pick del juego: el de MAYOR EDGE entre TODOS los mercados (ML, Total,
--- Run Line, ML F5, F5 Total, Spread F5, 1er inning, Total de equipo). Es el pick
--- concreto que el sistema recomienda, con su línea, probabilidad y edge — distinto
--- de best_bet, que es la "aplicación" genérica que sugiere el tablero.
-alter table public.signals add column if not exists pick_cat    text;
-alter table public.signals add column if not exists pick_main   text;
-alter table public.signals add column if not exists pick_prob   numeric;
-alter table public.signals add column if not exists pick_edge   numeric;
-alter table public.signals add column if not exists pick_price  numeric;
-alter table public.signals add column if not exists pick_stake  numeric;
-alter table public.signals add column if not exists pick_result text;   -- 'win' | 'loss' | 'push' | null
-
 create unique index if not exists signals_game on public.signals (game_date, game_pk);
 create index if not exists signals_tier on public.signals (tier);
 

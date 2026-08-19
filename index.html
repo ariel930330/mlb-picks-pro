@@ -3264,7 +3264,14 @@ function sigGroupTable(title, note, hd, groups){
 // Etiqueta del mercado recomendado, EXACTAMENTE como la muestra el tablero de
 // convicción de la página principal: quita el paréntesis y el nombre del equipo.
 // "LAD ML (juego completo)" -> "ML"   ·   "WSH F5 (primeros 5)" -> "F5"
-const mktLabel = r => (r.best_bet||'').replace(/\s*\(.*?\)/,'').replace((r.edge_team||'')+' ','') || '—';
+// Se le pega el número cuando el mercado lo tiene, para que se vea CONTRA QUÉ se
+// califica: "Team Total Over 4.5" en vez de un "Team Total Over" que no dice nada.
+const mktLabel = r => {
+  const base = (r.best_bet||'').replace(/\s*\(.*?\)/,'').replace((r.edge_team||'')+' ','') || '—';
+  if(r.best_mkt==='TT' && r.best_line!=null) return `${base} ${r.best_line}`;
+  if(r.best_mkt==='RL') return `${base} -1.5`;
+  return base;
+};
 
 // Una fila de la tabla de una sección (un juego señalado)
 function sigGameRow(r){

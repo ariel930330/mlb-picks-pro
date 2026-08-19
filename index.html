@@ -75,6 +75,7 @@ a{color:var(--blue);text-decoration:none}
 .f5-lbl{font-size:8.5px;color:var(--text3);font-weight:700;text-transform:uppercase}
 .f5-main{font-size:11px;font-weight:700;margin:2px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .f5-prob{font-size:13px;font-weight:800;font-variant-numeric:tabular-nums}
+.f5-edge{font-size:9px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:1px}
 @media(max-width:520px){.f5-grid{grid-template-columns:repeat(2,1fr)}}
 .pick-accent{width:4px;flex-shrink:0}
 .pick-badge{width:76px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px 4px;border-right:1px solid var(--border);gap:3px}
@@ -1056,12 +1057,19 @@ function computePicks(data) {
   const totalOver=normOver(total,totalSigma,totalLine);
   const totalPick=totalOver>=.5, totalProb=Math.max(totalOver,1-totalOver);
 
-  // F5: solo abridores (sin bullpen ni racha) y regresado hacia 50% por ser pocos innings
+  // F5: solo abridores (sin bullpen ni racha) y regresado hacia 50% por ser pocos innings.
+  // Usa la línea/cuota REAL del mercado F5 (odds-api.io) cuando existe → edge de mercado.
   const f5logit=(W.w_hp*hps+W.w_ap*aps+W.w_ho*hos+W.w_ao*aos+W.w_hfa)*.9;
-  const f5hwp=sig(f5logit), f5fav=f5hwp>=.5?home:away, f5favP=Math.max(f5hwp,1-f5hwp);
+  const f5hwpM=sig(f5logit);                                   // prob del modelo (local gana F5)
+  const f5mlMkt=odds?.f5ml||null;
+  const f5hwp=f5mlMkt?blend(f5hwpM,f5mlMkt.fairHome):f5hwpM;   // mezcla con mercado si hay
+  const f5fav=f5hwp>=.5?home:away, f5favP=Math.max(f5hwp,1-f5hwp);
   const f5total=+(total*.545).toFixed(1);
-  const f5line=+(Math.round(f5total*2)/2).toFixed(1);
-  const f5Over=normOver(f5total,Math.sqrt(f5total)*1.25,f5line);
+  const f5sd=Math.sqrt(Math.max(f5total,1))*1.25;
+  const f5tMkt=odds?.f5total||null;
+  const f5line=f5tMkt?f5tMkt.point:+(Math.round(f5total*2)/2).toFixed(1);
+  const f5mOver=normOver(f5total,f5sd,f5line);                 // prob over del modelo a esa línea
+  const f5Over=f5tMkt?blend(f5mOver,f5tMkt.fairOver):f5mOver;  // mezcla con mercado si hay
   const f5Pick=f5Over>=.5, f5totalProb=Math.max(f5Over,1-f5Over);
 
   // Ks del abridor: proyección del modelo (solo informativa en la pestaña Lanzadores)
@@ -1115,8 +1123,18 @@ function computePicks(data) {
       ? {cat:'Run Line +1.5',main:`${favHome?away:home} +1.5`,sub:`${pct(1-rlProb)} no pierde por 2+`,prob:1-rlProb,edge:+((1-rlProb)-BREAKEVEN).toFixed(3)}
       : {cat:'Run Line -1.5',main:`${favHome?home:away} -1.5`,sub:`${pct(rlProb)} gana por 2+`,prob:rlProb,edge:+(rlProb-BREAKEVEN).toFixed(3)});
   }
-  picks.push({cat:'ML F5',main:`${f5fav} F5 ${p2ml(f5favP)}`,sub:`${pct(f5favP)} gana las primeras 5`,prob:f5favP,edge:+(f5favP-BREAKEVEN).toFixed(3)});
-  picks.push({cat:'F5 Total',main:`${f5Pick?'OVER':'UNDER'} ${f5line} (F5)`,sub:`Proyección F5: ${f5total}`,prob:f5totalProb,edge:+(f5totalProb-BREAKEVEN).toFixed(3)});
+  // ML F5: edge vs MERCADO si hay línea F5 real; si no, vs breakeven
+  let f5mlPick;
+  if(f5mlMkt){ const favH=f5hwp>=.5, fair=favH?f5mlMkt.fairHome:f5mlMkt.fairAway, price=favH?f5mlMkt.priceHome:f5mlMkt.priceAway, mRaw=favH?f5hwpM:1-f5hwpM;
+    f5mlPick={cat:'ML F5',main:`${f5fav} F5 ${amFmt(price)}`,sub:`Modelo ${pct(mRaw)} → ${pct(f5favP)} vs Mercado ${pct(fair)}`,prob:f5favP,edge:+(f5favP-fair).toFixed(3),bEdge:+(mRaw-fair).toFixed(3),mkt:true,price,fair};
+  } else f5mlPick={cat:'ML F5',main:`${f5fav} F5 ${p2ml(f5favP)}`,sub:`${pct(f5favP)} gana las primeras 5`,prob:f5favP,edge:+(f5favP-BREAKEVEN).toFixed(3)};
+  picks.push(f5mlPick);
+  // F5 Total: edge vs MERCADO si hay línea F5 real
+  let f5totPick;
+  if(f5tMkt){ const ov=f5Over>=.5, fair=ov?f5tMkt.fairOver:f5tMkt.fairUnder, price=ov?f5tMkt.priceOver:f5tMkt.priceUnder, mRaw=ov?f5mOver:1-f5mOver;
+    f5totPick={cat:'F5 Total',main:`${ov?'OVER':'UNDER'} ${f5line} (F5) ${amFmt(price)}`,sub:`Proy ${f5total} · Modelo ${pct(mRaw)} → ${pct(f5totalProb)} vs Mercado ${pct(fair)}`,prob:f5totalProb,edge:+(f5totalProb-fair).toFixed(3),bEdge:+(mRaw-fair).toFixed(3),mkt:true,price,fair};
+  } else f5totPick={cat:'F5 Total',main:`${f5Pick?'OVER':'UNDER'} ${f5line} (F5)`,sub:`Proyección F5: ${f5total}`,prob:f5totalProb,edge:+(f5totalProb-BREAKEVEN).toFixed(3)};
+  picks.push(f5totPick);
   // Spread F5 (hándicap ±0.5 de las primeras 5): favorito -0.5 = gana F5; dog +0.5 = gana o empata F5.
   // El diferencial de 5 innings escala la SD por sqrt(5/9) respecto al juego completo.
   const F5_SD=RUN_SD*Math.sqrt(5/9), f5hMargin=F5_SD*probit(f5hwp), f5favHome=f5hwp>=.5;
@@ -1140,8 +1158,7 @@ function computePicks(data) {
   picks.forEach(p=>{ p.prob=calibrate(p.prob); p.edge=+(p.prob-(p.fair!=null?p.fair:BREAKEVEN)).toFixed(3); });
   // Stake sugerido (medio-Kelly, % del bankroll) solo cuando hay cuota real y edge positivo
   picks.forEach(p=>{ p.stake = (p.price!=null && p.edge>0) ? stakePct(p.prob,p.price) : 0; });
-  // Selección por PROBABILIDAD: las apuestas más probables del juego (cualquier mercado)
-  // Selección por EDGE (valor), nunca por probabilidad: un favorito al 70% sin valor
+  // Selección por EDGE (valor), NUNCA por probabilidad: un favorito al 70% sin valor
   // vale menos que un underdog al 45% que el mercado paga de más.
   picks.sort((a,b)=>(b.edge??-1)-(a.edge??-1));
   const top3=picks.slice(0,3).map(p=>({...p,conf:p.prob>=.58?'High':p.prob>=.53?'Medium':'Low'}));
@@ -1165,8 +1182,11 @@ function computePicks(data) {
     awayWP:+awp.toFixed(4),homeWP:+hwp.toFixed(4),
     awayML:p2ml(awp),homeML:p2ml(hwp),
     total,totalLine,pf,
-    // F5 (primeras 5 entradas): total O/U, run line ±0.5 y ML — solo modelo (sin cuota de mercado)
-    f5:{ total:f5total, line:f5line, overP:f5Over, favTeam:f5fav, favML:p2ml(f5favP), favProb:f5favP, favHome:f5favHome, cover:f5cover },
+    // F5 (primeras 5 entradas): total O/U y ML con edge de MERCADO si hay línea; run line ±0.5 es modelo
+    f5:{ total:f5total, line:f5line, overP:f5Over, favTeam:f5fav, favProb:f5favP, favHome:f5favHome, cover:f5cover,
+         totalMkt:!!f5tMkt, totalEdge:f5tMkt?f5totPick.edge:null,
+         mlMkt:!!f5mlMkt, mlEdge:f5mlMkt?f5mlPick.edge:null,
+         favML: f5mlMkt ? (f5hwp>=.5?amFmt(f5mlMkt.priceHome):amFmt(f5mlMkt.priceAway)) : p2ml(f5favP) },
     pitchers:{away:{id:awayPitcherId,name:data.awayPitcherName||'TBD',era:+apERA0.toFixed(2),fip:+apFIP0.toFixed(2),xfip:+apXFIP0.toFixed(2),xera:data.awayPXera?+(+data.awayPXera).toFixed(2):null,whiff:aD?.whiff??null,chase:aD?.chase??null,shape:data.awayPShape,k9:+apK90.toFixed(1),kExp:apKExp,kLine:apKLine,kMkt:aKMkt,rating:+aps.toFixed(3),luck:apLuck,kMatch:data.awayKMatch??null,kMatchK:data.awayKMatchK??null,kMatchWh:data.awayKMatchWh??null},
               home:{id:homePitcherId,name:data.homePitcherName||'TBD',era:+hpERA0.toFixed(2),fip:+hpFIP0.toFixed(2),xfip:+hpXFIP0.toFixed(2),xera:data.homePXera?+(+data.homePXera).toFixed(2):null,whiff:hD?.whiff??null,chase:hD?.chase??null,shape:data.homePShape,k9:+hpK90.toFixed(1),kExp:hpKExp,kLine:hpKLine,kMkt:hKMkt,rating:+hps.toFixed(3),luck:hpLuck,kMatch:data.homeKMatch??null,kMatchK:data.homeKMatchK??null,kMatchWh:data.homeKMatchWh??null}},
     luck:{awayPitch:apLuck,homePitch:hpLuck,awayBat:aBatLuck,homeBat:hBatLuck},
@@ -1681,7 +1701,13 @@ const saveSplitsOn = on => on?localStorage.setItem('splits_on','1'):localStorage
 function evalProp(mOver, mkt) {
   if (!mkt) return null;
   const bOver = blend(mOver, mkt.fairOver);   // prob. final mezclada con el mercado
-  const eOver = bOver - mkt.fairOver, eUnder = (1 - bOver) - mkt.fairUnder;
+  const eOver = bOver - mkt.fairOver;
+  // Prop de un solo lado (over): la fair es implícita cruda (con vig) → edge conservador.
+  if (mkt.overOnly || mkt.fairUnder == null) {
+    return { over:true, line:mkt.line, prob:bOver, fair:mkt.fairOver, price:mkt.priceOver,
+      edge:eOver, stake: eOver>0?stakePct(bOver,mkt.priceOver):0, overOnly:true };
+  }
+  const eUnder = (1 - bOver) - mkt.fairUnder;
   const over = eOver >= eUnder;
   const prob = over ? bOver : 1 - bOver, fair = over ? mkt.fairOver : mkt.fairUnder;
   const price = over ? mkt.priceOver : mkt.priceUnder, edge = over ? eOver : eUnder;
@@ -2189,7 +2215,7 @@ async function getSoccerOddsIO(compKeys, dateStr){
 // ── MLB vía odds-api.io: devuelve el MISMO shape que getOdds (precios AMERICANOS) ──
 const _devig2 = pairs => avg(pairs.map(p=>{ const ih=1/p.h, ia=1/p.a; return ih/(ih+ia); }));
 function parseMlbEventIO(e, bms){
-  const home=e.home, away=e.away, mlPairs=[], spByLine={}, totByLine={};
+  const home=e.home, away=e.away, mlPairs=[], spByLine={}, totByLine={}, f5tByLine={}, f5mlPairs=[];
   for(const bkName in bms){
     for(const mk of (bms[bkName]||[])){
       const nm=(mk.name||'').toLowerCase().replace(/[^a-z0-9]/g,'');
@@ -2198,6 +2224,10 @@ function parseMlbEventIO(e, bms){
         for(const o of (mk.odds||[])){ const hp=+(o.hdp??o.line??o.point), h=+o.home, a=+o.away; if(h>1&&a>1&&isFinite(hp)) (spByLine[hp]=spByLine[hp]||[]).push({h,a}); } }
       else if(nm==='totals'||nm==='total'||nm==='overunder'||nm==='ou'){
         for(const o of (mk.odds||[])){ const pt=+(o.hdp??o.line??o.point??o.total), ov=+o.over, un=+o.under; if(ov>1&&un>1&&isFinite(pt)) (totByLine[pt]=totByLine[pt]||[]).push({over:ov,under:un}); } }
+      else if(nm==='first5inningstotals'||nm==='firstfiveinningstotals'){
+        for(const o of (mk.odds||[])){ const pt=+(o.hdp??o.line??o.point??o.total), ov=+o.over, un=+o.under; if(ov>1&&un>1&&isFinite(pt)) (f5tByLine[pt]=f5tByLine[pt]||[]).push({over:ov,under:un}); } }
+      else if(nm==='first5inningsml'||nm==='firstfiveinningsml'){
+        const o=(mk.odds||[])[0]; if(o){ const h=+o.home,a=+o.away; if(h>1&&a>1) f5mlPairs.push({h,a}); } }
     }
   }
   if(!mlPairs.length) return null;
@@ -2218,12 +2248,67 @@ function parseMlbEventIO(e, bms){
     const pairs=totByLine[line];
     const fo=avg(pairs.map(p=>{ const io=1/p.over, iu=1/p.under; return io/(io+iu); }));
     o.total={point:line, fairOver:fo, fairUnder:1-fo, priceOver:decToAm(bestDec(pairs.map(p=>p.over))), priceUnder:decToAm(bestDec(pairs.map(p=>p.under)))}; }
+  // F5 Total (primeras 5): línea más equilibrada
+  const f5tLines=Object.keys(f5tByLine).map(Number);
+  if(f5tLines.length){ let line=f5tLines[0],bal=2;
+    for(const x of f5tLines){ const p=f5tByLine[x]; const fo=avg(p.map(q=>{const io=1/q.over,iu=1/q.under;return io/(io+iu);})); const d=Math.abs(fo-0.5); if(d<bal){bal=d;line=x;} }
+    const pairs=f5tByLine[line], fo=avg(pairs.map(p=>{const io=1/p.over,iu=1/p.under;return io/(io+iu);}));
+    o.f5total={point:line, fairOver:fo, fairUnder:1-fo, priceOver:decToAm(bestDec(pairs.map(p=>p.over))), priceUnder:decToAm(bestDec(pairs.map(p=>p.under)))}; }
+  // F5 ML (primeras 5)
+  if(f5mlPairs.length){ const fh=_devig2(f5mlPairs);
+    o.f5ml={fairHome:fh, fairAway:1-fh, priceHome:decToAm(bestDec(f5mlPairs.map(p=>p.h))), priceAway:decToAm(bestDec(f5mlPairs.map(p=>p.a)))}; }
   return o;
+}
+// Parsea props de jugador (Ks del abridor, hits/HR/RBI del bateador) del mismo response.
+// Acumula en kAcc[normPitcher] y bAcc[normBatter]={hits,hr,rbi}. De-viga con ambos lados.
+function parsePropsIO(bms, kAcc, bAcc){
+  const bucket={};   // 'kind|sub|normPlayer|line' -> {kind,sub,player,line,ov:[],un:[]}
+  for(const bkName in bms){
+    for(const mk of (bms[bkName]||[])){
+      const nm=(mk.name||'').toLowerCase().replace(/[^a-z0-9]/g,'');
+      let kind=null, sub=null;
+      if(nm==='pitcherstrikeoutsou'||nm==='pitcherstrikeouts'){ kind='k'; sub='k'; }
+      else if(nm==='hitsou'){ kind='b'; sub='hits'; }
+      else if(nm==='homerunsou'){ kind='b'; sub='hr'; }
+      else if(nm==='runsbattedinou'){ kind='b'; sub='rbi'; }
+      else continue;
+      for(const o of (mk.odds||[])){
+        const player=o.label; const line=+(o.hdp??o.line??o.point); const ov=+o.over, un=+o.under;
+        if(!player||!isFinite(line)) continue;
+        const key=sub+'|'+normName(player)+'|'+line;
+        const b=bucket[key]=bucket[key]||{kind,sub,player,line,ov:[],un:[]};
+        if(ov>1) b.ov.push(ov); if(un>1) b.un.push(un);
+      }
+    }
+  }
+  // Agrupa por jugador+sub; elige la línea principal (bateo: prefiere 0.5; Ks: más equilibrada).
+  const byPlayer={};
+  for(const key in bucket){ const b=bucket[key]; if(!b.ov.length) continue;   // al menos el over
+    const pk=b.sub+'|'+normName(b.player); (byPlayer[pk]=byPlayer[pk]||[]).push(b); }
+  for(const pk in byPlayer){ const arr=byPlayer[pk];
+    let pick;
+    if(arr[0].sub==='k'){ // Ks: SOLO línea de 2 lados (la principal); evita alternas over-only engañosas
+      const two=arr.filter(b=>b.un.length); if(!two.length) continue;
+      pick=two.reduce((best,b)=>{ const io=avg(b.ov.map(x=>1/x)),iu=avg(b.un.map(x=>1/x)); b._bal=Math.abs(io/(io+iu)-.5); return (!best||b._bal<best._bal)?b:best; },null);
+    } else { // bateo: prefiere 0.5, si no la más chica
+      pick=arr.find(b=>b.line===0.5) || arr.sort((a,b)=>a.line-b.line)[0];
+    }
+    const ioAvg=avg(pick.ov.map(x=>1/x));
+    let mkt;
+    if(pick.un.length){ const iuAvg=avg(pick.un.map(x=>1/x)), fo=ioAvg/(ioAvg+iuAvg);
+      mkt={ line:pick.line, fairOver:fo, fairUnder:1-fo, priceOver:decToAm(bestDec(pick.ov)), priceUnder:decToAm(bestDec(pick.un)) };
+    } else { // over-only: fair = implícita cruda (con vig → edge conservador)
+      mkt={ line:pick.line, fairOver:cl(ioAvg,.02,.98), fairUnder:null, priceOver:decToAm(bestDec(pick.ov)), priceUnder:null, overOnly:true };
+    }
+    const np=normName(pick.player);
+    if(pick.sub==='k'){ kAcc[np]=mkt; }
+    else { (bAcc[np]=bAcc[np]||{})[pick.sub]=mkt; }
+  }
 }
 async function getMlbOddsIO(date){
   const leagues=await getLeaguesIO('baseball');
   const slug=resolveSlugIO({slug:'usa-mlb', m:['mlb'], x:['minor','triplea','doublea','college','ncaa','women','kbo','npb','winter']}, leagues) || 'usa-mlb';
-  const from=`${date}T00:00:00Z`, to=`${date}T23:59:59Z`, map={};
+  const from=`${date}T00:00:00Z`, to=`${date}T23:59:59Z`, map={}, kprops={}, bprops={};
   try{
     const evs=await ioGet(`/events?sport=baseball&league=${encodeURIComponent(slug)}&from=${from}&to=${to}`);
     const list=(Array.isArray(evs)?evs:evs?.events||evs?.data||[]).filter(e=>e&&e.id!=null);
@@ -2231,17 +2316,17 @@ async function getMlbOddsIO(date){
       const batch=list.slice(i,i+10);
       const od=await ioGet(`/odds/multi?eventIds=${batch.map(e=>e.id).join(',')}&bookmakers=${encodeURIComponent(IO_BOOKS)}`);
       const oddsMap=normalizeOddsIO(od);
-      for(const e of batch){ const bms=oddsMap[e.id]; if(!bms) continue; const o=parseMlbEventIO(e, bms); if(o){ const k=normName(e.home)+'|'+normName(e.away); (map[k]=map[k]||[]).push(o); } }
+      for(const e of batch){ const bms=oddsMap[e.id]; if(!bms) continue;
+        const o=parseMlbEventIO(e, bms); if(o){ const k=normName(e.home)+'|'+normName(e.away); (map[k]=map[k]||[]).push(o); }
+        parsePropsIO(bms, kprops, bprops);   // props del MISMO response (sin peticiones extra)
+      }
     }
   }catch(e){ console.warn('mlb io:',e.message); }
-  return map;
+  return {map, kprops, bprops};
 }
 // Dispatcher de cuotas MLB: odds-api.io (500/día) si hay su key; si no, The Odds API.
 async function getMlbOdds(date){
-  if(getOddsIoKey()){
-    const map=await getMlbOddsIO(date);
-    return {map, kprops:{}, bprops:{}};   // props (Ks/bateadores) llegan en la siguiente iteración
-  }
+  if(getOddsIoKey()) return getMlbOddsIO(date);   // {map, kprops, bprops}
   return getOdds(date);
 }
 
@@ -2699,6 +2784,7 @@ async function runAnalysis() {
         // xwOBA de la alineación vs el arsenal del abridor rival → ajusta la ofensiva
         awayOffXwF: hpLM?.xwobaF ?? null,   // ofensiva VISITANTE vs arsenal del abridor LOCAL
         homeOffXwF: apLM?.xwobaF ?? null,   // ofensiva LOCAL vs arsenal del abridor VISITANTE
+        kprops,                              // líneas reales de Ks del abridor (odds-api.io)
         odds: gOdds,
       });
       gd.gamePk    = g.gamePk;
@@ -2933,14 +3019,16 @@ function renderPicks(games) {
       </div>
       ${g.f5?(f=>{
         const dog=f.favHome?g.away:g.home, overSide=f.overP>=.5, ovP=overSide?f.overP:1-f.overP;
-        const cell=(lbl,main,prob,hot)=>`<div class="f5-cell"><div class="f5-lbl">${lbl}</div><div class="f5-main">${main}</div><div class="f5-prob"${hot?' style="color:var(--gtx)"':''}>${pct(prob)}</div></div>`;
+        const eTag=e=>e!=null?`<div class="f5-edge" style="color:${e>0?'var(--gtx)':'var(--text3)'}">edge ${e>=0?'+':''}${(e*100).toFixed(1)}%</div>`:'';
+        const cell=(lbl,main,prob,hot,edge)=>`<div class="f5-cell"><div class="f5-lbl">${lbl}</div><div class="f5-main">${main}</div><div class="f5-prob"${hot?' style="color:var(--gtx)"':''}>${pct(prob)}</div>${eTag(edge)}</div>`;
+        const anyMkt=f.totalMkt||f.mlMkt;
         return `<div class="f5-strip">
-          <div class="f5-hd">⏱ F5 · primeras 5 entradas <span style="color:var(--text3);font-weight:400">· proyección del modelo (sin cuota de mercado)</span></div>
+          <div class="f5-hd">⏱ F5 · primeras 5 entradas <span style="color:var(--text3);font-weight:400">· ${anyMkt?'Total/ML vs mercado real · run line = modelo':'proyección del modelo (sin cuota de mercado)'}</span></div>
           <div class="f5-grid">
-            ${cell('Total', `${overSide?'OVER':'UNDER'} ${f.line}`, ovP, ovP>=.55)}
+            ${cell('Total', `${overSide?'OVER':'UNDER'} ${f.line}`, ovP, ovP>=.55, f.totalMkt?f.totalEdge:null)}
             ${cell('Run line', `${f.favTeam} -0.5`, f.cover, f.cover>=.55)}
             ${cell('Run line', `${dog} +0.5`, 1-f.cover, (1-f.cover)>=.55)}
-            ${cell('ML F5', `${f.favTeam} ${f.favML}`, f.favProb, f.favProb>=.58)}
+            ${cell('ML F5', `${f.favTeam} ${f.favML}`, f.favProb, f.favProb>=.58, f.mlMkt?f.mlEdge:null)}
           </div></div>`;
       })(g.f5):''}
       <details class="er-more"><summary>Detalle de los 13 factores</summary>
@@ -3146,10 +3234,11 @@ function renderBatters(batData) {
     (g.homeBatters||[]).forEach(b=>{ if(hSet&&!hSet.has(b.id)) return; const r=mk(b,g.homeOppScore??.5,g.awayPitcher,g.homePlatoon,g.homeOppHand); if(r){r.team=g.home;r.gamePk=g.gamePk;r.conf=!!hSet;rows.push(r);} });
   });
   if(!rows.length){$('batters-area').innerHTML='<div class="empty">Corre el análisis primero.</div>';return;}
-  // Filtro: solo matchups FAVORABLES o bateadores de ALTA probabilidad (≥1 hit ≥ 68%).
-  // Se descartan los neutrales (y los "duro" que no lleguen a alta prob).
-  const pool = rows.filter(r=> r.tag.t==='favorable' || r.hitP>=0.68);
-  if(!pool.length){$('batters-area').innerHTML='<div class="empty">Ningún bateador con matchup favorable ni alta probabilidad en la jornada.</div>';return;}
+  // Filtro por VALOR, nunca por probabilidad pelada: bateadores con edge de mercado
+  // positivo (línea real de casa) o, en su defecto, matchup favorable.
+  const anyEdge = r => (r.evHits&&r.evHits.edge>0)||(r.evHR&&r.evHR.edge>0)||(r.evTB&&r.evTB.edge>0);
+  const pool = rows.filter(r=> anyEdge(r) || r.tag.t==='favorable');
+  if(!pool.length){$('batters-area').innerHTML='<div class="empty">Ningún bateador con edge de mercado ni matchup favorable en la jornada.</div>';return;}
 
   const propTag=ev=>ev?`<span class="bt-casa" style="color:${ev.edge>0?'var(--gtx)':'var(--text3)'}">casa ${ev.over?'O':'U'}${ev.line} ${ev.edge>=0?'+':''}${(ev.edge*100).toFixed(0)}%${ev.stake>0?` · ${ev.stake}%`:''}</span>`:'';
   // Cada categoría: los 2 MÁS PROBABLES (mayor proyección). mkt/target/prob para el historial.
@@ -3182,17 +3271,15 @@ function renderBatters(batData) {
     </div>`;
   };
   $('batters-area').innerHTML=`
-    <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los 2 más probables de la jornada por categoría · <b>solo matchups favorables o de alta probabilidad</b> · ajustado por pitcher rival, mano, estadio y clima${rows.some(r=>r.conf)?' · <b style="color:var(--gtx)">✓</b> = titular confirmado (alineación publicada)':' · alineaciones aún sin confirmar'}${rows.some(r=>r.evHits||r.evTB||r.evHR)?' · <b>casa</b> = línea real con edge y stake':''}.</div>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los 2 de <b>mayor edge (valor)</b> por categoría · <b>Hit/HR</b> contra la línea real de casa; el resto vs breakeven · ajustado por pitcher rival, mano, estadio y clima${rows.some(r=>r.conf)?' · <b style="color:var(--gtx)">✓</b> = titular confirmado':' · alineaciones sin confirmar'}${rows.some(r=>r.evHits||r.evTB||r.evHR)?' · <b>casa</b> = línea real con edge y stake':''}.</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px">
       ${cats.map(cat=>{
-        // Orden por EDGE contra la línea real de casa. Solo cuando esa categoría no
-        // tiene ninguna línea disponible se cae a la proyección, porque sin mercado
-        // no hay edge que medir.
-        const eOf = r => { const ev = cat.tag ? cat.tag(r) : null; return ev ? ev.edge : null; };
-        const conEdge = pool.some(r=>eOf(r)!=null);
-        const top2 = conEdge
-          ? [...pool].sort((a,b)=>((eOf(b)??-1)-(eOf(a)??-1))||(cat.metric(b)-cat.metric(a))).slice(0,2)
-          : [...pool].sort((a,b)=>cat.metric(b)-cat.metric(a)).slice(0,2);
+        // Orden SIEMPRE por EDGE: real vs la línea de casa cuando existe (Hit/HR); si esa
+        // categoría no tiene mercado, vs el breakeven (-110) — igual que juegos y pitchers.
+        // Nunca por probabilidad pelada.
+        const eOf = r => { const ev = cat.tag ? cat.tag(r) : null; if(ev) return ev.edge;
+          const p = cat.prob ? cat.prob(r) : null; return p!=null ? p-BREAKEVEN : (cat.metric(r)||0)/1000; };
+        const top2 = [...pool].sort((a,b)=>eOf(b)-eOf(a)).slice(0,2);
         top2.forEach(r=>{ const ev=cat.tag?cat.tag(r):null; propsBatter.push({gamePk:r.gamePk,player_id:r.id,player_name:r.name,team:r.team,market:cat.mkt,
           target:typeof cat.target==='function'?cat.target(r):cat.target, side:'over',
           prob:cat.prob?+cat.prob(r).toFixed(3):null, proj:+cat.metric(r).toFixed(2), edge:ev?+ev.edge.toFixed(3):null}); });

@@ -3530,13 +3530,32 @@ function gradeTopPick(r, g) {
   if(cat.startsWith('Run Line')){ const t=tok[0],pt=parseFloat(tok[1]);
     if(isNaN(pt)) return null; const ts=isHome(t)?hS:aS, os=isHome(t)?aS:hS, m=ts-os+pt;
     if(m===0) return 'push'; return m>0?'win':'loss'; }
-  if(cat==='Primeras 5 Innings'){ if(!inn.length) return null; const t=tok[0];
+  // ── Primeras 5 innings: hacen falta 5 entradas completas en el linescore ──
+  const has5 = inn.length>=5;
+  // 'ML F5' → main: "LAD F5 -130"
+  if(cat==='ML F5'){ if(!has5) return null; const t=tok[0];
     const tf=isHome(t)?f5.h:f5.a, of=isHome(t)?f5.a:f5.h;
     if(tf===of) return 'push'; return tf>of?'win':'loss'; }
-  if(cat==='F5 Total'){ if(!inn.length) return null; const side=tok[0],line=parseFloat(tok[1]),tot=f5.a+f5.h;
+  // 'Spread F5' → main: "LAD -0.5 (F5)" | "COL +0.5 (F5)"
+  if(cat==='Spread F5'){ if(!has5) return null; const t=tok[0],pt=parseFloat(tok[1]);
+    if(isNaN(pt)) return null;
+    const tf=isHome(t)?f5.h:f5.a, of=isHome(t)?f5.a:f5.h, m=tf-of+pt;
+    if(m===0) return 'push'; return m>0?'win':'loss'; }
+  // 'F5 Total' → main: "OVER 5.5 (F5)"
+  if(cat==='F5 Total'){ if(!has5) return null; const side=tok[0],line=parseFloat(tok[1]),tot=f5.a+f5.h;
     if(isNaN(line)) return null; if(tot===line) return 'push';
     return (side==='OVER'?tot>line:tot<line)?'win':'loss'; }
-  return null;  // Ks u otros: requieren boxscore, se califican a mano
+  // '1er inning' → main: "NRFI (sin carrera 1er inn)" | "YRFI (carrera 1er inn)"
+  if(cat==='1er inning'){ if(!inn.length) return null;
+    const i1=inn[0], r1=(i1?.away?.runs||0)+(i1?.home?.runs||0);
+    return ((tok[0]==='NRFI') ? r1===0 : r1>0) ? 'win' : 'loss'; }
+  // 'Total de equipo' → main: "LAD OVER 4.5"
+  if(cat==='Total de equipo'){ const t=tok[0],side=tok[1],line=parseFloat(tok[2]);
+    if(isNaN(line)) return null;
+    const ts=isHome(t)?hS:aS;
+    if(ts===line) return 'push';
+    return (side==='OVER'?ts>line:ts<line)?'win':'loss'; }
+  return null;  // Ks y props: requieren boxscore, se califican en su propia pestaña
 }
 
 // Califica las PREDICCIONES pendientes desde el marcador final. Sin UI propia: la

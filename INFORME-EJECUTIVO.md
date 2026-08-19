@@ -122,7 +122,7 @@ El modelo no usa stats crudas de temporada. Aplica:
 | **Parlays** | Combinadas de **3 y 4 patas**, una pata por partido (sin correlación), cuota real, ordenadas por valor |
 | **Pitchers K** | Por abridor: ERA/FIP/K9, Ks esperados, línea real de la casa + edge (o proyección si no hay línea; openers marcados) |
 | **Bateadores** | Top 2 más probables por categoría: P(Hit), Bases totales, H+R+RBI, BB, HR. Ajustado por pitcher/mano/estadio/clima; ✓ = titular confirmado |
-| **Historial** | Todas las predicciones guardadas, con resultado. Auto-calificación desde el marcador final |
+| **Señales** | Historial del **tablero de convicción**: cada juego con su equipo señalado, tier, convicción y DQ, calificado por marcador final (ML y F5). Mide si el tablero acierta —y si acierta más en ELITE que en LEAN— por tier, por Data Quality y contra el modelo |
 | **Modelo IA** | Pesos del modelo (ajustables) |
 | **Validación** | Calibración (predicho vs real) + CLV — ¿el modelo sirve? |
 
@@ -188,7 +188,9 @@ El modelo no usa stats crudas de temporada. Aplica:
    (gastan más cuota de The Odds API).
 
 ### Después de los juegos
-6. **Historial → ⚡ Auto-calificar:** marca win/loss desde el marcador final de MLB.
+6. **Señales → ⚡ Auto-calificar:** califica las señales del tablero (ML y F5 del equipo
+   señalado) desde el marcador final de MLB. El mismo botón califica las predicciones
+   que alimentan Validación.
 7. **Validación → 📸 Capturar cierre:** córrelo cerca del inicio de los juegos para
    medir CLV.
 

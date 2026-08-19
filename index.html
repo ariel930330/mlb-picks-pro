@@ -369,7 +369,7 @@ body{background:radial-gradient(1200px 600px at 70% -10%,#f7f9fc,var(--bg)) fixe
     <button class="tab-btn" onclick="showTab('parlays')"><i class="ti ti-link"></i>Parlays</button>
     <button class="tab-btn" onclick="showTab('pitchers')"><i class="ti ti-circle-dashed"></i>Pitchers K</button>
     <button class="tab-btn" onclick="showTab('batters')"><i class="ti ti-run"></i>Bateadores</button>
-    <button class="tab-btn" onclick="showTab('history');loadHistory()"><i class="ti ti-history"></i>Historial</button>
+    <button class="tab-btn" onclick="showTab('signals');loadSignals()"><i class="ti ti-radar"></i>Señales</button>
     <button class="tab-btn" onclick="showTab('model');loadModelTab()"><i class="ti ti-brain"></i>Modelo IA</button>
     <button class="tab-btn" onclick="showTab('valid');loadValidation()"><i class="ti ti-target"></i>Validación</button>
     <button class="tab-btn" onclick="showTab('props');loadProps()"><i class="ti ti-list-check"></i>Historial Props</button>
@@ -445,24 +445,35 @@ body{background:radial-gradient(1200px 600px at 70% -10%,#f7f9fc,var(--bg)) fixe
       <div id="batters-area"><div class="empty">Corre el análisis primero.</div></div>
     </div>
 
-    <!-- HISTORY -->
-    <div class="tab-pane" id="tab-history">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
-        <div style="display:flex;gap:8px">
-          <button class="btn-sm" onclick="loadHistory()">🔄 Recargar</button>
-          <button class="btn-sm owner-only" onclick="autoGrade()">⚡ Auto-calificar</button>
-          <button class="btn-sm owner-only" style="color:var(--rtx);border-color:var(--red)" onclick="clearHistory()">🗑 Limpiar historial</button>
+    <!-- SEÑALES · historial del tablero de convicción -->
+    <div class="tab-pane" id="tab-signals">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+        <div>
+          <div style="font-size:13px;font-weight:700">Señales · historial del tablero de convicción</div>
+          <div style="font-size:11px;color:var(--text2)">Cada análisis registra la lectura de edge de cada juego. Aquí se mide si esa lectura <b>acierta</b>: por tier, por Data Quality y contra el modelo.</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn-sm" onclick="loadSignals()">🔄 Recargar</button>
+          <button class="btn-sm owner-only" onclick="autoGradeSignals()" title="Califica las señales (ML y F5 del equipo señalado) desde el marcador final de MLB">⚡ Auto-calificar</button>
+          <button class="btn-sm owner-only" style="color:var(--rtx);border-color:var(--red)" onclick="clearSignals()">🗑 Limpiar señales</button>
         </div>
       </div>
-      <div class="stats-bar">
-        <div class="stat-card"><div class="stat-label">Predicciones</div><div class="stat-val" id="h-total">0</div></div>
-        <div class="stat-card"><div class="stat-label">Con resultado</div><div class="stat-val" id="h-graded">0</div></div>
-        <div class="stat-card"><div class="stat-label">% Acierto</div><div class="stat-val" style="color:var(--green)" id="h-acc">—</div></div>
-        <div class="stat-card"><div class="stat-label">Picks altos ✓</div><div class="stat-val" style="color:var(--gold)" id="h-hacc">—</div></div>
-        <div class="stat-card"><div class="stat-label">ROI estimado</div><div class="stat-val" id="h-roi">—</div></div>
-        <div class="stat-card"><div class="stat-label">Ganancia (1u=$100)</div><div class="stat-val" id="h-units">—</div></div>
+      <div class="stats-bar" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr))">
+        <div class="stat-card"><div class="stat-label">Señales</div><div class="stat-val" id="sg-total">0</div></div>
+        <div class="stat-card"><div class="stat-label">Calificadas</div><div class="stat-val" id="sg-graded">0</div></div>
+        <div class="stat-card"><div class="stat-label">Acierto ML</div><div class="stat-val" style="color:var(--green)" id="sg-ml">—</div></div>
+        <div class="stat-card"><div class="stat-label">Acierto F5</div><div class="stat-val" style="color:var(--blue)" id="sg-f5">—</div></div>
+        <div class="stat-card"><div class="stat-label">Solo con edge</div><div class="stat-val" style="color:var(--gold)" id="sg-edge">—</div></div>
+        <div class="stat-card"><div class="stat-label">DQ promedio</div><div class="stat-val" id="sg-dq">—</div></div>
       </div>
-      <div id="history-area"><div class="empty">Corre el análisis y marca resultados con ✓ ✗</div></div>
+      <div class="filterbar" id="sig-filterbar">
+        <span style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase">Tier:</span>
+        <button class="pf-btn active" data-t="all"    onclick="setSigTier('all')">Todos</button>
+        <button class="pf-btn"        data-t="edge"   onclick="setSigTier('edge')">Con edge (≥LEAN)</button>
+        <button class="pf-btn"        data-t="STRONG" onclick="setSigTier('STRONG')">STRONG+</button>
+        <button class="pf-btn"        data-t="ELITE"  onclick="setSigTier('ELITE')">ELITE</button>
+      </div>
+      <div id="signals-area"><div class="empty">Cargando…</div></div>
     </div>
 
     <!-- MODEL -->
@@ -2690,6 +2701,7 @@ async function runAnalysis() {
     const best5Games = [...results].map(g=>({g,bp:bestEdgePick(g)})).filter(x=>x.bp)
       .sort((a,b)=>(b.bp.edge??-1)-(a.bp.edge??-1)).slice(0,5).map(x=>x.g);
     await savePredictions(date, best5Games);
+    await saveSignals(date, results);   // Señales: el tablero de convicción COMPLETO (todos los juegos)
 
     // Update UI
     renderPicks(results);
@@ -3117,66 +3129,198 @@ function renderBatters(batData) {
     </div>`;
 }
 
-// ── History ───────────────────────────────────────────────────────────────────
-let histConf = localStorage.getItem('hist_conf')||'high';   // 'high' = solo alta confianza, 'all' = todas
-function setHistConf(v){ histConf=v; localStorage.setItem('hist_conf',v); loadHistory(); }
+// ══════════════════════════════════════════════════════════════════════════════
+// ── SEÑALES · historial del tablero de convicción ─────────────────────────────
+// Cada análisis guarda la lectura de edge (Edge Read) de CADA juego: equipo con la
+// ventaja, tier, convicción atenuada por DQ, data quality y mejor aplicación.
+// El marcador final califica esa señal en los dos mercados auto-verificables:
+//   • ML — ¿ganó el equipo señalado?      • F5 — ¿ganó las primeras 5 innings?
+// Con eso esta pestaña responde lo único que importa: ¿el tablero acierta, y
+// acierta MÁS cuando dice ELITE que cuando dice LEAN?
+// ══════════════════════════════════════════════════════════════════════════════
 
-async function loadHistory() {
-  $('history-area').innerHTML='<div class="loading"><div class="spin"></div>Cargando desde Supabase...</div>';
-  const {data:all,error} = await sb.from('predictions').select('*').order('game_date',{ascending:false}).limit(500);
-  if(error){$('history-area').innerHTML=`<div class="error-box">${error.message}</div>`;return;}
-  // Filtro por confianza (solo ALTA por defecto)
-  const rows = (all||[]).filter(r=> histConf==='all' ? true : r.confidence==='High');
+// Escapa texto que viene de la base (lectura pública) antes de inyectarlo como HTML
+const esc = s => String(s??'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const TIER_RANK = {'NO EDGE':0, 'LEAN':1, 'STRONG':2, 'ELITE':3};
 
-  const graded=rows.filter(r=>r.result), wins=graded.filter(r=>r.result==='win');
-  const highG=graded.filter(r=>r.confidence==='High'), highW=highG.filter(r=>r.result==='win');
-  const pushes=graded.filter(r=>r.result==='push');
-  const losses=graded.filter(r=>r.result==='loss');
-  const roi=graded.length>0?(wins.length*91-losses.length*100)/graded.length:null;
-  // Ganancia total: 1 unidad = $100 apostado por pick a -110 (gana $91, pierde $100)
-  const profit = graded.length>0 ? wins.length*91 - losses.length*100 : null;   // en dólares
-  const units  = profit!=null ? profit/100 : null;                              // en unidades
-
-  txt('h-total',rows.length); txt('h-graded',graded.length);
-  txt('h-acc', graded.length?Math.round(wins.length/graded.length*100)+'%':'—');
-  txt('h-hacc', highG.length?Math.round(highW.length/highG.length*100)+'%':'—');
-  txt('h-roi', roi!=null?(roi>=0?'+':'')+roi.toFixed(1)+'%':'—');
-  const uEl=$('h-units');
-  if(units!=null){
-    uEl.textContent=(units>=0?'+':'')+units.toFixed(1)+'u ('+(profit>=0?'+':'-')+'$'+Math.abs(profit).toLocaleString('en-US')+')';
-    uEl.style.color = profit>=0 ? 'var(--green)' : 'var(--red)';
-  } else { uEl.textContent='—'; uEl.style.color=''; }
-
-  const optc=(v,l)=>`<option value="${v}"${histConf===v?' selected':''}>${l}</option>`;
-  const selStyle=`background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:4px 8px;font-size:11px;color:var(--text);font-family:inherit`;
-  const ctrl=`<div style="display:flex;justify-content:flex-end;align-items:center;gap:6px;margin-bottom:8px;font-size:11px;color:var(--text2)">Confianza:
-    <select onchange="setHistConf(this.value)" style="${selStyle}">${optc('high','🟢 Solo Alta')}${optc('all','Todas')}</select></div>`;
-
-  if(!rows.length){$('history-area').innerHTML=ctrl+`<div class="empty">${(all||[]).length?'Ningún pick cumple los filtros (confianza / prob. mínima). Ajusta los filtros.':'No hay predicciones aún.<br>Corre el análisis y marca resultados con ✓ ✗'}</div>`;return;}
-
-  $('history-area').innerHTML=ctrl+`<div style="overflow-x:auto;background:var(--bg2);border-radius:var(--r);border:1px solid var(--border)">
-    <table class="htable"><thead><tr><th>Fecha</th><th>Partido</th><th>Favorito</th><th>Prob</th><th>Conf</th><th>Pick</th><th>Resultado</th></tr></thead>
-    <tbody>${rows.map(r=>`<tr>
-      <td>${r.game_date}</td>
-      <td><strong>${r.away}</strong> @ <strong>${r.home}</strong></td>
-      <td>${r.fav}</td>
-      <td style="font-weight:700" title="Probabilidad del pick mostrado">${Math.round((r.top_pick_prob||r.fav_prob||0)*100)}%</td>
-      <td><span class="conf-pill conf-${r.confidence}">${r.confidence==='High'?'🟢 Alta':r.confidence==='Medium'?'🟡 Media':'🔴 Baja'}</span></td>
-      <td style="font-size:10px;color:var(--text2);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${r.top_pick_main||'—'}</td>
-      <td style="white-space:nowrap">
-        <button class="mark-btn ${r.result==='win'?'win':''}" onclick="markResult(${r.id},'win',this)">✓ Ganó</button>
-        <button class="mark-btn ${r.result==='push'?'push':''}" onclick="markResult(${r.id},'push',this)">↔ Push</button>
-        <button class="mark-btn ${r.result==='loss'?'loss':''}" onclick="markResult(${r.id},'loss',this)">✗ Perdió</button>
-      </td>
-    </tr>`).join('')}</tbody></table></div>`;
+// Fila de Supabase a partir de un juego ya analizado
+function signalRow(date, g){
+  const er = g.edgeRead;
+  if(!er || !g.gamePk) return null;
+  const edgeWP = er.edgeTeam===g.home ? g.homeWP : g.awayWP;   // prob. del MODELO para el equipo señalado
+  return {
+    game_date:date, game_pk:g.gamePk, away:g.away, home:g.home, venue:g.venue||'',
+    edge_team:er.edgeTeam, tier:er.tier,
+    conv_eff:+(er.convEff||0).toFixed(1), net_abs:+(er.netAbs||0).toFixed(1), net:+(er.net||0).toFixed(1),
+    dq:er.dq, park_pts:er.park?.pts??null, best_bet:er.best?.[0]||null,
+    edge_wp: edgeWP!=null ? +(+edgeWP).toFixed(4) : null,
+    predicted_total: g.total??null,
+    lines_json: JSON.stringify((er.lines||[]).map(l=>({n:l.name,p:l.pts,t:l.team}))),
+    flags_json: JSON.stringify({flags:er.flags||[], conflicts:er.conflicts||[], dq:er.dqNotes||[]}),
+  };
+}
+// Guarda las señales del día — una por juego, clave game_pk (los doubleheaders NO se pisan).
+// Nunca sobrescribe una señal que ya tiene resultado.
+async function saveSignals(date, games){
+  if(!isOwner()) return;
+  const rows = games.map(g=>signalRow(date,g)).filter(Boolean);
+  if(!rows.length) return;
+  try{
+    const {data:ex} = await sb.from('signals').select('id,game_pk,result').eq('game_date',date);
+    const map={}; (ex||[]).forEach(e=>map[e.game_pk]=e);
+    const toInsert=[];
+    for(const r of rows){
+      const e=map[r.game_pk];
+      if(e){ if(!e.result) await sb.from('signals').update(r).eq('id',e.id); }
+      else toInsert.push(r);
+    }
+    if(toInsert.length) await sb.from('signals').insert(toInsert);
+  }catch(e){ console.warn('saveSignals:',e.message); }
 }
 
-async function markResult(id, result, btn) {
+// ── Filtro por tier ───────────────────────────────────────────────────────────
+let sigTier = localStorage.getItem('sig_tier')||'all';
+function setSigTier(t){ sigTier=t; localStorage.setItem('sig_tier',t); loadSignals(); }
+const sigPasses = r => sigTier==='all'  ? true
+                     : sigTier==='edge' ? (TIER_RANK[r.tier]??0)>=1
+                     : (TIER_RANK[r.tier]??0) >= (TIER_RANK[sigTier]??0);
+
+// ── Estadística ───────────────────────────────────────────────────────────────
+// Acierto sobre las señales calificadas. Los push (empate F5) no cuentan a favor
+// ni en contra: salen del denominador, como en cualquier libro.
+function sigRate(rows, field){
+  const g = rows.filter(r=>r[field]==='win'||r[field]==='loss');
+  const w = g.filter(r=>r[field]==='win').length;
+  return {n:g.length, w, pct: g.length ? w/g.length : null};
+}
+const rateTxt   = r => r.pct==null ? '—' : `${Math.round(r.pct*100)}% <span style="color:var(--text3);font-weight:400">(${r.w}/${r.n})</span>`;
+const rateColor = r => r.pct==null ? 'var(--text3)' : r.pct>=.60 ? 'var(--gtx)' : r.pct>=.52 ? 'var(--atx)' : 'var(--rtx)';
+const avgOf     = (rows,f) => rows.length ? rows.reduce((s,r)=>s+(+r[f]||0),0)/rows.length : null;
+const tierPill  = t => `<span class="board-tier" style="background:${tierBg(t)};display:inline-block">${esc(t)}</span>`;
+
+// Tabla de rendimiento por grupo (tier, DQ, acuerdo con el modelo…)
+function sigGroupTable(title, note, hd, groups){
+  const body = groups.filter(g=>g.rows.length).map(g=>{
+    const m=sigRate(g.rows,'result'), f=sigRate(g.rows,'f5_result');
+    const c=avgOf(g.rows,'conv_eff'), d=avgOf(g.rows,'dq');
+    return `<tr>
+      <td>${g.label}</td>
+      <td>${g.rows.length}</td>
+      <td style="font-weight:700;color:${rateColor(m)}">${rateTxt(m)}</td>
+      <td style="font-weight:700;color:${rateColor(f)}">${rateTxt(f)}</td>
+      <td>${c!=null?'+'+c.toFixed(1):'—'}</td>
+      <td>${d!=null?Math.round(d):'—'}</td>
+    </tr>`;
+  }).join('');
+  if(!body) return '';
+  return `<div class="card" style="margin-bottom:12px">
+    <div class="card-hdr"><span class="card-hdr-title">${title}</span><span style="font-size:10px;color:var(--text3)">${note}</span></div>
+    <div style="overflow-x:auto"><table class="htable">
+      <thead><tr><th>${hd}</th><th>n</th><th>Acierto ML</th><th>Acierto F5</th><th>Conv. media</th><th>DQ medio</th></tr></thead>
+      <tbody>${body}</tbody></table></div></div>`;
+}
+
+async function loadSignals(){
+  $('signals-area').innerHTML='<div class="loading"><div class="spin"></div>Cargando señales…</div>';
+  document.querySelectorAll('#sig-filterbar .pf-btn').forEach(b=>b.classList.toggle('active',b.dataset.t===sigTier));
+  const {data:all,error} = await sb.from('signals').select('*').order('game_date',{ascending:false}).limit(2000);
+  if(error){
+    const falta=/relation|does not exist|schema cache|not find the table/i.test(error.message||'');
+    $('signals-area').innerHTML=`<div class="error-box">${esc(error.message)}${falta?'<br><br><b>Falta la tabla <code>signals</code></b> — corre el SQL de <code>supabase-setup.sql</code> en el SQL Editor de Supabase.':''}</div>`;
+    return;
+  }
+  const rows = (all||[]).filter(sigPasses);
+
+  // ── Cabecera de métricas ──
+  const ml=sigRate(rows,'result'), f5=sigRate(rows,'f5_result');
+  const conEdge=rows.filter(r=>(TIER_RANK[r.tier]??0)>=1), mlEdge=sigRate(conEdge,'result');
+  const dqAvg=avgOf(rows,'dq');
+  txt('sg-total', rows.length);
+  txt('sg-graded', ml.n);
+  txt('sg-ml',   ml.pct!=null?Math.round(ml.pct*100)+'%':'—');
+  txt('sg-f5',   f5.pct!=null?Math.round(f5.pct*100)+'%':'—');
+  txt('sg-edge', mlEdge.pct!=null?`${Math.round(mlEdge.pct*100)}% (${mlEdge.n})`:'—');
+  txt('sg-dq',   dqAvg!=null?Math.round(dqAvg):'—');
+
+  if(!rows.length){
+    $('signals-area').innerHTML = (all||[]).length
+      ? '<div class="empty">Ninguna señal cumple el filtro de tier. Prueba con <b>Todos</b>.</div>'
+      : '<div class="empty">Todavía no hay señales.<br>Corre el análisis (con sesión iniciada) y el tablero de convicción se irá registrando aquí.</div>';
+    return;
+  }
+
+  // ── Rendimiento por tier: la pregunta central ──
+  const porTier = sigGroupTable(
+    '🎯 Rendimiento por tier',
+    'si el tablero sirve, el acierto debe SUBIR de LEAN → STRONG → ELITE',
+    'Tier',
+    ['ELITE','STRONG','LEAN','NO EDGE'].map(t=>({label:tierPill(t), rows:rows.filter(r=>r.tier===t)}))
+  );
+
+  // ── Rendimiento por Data Quality: ¿la penalización por DQ está bien puesta? ──
+  const porDQ = sigGroupTable(
+    '🧪 Rendimiento por Data Quality',
+    'DQ alto = alineaciones confirmadas y buena muestra; debería acertar más',
+    'Data Quality',
+    [{label:'85–100 (alta)', rows:rows.filter(r=>r.dq>=85)},
+     {label:'70–84 (media)', rows:rows.filter(r=>r.dq>=70&&r.dq<85)},
+     {label:'50–69 (baja)',  rows:rows.filter(r=>r.dq>=50&&r.dq<70)},
+     {label:'&lt;50 (muy baja)', rows:rows.filter(r=>r.dq!=null&&r.dq<50)}]
+  );
+
+  // ── Tablero vs modelo: ¿el Edge Read aporta algo que la regresión no vea? ──
+  const conM = rows.filter(r=>r.edge_wp!=null && +r.edge_wp>=.5);
+  const vsM  = rows.filter(r=>r.edge_wp!=null && +r.edge_wp<.5);
+  const porAcuerdo = sigGroupTable(
+    '⚖️ Tablero vs modelo',
+    'cuando el Edge Read señala al NO favorito del modelo, ¿quién tiene razón?',
+    'Acuerdo',
+    [{label:'Coinciden <span style="color:var(--text3)">(señala al favorito del modelo)</span>', rows:conM},
+     {label:'Contradice <span style="color:var(--text3)">(señala al underdog del modelo)</span>', rows:vsM}]
+  );
+
+  // ── Historial detallado ──
+  const mark = v => v==='win'  ? '<span style="color:var(--gtx);font-weight:700">✓</span>'
+                  : v==='loss' ? '<span style="color:var(--rtx);font-weight:700">✗</span>'
+                  : v==='push' ? '<span style="color:var(--blue);font-weight:700">↔</span>'
+                  : '<span style="color:var(--text3)">pend.</span>';
+  const hist = rows.slice(0,400).map(r=>{
+    const noEdge = r.tier==='NO EDGE';
+    const etC = r.edge_team===r.home ? 'var(--green)' : 'var(--blue)';
+    const score = r.home_score!=null ? `${esc(r.away)} ${r.away_score}–${r.home_score} ${esc(r.home)}` : '—';
+    const f5s = r.f5_home!=null ? ` <span style="color:var(--text3)">· F5 ${r.f5_away}–${r.f5_home}</span>` : '';
+    return `<tr>
+      <td style="white-space:nowrap">${esc(r.game_date)}</td>
+      <td style="white-space:nowrap"><strong>${esc(r.away)}</strong> <span style="color:var(--text3)">@</span> <strong>${esc(r.home)}</strong></td>
+      <td style="font-weight:800;white-space:nowrap;color:${noEdge?'var(--text3)':etC}">${noEdge?'—':esc(r.edge_team)+' +'+Math.round(r.conv_eff||0)}</td>
+      <td>${tierPill(r.tier)}</td>
+      <td style="font-weight:800;text-align:center;color:${dqColor(r.dq)}">${r.dq??'—'}</td>
+      <td style="font-size:10px;font-weight:700;color:var(--gold);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${noEdge?'—':esc(r.best_bet||'—')}</td>
+      <td style="font-size:10px;white-space:nowrap">${score}${f5s}</td>
+      <td style="text-align:center">${mark(r.result)}</td>
+      <td style="text-align:center">${mark(r.f5_result)}</td>
+    </tr>`;
+  }).join('');
+
+  $('signals-area').innerHTML = porTier + porDQ + porAcuerdo + `
+    <div class="card">
+      <div class="card-hdr"><span class="card-hdr-title">📋 Historial de señales</span><span style="font-size:10px;color:var(--text3)">${rows.length} señales${rows.length>400?' · mostrando las 400 más recientes':''}</span></div>
+      <div style="overflow-x:auto"><table class="htable">
+        <thead><tr><th>Fecha</th><th>Partido</th><th>Señal</th><th>Tier</th><th>DQ</th><th>Mejor apuesta</th><th>Resultado</th><th>ML</th><th>F5</th></tr></thead>
+        <tbody>${hist}</tbody></table></div>
+      <div style="padding:8px 12px;font-size:10px;color:var(--text3)">
+        <b>ML</b> = ganó el equipo señalado · <b>F5</b> = ganó las primeras 5 innings (↔ = empate, no cuenta).
+        Es <b>% de acierto, no ROI</b>: el tablero señala un lado, no un precio. Con menos de ~100 señales calificadas por tier, las diferencias todavía son ruido.
+      </div>
+    </div>`;
+}
+
+async function clearSignals(){
   if(!requireAuth()) return;
-  const newResult = btn.classList.contains(result) ? null : result;
-  const {error} = await sb.from('predictions').update({result: newResult}).eq('id', id);
-  if(error) { alert('Error: ' + error.message); return; }
-  loadHistory();
+  if(!confirm('¿Borrar TODAS las señales guardadas? No se puede deshacer.')) return;
+  const {error} = await sb.from('signals').delete().gte('id',0);
+  if(error){ alert('❌ Error: '+error.message+'\nCorre el SQL de permisos en Supabase.'); return; }
+  loadSignals();
 }
 
 // ── Validación: calibración (predicho vs real) + CLV ───────────────────────
@@ -3320,12 +3464,12 @@ function gradeTopPick(r, g) {
   return null;  // Ks u otros: requieren boxscore, se califican a mano
 }
 
-async function autoGrade() {
-  if(!requireAuth()) return;
-  $('history-area').insertAdjacentHTML('afterbegin','<div class="loading" id="grading-msg"><div class="spin"></div>Consultando marcadores finales...</div>');
+// Califica las PREDICCIONES pendientes desde el marcador final. Sin UI propia: la
+// dispara el botón de Señales para que Validación (calibración, CLV, reentrenamiento)
+// siga alimentándose aunque la pestaña de historial ya no exista.
+async function gradePredictions(){
   const {data:rows,error} = await sb.from('predictions').select('*').is('result',null);
-  if(error){ $('grading-msg')?.remove(); alert('Error: '+error.message); return; }
-  if(!rows?.length){ $('grading-msg')?.remove(); alert('No hay predicciones sin calificar.'); return; }
+  if(error||!rows?.length) return {graded:0, pending:0};
 
   const finals={};
   for(const d of [...new Set(rows.map(r=>r.game_date))]){
@@ -3346,18 +3490,49 @@ async function autoGrade() {
     if(res){ upd.result=res; graded++; }
     if(Object.keys(upd).length) await sb.from('predictions').update(upd).eq('id',r.id);
   }
-  $('grading-msg')?.remove();
-  alert(`✅ ${graded} calificadas automáticamente`+(pending?` · ${pending} aún sin marcador final`:'')+`\n(Ks y props se califican a mano)`);
-  loadHistory();
+  return {graded, pending};
 }
 
-async function clearHistory() {
+// Califica las SEÑALES desde el marcador final: ML y F5 del equipo señalado.
+// El cruce es por game_pk, así que los doubleheaders se califican por separado.
+async function autoGradeSignals(){
   if(!requireAuth()) return;
-  if(!confirm('¿Borrar TODO el historial de Supabase? No se puede deshacer.')) return;
-  const {error} = await sb.from('predictions').delete().gte('id', 0);
-  if(error) { alert('❌ Error: ' + error.message + '\nCorre el SQL de permisos en Supabase.'); return; }
-  alert('✅ Historial borrado');
-  loadHistory();
+  $('signals-area').insertAdjacentHTML('afterbegin','<div class="loading" id="sig-grading"><div class="spin"></div>Consultando marcadores finales…</div>');
+  const {data:rows,error} = await sb.from('signals').select('*').is('result',null);
+  if(error){ $('sig-grading')?.remove(); alert('Error: '+error.message); return; }
+
+  let graded=0, pending=0;
+  if(rows?.length){
+    const byPk={};
+    for(const d of [...new Set(rows.map(r=>r.game_date))]){
+      try{ const sched=await mlb(`/schedule?sportId=1&date=${d}&hydrate=linescore,team`);
+        (sched.dates||[]).flatMap(x=>x.games||[]).forEach(g=>{ byPk[g.gamePk]=g; }); }catch{}
+    }
+    for(const r of rows){
+      const g=byPk[r.game_pk];
+      if(!g || g.status?.abstractGameState!=='Final'){ pending++; continue; }
+      const hS=g.teams?.home?.score, aS=g.teams?.away?.score;
+      if(hS==null||aS==null){ pending++; continue; }
+      const isHome = r.edge_team===r.home;
+      const ts = isHome?hS:aS, os = isHome?aS:hS;
+      const upd = {home_score:hS, away_score:aS, result: ts>os?'win':ts<os?'loss':'push'};
+      // F5: suma de las primeras 5 entradas del linescore
+      const inn=g.linescore?.innings||[];
+      if(inn.length>=5){
+        const f5=inn.slice(0,5).reduce((o,i)=>({a:o.a+(i.away?.runs||0), h:o.h+(i.home?.runs||0)}),{a:0,h:0});
+        upd.f5_home=f5.h; upd.f5_away=f5.a;
+        const tf=isHome?f5.h:f5.a, of=isHome?f5.a:f5.h;
+        upd.f5_result = tf>of?'win':tf<of?'loss':'push';
+      }
+      await sb.from('signals').update(upd).eq('id',r.id);
+      graded++;
+    }
+  }
+  const pred = await gradePredictions();   // mantiene viva la Validación
+  $('sig-grading')?.remove();
+  alert(`✅ ${graded} señales calificadas`+(pending?` · ${pending} aún sin marcador final`:'')+
+        `\n📊 ${pred.graded} predicciones calificadas (pestaña Validación)`);
+  loadSignals();
 }
 
 // ── Historial de Props ──────────────────────────────────────────────────────

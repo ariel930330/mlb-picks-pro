@@ -18,7 +18,7 @@ Dashboard de predicciones de béisbol en tiempo real. Conecta a la **MLB Stats A
 | **Parlays** | Combos automáticos usando solo picks de Alta Confianza |
 | **Pitchers K** | Proyección de strikeouts para cada abridor |
 | **Bateadores** | P(Hit) y Total Bases por jugador con datos individuales reales |
-| **Historial** | Registro de picks + resultados. Vista personal y comunidad |
+| **Señales** | Historial del tablero de convicción + estadística: acierto por tier, por Data Quality y contra el modelo |
 | **Analytics** | Calibración del modelo, Win%, ROI, rendimiento diario |
 
 ### Qué calcula el modelo

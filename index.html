@@ -443,9 +443,7 @@ body{background:radial-gradient(1200px 600px at 70% -10%,#f7f9fc,var(--bg)) fixe
         <button class="pf-btn active" data-f="all"  onclick="setPickFilter('all')">Todos</button>
         <button class="pf-btn" data-f="ev"   onclick="setPickFilter('ev')">+EV (valor)</button>
         <button class="pf-btn" data-f="high" onclick="setPickFilter('high')">🟢 Alta conf.</button>
-        <span style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;margin-left:auto">Orden:</span>
-        <button class="ps-btn" data-s="edge" onclick="setPickSort('edge')">Valor</button>
-        <button class="ps-btn active" data-s="prob" onclick="setPickSort('prob')">Probabilidad</button>
+        <span style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;margin-left:auto" title="El sistema siempre ordena por edge (valor), nunca por probabilidad">Orden: valor (edge)</span>
         <button class="btn-sm" onclick="copyPicks()"><i class="ti ti-copy"></i> Copiar</button>
       </div>
       <div id="picks-area"><div class="empty"><i class="ti ti-trophy" style="font-size:40px;opacity:.15;display:block;margin:0 auto 12px"></i>Selecciona fecha y presiona Analizar partidos</div></div>
@@ -1132,7 +1130,9 @@ function computePicks(data) {
   // Stake sugerido (medio-Kelly, % del bankroll) solo cuando hay cuota real y edge positivo
   picks.forEach(p=>{ p.stake = (p.price!=null && p.edge>0) ? stakePct(p.prob,p.price) : 0; });
   // Selección por PROBABILIDAD: las apuestas más probables del juego (cualquier mercado)
-  picks.sort((a,b)=>b.prob-a.prob);
+  // Selección por EDGE (valor), nunca por probabilidad: un favorito al 70% sin valor
+  // vale menos que un underdog al 45% que el mercado paga de más.
+  picks.sort((a,b)=>(b.edge??-1)-(a.edge??-1));
   const top3=picks.slice(0,3).map(p=>({...p,conf:p.prob>=.58?'High':p.prob>=.53?'Medium':'Low'}));
 
   // ── MLB EDGE READ: lectura de juego por categoría + convicción + data quality ──
@@ -2794,26 +2794,26 @@ async function savePredictions(date, games) {
 
 // ── Render picks ──────────────────────────────────────────────────────────────
 let pickFilter='all';
-let pickSort = localStorage.getItem('pick_sort') || 'prob';   // 'prob' (probabilidad, default) | 'edge' (valor)
+// El orden es SIEMPRE por edge. No hay opción de ordenar por probabilidad: la
+// probabilidad alta sin valor es una trampa (favoritos caros que pagan de menos).
 function setPickFilter(f){
   pickFilter=f;
   document.querySelectorAll('.pf-btn').forEach(b=>b.classList.toggle('active',b.dataset.f===f));
   renderPicks(allGames);
 }
-function setPickSort(s){
-  pickSort=s; localStorage.setItem('pick_sort',s);
-  document.querySelectorAll('.ps-btn').forEach(b=>b.classList.toggle('active',b.dataset.s===s));
-  renderPicks(allGames);
-}
 function pickPasses(p){ return pickFilter==='ev' ? p.edge>0 : pickFilter==='high' ? (p.conf||confOf(p))==='High' : true; }
+// confOf sigue existiendo SOLO como etiqueta visual (🟢🟡🔴) y para el filtro manual
+// "Alta conf.". Nunca decide qué picks se muestran ni en qué orden.
 const confOf = p => p.prob>=.58?'High':p.prob>=.53?'Medium':'Low';
-const pickSorter = () => pickSort==='prob' ? (a,b)=>b.prob-a.prob : (a,b)=>b.edge-a.edge;
-// Máxima variedad: el mejor pick de cada TIPO de mercado (sin repetir), hasta 5.
-// Solo se conservan los de ALTA probabilidad (conf. High ≥ 58%); se descartan media/baja.
+// Orden único del sistema: mayor edge primero.
+const byEdgeDesc = (a,b)=>(b.edge??-1)-(a.edge??-1);
+// Máxima variedad: el mejor pick de cada TIPO de mercado (sin repetir), hasta 5,
+// elegido y ordenado por EDGE. Sin piso de probabilidad: un underdog con valor real
+// tiene que poder aparecer, y antes el umbral del 58% lo eliminaba siempre.
 function selectGamePicks(g){
   const byCat={};
-  (g.allPicks||g.picks||[]).filter(pickPasses).filter(p=>confOf(p)==='High').forEach(p=>{ const c=byCat[p.cat]; if(!c||pickSorter()(p,c)<0) byCat[p.cat]=p; });
-  return Object.values(byCat).sort(pickSorter()).slice(0,5);
+  (g.allPicks||g.picks||[]).filter(pickPasses).forEach(p=>{ const c=byCat[p.cat]; if(!c||byEdgeDesc(p,c)<0) byCat[p.cat]=p; });
+  return Object.values(byCat).sort(byEdgeDesc).slice(0,5);
 }
 
 // Colores compartidos por el Edge Read y el tablero de convicción
@@ -2846,7 +2846,6 @@ function renderPicks(games) {
   const confMap = {High:'high',Medium:'med',Low:'low'};
   const labelMap = {High:'🟢 ALTA',Medium:'🟡 MEDIA',Low:'🔴 BAJA'};
   $('filterbar').style.display = games.length ? 'flex' : 'none';
-  document.querySelectorAll('.ps-btn').forEach(b=>b.classList.toggle('active',b.dataset.s===pickSort));
   const html = games.map(g=>{
     // Un pick por tipo de mercado (variedad), hasta 5, según el orden elegido
     const picks = selectGamePicks(g).map(p=>({...p,conf:confOf(p)}));
@@ -2940,9 +2939,10 @@ function buildParlays(games) {
   // Mejor pata por juego: la de mayor edge entre picks con prob >= 55%
   const cand=[];
   games.forEach(g=>{
-    const elig=(g.allPicks||[]).filter(p=>p.prob>=.55);
+    // Pata del juego: la de mayor EDGE, sin piso de probabilidad.
+    const elig=(g.allPicks||[]).filter(Boolean);
     if(!elig.length) return;
-    const best=elig.reduce((a,b)=>b.edge>a.edge?b:a);
+    const best=elig.reduce((a,b)=>((b.edge??-1)>(a.edge??-1))?b:a);
     cand.push({...best, matchup:`${g.away} @ ${g.home}`, dec: best.price!=null?amDec(best.price):1/Math.max(best.prob,.01)});
   });
   cand.sort((a,b)=>b.edge-a.edge);
@@ -2989,27 +2989,32 @@ function renderPitchers(games) {
     {...g.pitchers.away,team:g.away,teamId:g.awayId,opp:g.home,matchup:`${g.away} @ ${g.home}`,gamePk:g.gamePk},
     {...g.pitchers.home,team:g.home,teamId:g.homeId,opp:g.away,matchup:`${g.away} @ ${g.home}`,gamePk:g.gamePk},
   ]).filter(p=>p.name!=='TBD');
-  // Probabilidad del lado recomendado (lean) para rankear los mejores Ks de la jornada
-  const leanProb = p => {
-    if(!p.id) return 0;
+  // EDGE del lado recomendado. Con línea de casa es el edge real contra el mercado
+  // sin comisión; sin línea, contra el breakeven de -110. Nunca se rankea por
+  // probabilidad pelada.
+  const leanEdge = p => {
+    if(!p.id) return -1;
     const l = p.kMkt ? p.kMkt.line : p.kLine;
-    if(p.kMkt && l<3.5) return 0;                 // salida corta/opener: el modelo no aplica
+    if(p.kMkt && l<3.5) return -1;                // salida corta/opener: el modelo no aplica
     const over = p.kExp>=l;
-    return over ? poissonOver(p.kExp,l) : 1-poissonOver(p.kExp,l);
+    const pr = over ? poissonOver(p.kExp,l) : 1-poissonOver(p.kExp,l);
+    if(p.kMkt) return pr - (over ? p.kMkt.fairOver : p.kMkt.fairUnder);
+    return pr - BREAKEVEN;
   };
-  // Solo los 5 abridores con mayor probabilidad de la jornada
-  const topPitchers = pitchers.map(p=>({p,prob:leanProb(p)})).sort((a,b)=>b.prob-a.prob).slice(0,5).map(x=>x.p);
+  // Los 5 abridores de MAYOR EDGE de la jornada
+  const topPitchers = pitchers.map(p=>({p,e:leanEdge(p)})).sort((a,b)=>b.e-a.e).slice(0,5).map(x=>x.p);
   propsPitcher=[];   // recolectar picks de Ks a guardar (solo del top mostrado)
 
   if(!topPitchers.length){ $('pitchers-area').innerHTML='<div class="empty">Corre el análisis primero.</div>'; return; }
-  $('pitchers-area').innerHTML=`<div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los <b>5 abridores con mayor probabilidad</b> de ponches (lado recomendado) de la jornada.</div>`+topPitchers.map(p=>{
+  $('pitchers-area').innerHTML=`<div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los <b>5 abridores con mayor edge</b> en ponches (lado recomendado) de la jornada.</div>`+topPitchers.map(p=>{
     const mkt=p.kMkt;
     let line, lineSrc, rec, recColor, badge, sub;
     // Pick de Ks a guardar: línea real si existe, si no la del modelo; lado = over si proyección > línea
     if(p.id){ const l=mkt?mkt.line:p.kLine, over=p.kExp>=l, pr=over?poissonOver(p.kExp,l):1-poissonOver(p.kExp,l);
-      const kEdge=(mkt&&l>=3.5)?+(pr-(over?mkt.fairOver:mkt.fairUnder)).toFixed(3):null;   // edge vs línea de casa (para rankear)
-      // Solo guardar el pick de Ks si el modelo tiene un lean claro (evita guardar TODOS los abridores)
-      if(pr>=0.5) propsPitcher.push({gamePk:p.gamePk,player_id:p.id,player_name:p.name,team:p.team,market:'Ks',target:l,side:over?'over':'under',prob:+pr.toFixed(3),proj:p.kExp,edge:kEdge}); }
+      // Edge vs la línea de casa sin comisión; sin línea, contra el breakeven de -110
+      const kEdge=(mkt&&l>=3.5)?+(pr-(over?mkt.fairOver:mkt.fairUnder)).toFixed(3):+(pr-BREAKEVEN).toFixed(3);
+      // Se guardan los 5 mostrados, que ya vienen seleccionados por edge
+      propsPitcher.push({gamePk:p.gamePk,player_id:p.id,player_name:p.name,team:p.team,market:'Ks',target:l,side:over?'over':'under',prob:+pr.toFixed(3),proj:p.kExp,edge:kEdge}); }
     if(mkt){
       line=mkt.line; lineSrc='casa';
       if(line<3.5){
@@ -3135,7 +3140,14 @@ function renderBatters(batData) {
     <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los 2 más probables de la jornada por categoría · <b>solo matchups favorables o de alta probabilidad</b> · ajustado por pitcher rival, mano, estadio y clima${rows.some(r=>r.conf)?' · <b style="color:var(--gtx)">✓</b> = titular confirmado (alineación publicada)':' · alineaciones aún sin confirmar'}${rows.some(r=>r.evHits||r.evTB||r.evHR)?' · <b>casa</b> = línea real con edge y stake':''}.</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px">
       ${cats.map(cat=>{
-        const top2=[...pool].sort((a,b)=>cat.metric(b)-cat.metric(a)).slice(0,2);
+        // Orden por EDGE contra la línea real de casa. Solo cuando esa categoría no
+        // tiene ninguna línea disponible se cae a la proyección, porque sin mercado
+        // no hay edge que medir.
+        const eOf = r => { const ev = cat.tag ? cat.tag(r) : null; return ev ? ev.edge : null; };
+        const conEdge = pool.some(r=>eOf(r)!=null);
+        const top2 = conEdge
+          ? [...pool].sort((a,b)=>((eOf(b)??-1)-(eOf(a)??-1))||(cat.metric(b)-cat.metric(a))).slice(0,2)
+          : [...pool].sort((a,b)=>cat.metric(b)-cat.metric(a)).slice(0,2);
         top2.forEach(r=>{ const ev=cat.tag?cat.tag(r):null; propsBatter.push({gamePk:r.gamePk,player_id:r.id,player_name:r.name,team:r.team,market:cat.mkt,
           target:typeof cat.target==='function'?cat.target(r):cat.target, side:'over',
           prob:cat.prob?+cat.prob(r).toFixed(3):null, proj:+cat.metric(r).toFixed(2), edge:ev?+ev.edge.toFixed(3):null}); });
@@ -3696,10 +3708,10 @@ async function loadProps(){
     const grp={};
     list.forEach(r=>{ const k=(r.game_date||'')+'|'+(r.market||''); (grp[k]=grp[k]||[]).push(r); });
     const out=[];
-    Object.values(grp).forEach(arr=>{ arr.sort((a,b)=>(b.prob??b.proj??0)-(a.prob??a.proj??0)); out.push(...arr.slice(0,n)); });
+    Object.values(grp).forEach(arr=>{ arr.sort((a,b)=>((b.edge??-1)-(a.edge??-1))||((b.proj??0)-(a.proj??0))); out.push(...arr.slice(0,n)); });
     return out.sort((a,b)=> (a.game_date<b.game_date?1:a.game_date>b.game_date?-1:0));
   };
-  const pit = topPerMarket(rows.filter(r=>r.kind==='pitcher' && (r.prob??0)>=0.5), 3);
+  const pit = topPerMarket(rows.filter(r=>r.kind==='pitcher'), 3);
   const bat = topPerMarket(rows.filter(r=>r.kind==='batter'), 2);
   $('props-area').innerHTML=section('⚾ Pitchers · Ponches (Ks)',pit)+section('🏏 Bateadores',bat);
 }
@@ -3914,7 +3926,7 @@ async function restoreCloud(){
 async function restoreToday() {
   const today = todayLocal();
   const {data:rows,error} = await sb.from('predictions')
-    .select('*').eq('game_date',today).order('fav_prob',{ascending:false});
+    .select('*').eq('game_date',today).order('top_pick_edge',{ascending:false});
   if(error||!rows?.length) return;
 
   // Rebuild game objects from saved data

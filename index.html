@@ -251,6 +251,11 @@ input[type=date]{background:var(--bg2);border:1px solid var(--border);border-rad
 .htable th{text-align:left;padding:8px 10px;font-weight:700;color:var(--text2);border-bottom:1px solid var(--border);font-size:10px;background:var(--bg3);white-space:nowrap}
 .htable td{padding:7px 10px;border-bottom:1px solid var(--border)}
 .htable tr:hover td{background:var(--bg3)}
+/* Alineación de columnas: .c = centrada, .r = derecha. Se aplica a th y td por igual
+   para que la cabecera nunca quede desfasada respecto a sus celdas. */
+.htable th.c,.htable td.c{text-align:center}
+.htable th.r,.htable td.r{text-align:right}
+.htable td.num,.htable th.num{text-align:center;font-variant-numeric:tabular-nums}
 .conf-pill{font-size:10px;padding:2px 7px;border-radius:4px;font-weight:600}
 .conf-High{background:var(--gbg);color:var(--gtx)}
 .conf-Medium{background:var(--abg);color:var(--atx)}
@@ -3224,18 +3229,18 @@ function sigGroupTable(title, note, hd, groups){
     const c=avgOf(g.rows,'conv_eff'), d=avgOf(g.rows,'dq');
     return `<tr>
       <td>${g.label}</td>
-      <td>${g.rows.length}</td>
-      <td style="font-weight:700;color:${rateColor(m)}">${rateTxt(m)}</td>
-      <td style="font-weight:700;color:${rateColor(f)}">${rateTxt(f)}</td>
-      <td>${c!=null?'+'+c.toFixed(1):'—'}</td>
-      <td>${d!=null?Math.round(d):'—'}</td>
+      <td class="num">${g.rows.length}</td>
+      <td class="num" style="font-weight:700;color:${rateColor(m)}">${rateTxt(m)}</td>
+      <td class="num" style="font-weight:700;color:${rateColor(f)}">${rateTxt(f)}</td>
+      <td class="num">${c!=null?'+'+c.toFixed(1):'—'}</td>
+      <td class="num">${d!=null?Math.round(d):'—'}</td>
     </tr>`;
   }).join('');
   if(!body) return '';
   return `<div class="card" style="margin-bottom:12px">
     <div class="card-hdr"><span class="card-hdr-title">${title}</span><span style="font-size:10px;color:var(--text3)">${note}</span></div>
     <div style="overflow-x:auto"><table class="htable">
-      <thead><tr><th>${hd}</th><th>n</th><th>Acierto ML</th><th>Acierto F5</th><th>Conv. media</th><th>DQ medio</th></tr></thead>
+      <thead><tr><th>${hd}</th><th class="num">n</th><th class="num">Acierto ML</th><th class="num">Acierto F5</th><th class="num">Conv. media</th><th class="num">DQ medio</th></tr></thead>
       <tbody>${body}</tbody></table></div></div>`;
 }
 
@@ -3249,12 +3254,12 @@ function sigGameRow(r){
   const score = r.home_score!=null ? `${r.away_score}–${r.home_score}` : '—';
   return `<tr>
     <td style="white-space:nowrap"><strong>${esc(r.away)}</strong> <span style="color:var(--text3)">@</span> <strong>${esc(r.home)}</strong></td>
-    <td style="font-weight:800;white-space:nowrap;color:${etC}">${esc(r.edge_team)} <span style="font-variant-numeric:tabular-nums">+${Math.round(r.conv_eff||0)}</span></td>
-    <td style="font-weight:800;text-align:center;color:${dqColor(r.dq)}">${r.dq??'—'}</td>
+    <td style="white-space:nowrap"><span style="font-weight:800;color:${etC}">${esc(r.edge_team)}</span> <span style="font-variant-numeric:tabular-nums;color:var(--text2)">+${Math.round(r.conv_eff||0)}</span></td>
+    <td class="num" style="font-weight:800;color:${dqColor(r.dq)}">${r.dq??'—'}</td>
     <td style="font-size:10px;font-weight:700;color:var(--gold);max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.best_bet||'—')}</td>
-    <td style="text-align:center;font-size:10px;font-variant-numeric:tabular-nums">${score}</td>
-    <td style="text-align:center">${mark(r.result)}</td>
-    <td style="text-align:center">${mark(r.f5_result)}</td>
+    <td class="num" style="font-size:10px">${score}</td>
+    <td class="c">${mark(r.result)}</td>
+    <td class="c">${mark(r.f5_result)}</td>
   </tr>`;
 }
 
@@ -3270,7 +3275,7 @@ function sigSection(tier, dayRows, allRows){
 
   const body = rows.length
     ? `<div style="overflow-x:auto"><table class="htable">
-         <thead><tr><th>Partido</th><th>Señal</th><th>DQ</th><th>Mejor apuesta</th><th>Final</th><th>ML</th><th>F5</th></tr></thead>
+         <thead><tr><th>Partido</th><th>Señal</th><th class="num">DQ</th><th>Mejor apuesta</th><th class="num">Final</th><th class="c">ML</th><th class="c">F5</th></tr></thead>
          <tbody>${rows.sort((a,b)=>(b.conv_eff||0)-(a.conv_eff||0)).map(sigGameRow).join('')}</tbody></table></div>`
     : `<div class="sig-empty">Sin señales de este tier ese día.</div>`;
 
@@ -3345,17 +3350,17 @@ async function loadSignals(){
     const pend=dr.filter(x=>!x.result && (TIER_RANK[x.tier]??0)>=1).length;
     return `<tr class="dayrow${d===day?' active':''}" onclick="setSigDay('${esc(d)}')">
       <td style="white-space:nowrap;font-weight:700">${esc(d)}</td>
-      ${recs.map(r=>`<td style="text-align:center">${cell(r)}</td>`).join('')}
-      <td style="text-align:center">${cell(tot)}</td>
-      <td style="text-align:center;font-weight:700;color:${tot.pct==null?'var(--text3)':tot.pct>=.6?'var(--gtx)':tot.pct>=.5?'var(--atx)':'var(--rtx)'}">${tot.pct!=null?Math.round(tot.pct*100)+'%':'—'}</td>
-      <td style="text-align:center;font-size:10px;color:var(--text3)">${pend||''}</td>
+      ${recs.map(r=>`<td class="num">${cell(r)}</td>`).join('')}
+      <td class="num">${cell(tot)}</td>
+      <td class="num" style="font-weight:700;color:${tot.pct==null?'var(--text3)':tot.pct>=.6?'var(--gtx)':tot.pct>=.5?'var(--atx)':'var(--rtx)'}">${tot.pct!=null?Math.round(tot.pct*100)+'%':'—'}</td>
+      <td class="num" style="font-size:10px;color:var(--text3)">${pend||''}</td>
     </tr>`;
   }).join('');
 
   const histCard = `<div class="card" style="margin-top:4px">
     <div class="card-hdr"><span class="card-hdr-title">📅 Historial por días</span><span style="font-size:10px;color:var(--text3)">${days.length} día${days.length===1?'':'s'} · clic en una fecha para verla arriba</span></div>
     <div style="overflow-x:auto"><table class="htable">
-      <thead><tr><th>Fecha</th><th style="text-align:center">🏆 Elite</th><th style="text-align:center">💪 Strong</th><th style="text-align:center">📈 Lean</th><th style="text-align:center">Total</th><th style="text-align:center">%</th><th style="text-align:center">Pend.</th></tr></thead>
+      <thead><tr><th>Fecha</th><th class="num">🏆 Elite</th><th class="num">💪 Strong</th><th class="num">📈 Lean</th><th class="num">Total</th><th class="num">%</th><th class="num">Pend.</th></tr></thead>
       <tbody>${dayHist}</tbody></table></div>
     <div style="padding:8px 12px;font-size:10px;color:var(--text3)">
       Récord = <b>ganadas-perdidas</b> del ML del equipo señalado. Los push y los juegos aún sin marcador quedan fuera del récord.

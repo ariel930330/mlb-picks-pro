@@ -3163,9 +3163,14 @@ function signalRow(date, g){
   const er = g.edgeRead;
   if(!er || !g.gamePk) return null;
   const edgeWP = er.edgeTeam===g.home ? g.homeWP : g.awayWP;   // prob. del MODELO para el equipo señalado
+  const bp = bestEdgePick(g) || null;   // el pick concreto de MAYOR edge entre todos los mercados
   return {
     game_date:date, game_pk:g.gamePk, away:g.away, home:g.home, venue:g.venue||'',
     edge_team:er.edgeTeam, tier:er.tier,
+    pick_cat: bp?.cat||null, pick_main: bp?.main||null,
+    pick_prob: bp?.prob!=null?+(+bp.prob).toFixed(4):null,
+    pick_edge: bp?.edge!=null?+(+bp.edge).toFixed(4):null,
+    pick_price: bp?.price??null, pick_stake: bp?.stake??null,
     conv_eff:+(er.convEff||0).toFixed(1), net_abs:+(er.netAbs||0).toFixed(1), net:+(er.net||0).toFixed(1),
     dq:er.dq, park_pts:er.park?.pts??null, best_bet:er.best?.[0]||null,
     edge_wp: edgeWP!=null ? +(+edgeWP).toFixed(4) : null,
@@ -3219,7 +3224,7 @@ const rateColor = r => r.pct==null ? 'var(--text3)' : r.pct>=.60 ? 'var(--gtx)' 
 const avgOf     = (rows,f) => rows.length ? rows.reduce((s,r)=>s+(+r[f]||0),0)/rows.length : null;
 const tierPill  = t => `<span class="board-tier" style="background:${tierBg(t)};display:inline-block">${esc(t)}</span>`;
 // Récord W-L (los push no entran; los pendientes tampoco)
-const recordOf = rows => { const r=sigRate(rows,'result'); return {...r, l:r.n-r.w}; };
+const recordOf = (rows,f='result') => { const r=sigRate(rows,f); return {...r, l:r.n-r.w}; };
 const recTxt   = r => r.n ? `${r.w}-${r.l}` : '0-0';
 
 // Tabla de rendimiento por grupo (tier, DQ, acuerdo con el modelo…)
@@ -3244,6 +3249,21 @@ function sigGroupTable(title, note, hd, groups){
       <tbody>${body}</tbody></table></div></div>`;
 }
 
+// Celda del MEJOR PICK del juego: el de mayor edge entre todos los mercados,
+// con su categoría, línea/precio, probabilidad, edge y stake sugerido.
+function pickCell(r){
+  if(!r.pick_main) return '<span style="color:var(--text3);font-size:10px">—</span>';
+  const eC = (r.pick_edge??0)>0 ? 'var(--gtx)' : 'var(--text3)';
+  const ed = r.pick_edge!=null ? `${r.pick_edge>=0?'+':''}${(+r.pick_edge*100).toFixed(1)}%` : '';
+  return `<div style="font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.3px">${esc(r.pick_cat||'')}</div>
+    <div style="font-size:11px;font-weight:700;color:var(--gold)">${esc(r.pick_main)}</div>
+    <div style="font-size:9.5px;color:var(--text2)">
+      ${r.pick_prob!=null?`<b>${Math.round(r.pick_prob*100)}%</b>`:''}
+      ${ed?` · <span style="color:${eC};font-weight:700">edge ${ed}</span>`:''}
+      ${r.pick_stake>0?` · apostar ${r.pick_stake}%`:''}
+    </div>`;
+}
+
 // Una fila de la tabla de una sección (un juego señalado)
 function sigGameRow(r){
   const mark = v => v==='win'  ? '<span style="color:var(--gtx);font-weight:800">✓</span>'
@@ -3256,8 +3276,9 @@ function sigGameRow(r){
     <td style="white-space:nowrap"><strong>${esc(r.away)}</strong> <span style="color:var(--text3)">@</span> <strong>${esc(r.home)}</strong></td>
     <td style="white-space:nowrap"><span style="font-weight:800;color:${etC}">${esc(r.edge_team)}</span> <span style="font-variant-numeric:tabular-nums;color:var(--text2)">+${Math.round(r.conv_eff||0)}</span></td>
     <td class="num" style="font-weight:800;color:${dqColor(r.dq)}">${r.dq??'—'}</td>
-    <td style="font-size:10px;font-weight:700;color:var(--gold);max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.best_bet||'—')}</td>
+    <td style="min-width:150px">${pickCell(r)}</td>
     <td class="num" style="font-size:10px">${score}</td>
+    <td class="c">${mark(r.pick_result)}</td>
     <td class="c">${mark(r.result)}</td>
     <td class="c">${mark(r.f5_result)}</td>
   </tr>`;
@@ -3267,15 +3288,16 @@ function sigGameRow(r){
 function sigSection(tier, dayRows, allRows){
   const meta = TIER_META[tier];
   const rows = dayRows.filter(r=>r.tier===tier);
-  const rec  = recordOf(rows);                              // récord del día
+  const rec  = recordOf(rows);                              // récord del día (ML del equipo señalado)
   const acc  = recordOf(allRows.filter(r=>r.tier===tier));  // acumulado histórico
+  const pk   = recordOf(rows,'pick_result');                // récord del día del MEJOR PICK
   const pend = rows.filter(r=>!r.result).length;
   const col  = tierBg(tier);
   const recCol = rec.pct==null ? 'var(--text3)' : rec.pct>=.6 ? 'var(--gtx)' : rec.pct>=.5 ? 'var(--atx)' : 'var(--rtx)';
 
   const body = rows.length
     ? `<div style="overflow-x:auto"><table class="htable">
-         <thead><tr><th>Partido</th><th>Señal</th><th class="num">DQ</th><th>Mejor apuesta</th><th class="num">Final</th><th class="c">ML</th><th class="c">F5</th></tr></thead>
+         <thead><tr><th>Partido</th><th>Señal</th><th class="num">DQ</th><th>Mejor pick (mayor edge)</th><th class="num">Final</th><th class="c" title="Resultado del mejor pick">Pick</th><th class="c" title="Ganó el equipo señalado">ML</th><th class="c" title="Ganó las primeras 5 innings">F5</th></tr></thead>
          <tbody>${rows.sort((a,b)=>(b.conv_eff||0)-(a.conv_eff||0)).map(sigGameRow).join('')}</tbody></table></div>`
     : `<div class="sig-empty">Sin señales de este tier ese día.</div>`;
 
@@ -3286,7 +3308,7 @@ function sigSection(tier, dayRows, allRows){
       <span class="sig-rec">
         <span class="r" style="color:${recCol}">${recTxt(rec)}</span>
         <span class="p" style="color:${recCol}">${rec.pct!=null?Math.round(rec.pct*100)+'%':''}</span>
-        <span class="a">acum. ${recTxt(acc)}${acc.pct!=null?` · ${Math.round(acc.pct*100)}%`:''}</span>
+        <span class="a">ML del día · picks ${recTxt(pk)}${pk.pct!=null?` (${Math.round(pk.pct*100)}%)`:''} · acum. ${recTxt(acc)}</span>
       </span>
     </div>
     ${body}
@@ -3347,11 +3369,13 @@ async function loadSignals(){
     const dr=byDay[d];
     const recs=SECTION_TIERS.map(t=>recordOf(dr.filter(x=>x.tier===t)));
     const tot=recordOf(dr.filter(x=>(TIER_RANK[x.tier]??0)>=1));
+    const pk =recordOf(dr.filter(x=>(TIER_RANK[x.tier]??0)>=1),'pick_result');
     const pend=dr.filter(x=>!x.result && (TIER_RANK[x.tier]??0)>=1).length;
     return `<tr class="dayrow${d===day?' active':''}" onclick="setSigDay('${esc(d)}')">
       <td style="white-space:nowrap;font-weight:700">${esc(d)}</td>
       ${recs.map(r=>`<td class="num">${cell(r)}</td>`).join('')}
       <td class="num">${cell(tot)}</td>
+      <td class="num">${cell(pk)}</td>
       <td class="num" style="font-weight:700;color:${tot.pct==null?'var(--text3)':tot.pct>=.6?'var(--gtx)':tot.pct>=.5?'var(--atx)':'var(--rtx)'}">${tot.pct!=null?Math.round(tot.pct*100)+'%':'—'}</td>
       <td class="num" style="font-size:10px;color:var(--text3)">${pend||''}</td>
     </tr>`;
@@ -3360,11 +3384,12 @@ async function loadSignals(){
   const histCard = `<div class="card" style="margin-top:4px">
     <div class="card-hdr"><span class="card-hdr-title">📅 Historial por días</span><span style="font-size:10px;color:var(--text3)">${days.length} día${days.length===1?'':'s'} · clic en una fecha para verla arriba</span></div>
     <div style="overflow-x:auto"><table class="htable">
-      <thead><tr><th>Fecha</th><th class="num">🏆 Elite</th><th class="num">💪 Strong</th><th class="num">📈 Lean</th><th class="num">Total</th><th class="num">%</th><th class="num">Pend.</th></tr></thead>
+      <thead><tr><th>Fecha</th><th class="num">🏆 Elite</th><th class="num">💪 Strong</th><th class="num">📈 Lean</th><th class="num">Total ML</th><th class="num" title="Récord del mejor pick de cada juego">Picks</th><th class="num">%</th><th class="num">Pend.</th></tr></thead>
       <tbody>${dayHist}</tbody></table></div>
     <div style="padding:8px 12px;font-size:10px;color:var(--text3)">
-      Récord = <b>ganadas-perdidas</b> del ML del equipo señalado. Los push y los juegos aún sin marcador quedan fuera del récord.
-      <b>Total</b> agrupa Elite + Strong + Lean (excluye NO EDGE).
+      Las columnas por tier y <b>Total ML</b> miden el <b>ML del equipo señalado</b> — o sea si el tablero acertó a quién tenía la ventaja.
+      <b>Picks</b> mide el <b>mejor pick de cada juego</b> (el de mayor edge, sea del mercado que sea): es la apuesta concreta que el sistema recomendó.
+      Ganadas-perdidas; los push y los juegos sin marcador quedan fuera. Todo excluye NO EDGE.
     </div>
   </div>`;
 
@@ -3530,13 +3555,34 @@ function gradeTopPick(r, g) {
   if(cat.startsWith('Run Line')){ const t=tok[0],pt=parseFloat(tok[1]);
     if(isNaN(pt)) return null; const ts=isHome(t)?hS:aS, os=isHome(t)?aS:hS, m=ts-os+pt;
     if(m===0) return 'push'; return m>0?'win':'loss'; }
-  if(cat==='Primeras 5 Innings'){ if(!inn.length) return null; const t=tok[0];
+  // ── Primeras 5 innings: necesitan el linescore con al menos 5 entradas ──
+  const has5 = inn.length>=5;
+  // "ML F5" → main: "LAD F5 -130"
+  if(cat==='ML F5'){ if(!has5) return null; const t=tok[0];
     const tf=isHome(t)?f5.h:f5.a, of=isHome(t)?f5.a:f5.h;
     if(tf===of) return 'push'; return tf>of?'win':'loss'; }
-  if(cat==='F5 Total'){ if(!inn.length) return null; const side=tok[0],line=parseFloat(tok[1]),tot=f5.a+f5.h;
+  // "Spread F5" → main: "LAD -0.5 (F5)" | "COL +0.5 (F5)"
+  if(cat==='Spread F5'){ if(!has5) return null; const t=tok[0],pt=parseFloat(tok[1]);
+    if(isNaN(pt)) return null;
+    const tf=isHome(t)?f5.h:f5.a, of=isHome(t)?f5.a:f5.h, m=tf-of+pt;
+    if(m===0) return 'push'; return m>0?'win':'loss'; }
+  // "F5 Total" → main: "OVER 5.5 (F5)"
+  if(cat==='F5 Total'){ if(!has5) return null; const side=tok[0],line=parseFloat(tok[1]),tot=f5.a+f5.h;
     if(isNaN(line)) return null; if(tot===line) return 'push';
     return (side==='OVER'?tot>line:tot<line)?'win':'loss'; }
-  return null;  // Ks u otros: requieren boxscore, se califican a mano
+  // "1er inning" → main: "NRFI (sin carrera 1er inn)" | "YRFI (carrera 1er inn)"
+  if(cat==='1er inning'){ if(!inn.length) return null;
+    const i1=inn[0], r1=(i1?.away?.runs||0)+(i1?.home?.runs||0);
+    // Si el local no batea en la 1ª no hay caso: siempre batean ambos en el 1er inning.
+    const nrfi = tok[0]==='NRFI';
+    return (nrfi ? r1===0 : r1>0) ? 'win' : 'loss'; }
+  // "Total de equipo" → main: "LAD OVER 4.5"
+  if(cat==='Total de equipo'){ const t=tok[0],side=tok[1],line=parseFloat(tok[2]);
+    if(isNaN(line)) return null;
+    const ts=isHome(t)?hS:aS;
+    if(ts===line) return 'push';
+    return (side==='OVER'?ts>line:ts<line)?'win':'loss'; }
+  return null;  // Ks y props: requieren boxscore, se califican en su propia pestaña
 }
 
 // Califica las PREDICCIONES pendientes desde el marcador final. Sin UI propia: la
@@ -3598,6 +3644,12 @@ async function autoGradeSignals(){
         upd.f5_home=f5.h; upd.f5_away=f5.a;
         const tf=isHome?f5.h:f5.a, of=isHome?f5.a:f5.h;
         upd.f5_result = tf>of?'win':tf<of?'loss':'push';
+      }
+      // Mejor pick del juego: se califica con el mismo motor que las predicciones,
+      // que ahora cubre los 9 mercados que emite computePicks().
+      if(r.pick_cat && r.pick_main){
+        const pr = gradeTopPick({top_pick_cat:r.pick_cat, top_pick_main:r.pick_main, home:r.home}, g);
+        if(pr) upd.pick_result = pr;
       }
       await sb.from('signals').update(upd).eq('id',r.id);
       graded++;

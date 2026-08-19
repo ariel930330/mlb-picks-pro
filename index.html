@@ -974,8 +974,11 @@ function computePicks(data) {
     return base!=null ? base+pen : null; };
   // Matchup del arsenal del pen vs la alineación que enfrenta (amortiguado a la mitad, ~±5%)
   const bullXw = f => f!=null ? cl(1+(f-1)*.5,.95,1.05) : 1;
-  const aBPE = (bpEff(data.awayBullpen) ?? sf(awayStats?.pitching?.era,4.0)) * bullXw(data.awayBullXwF) * (data.awayBullPlatF||1);
-  const hBPE = (bpEff(data.homeBullpen) ?? sf(homeStats?.pitching?.era,4.0)) * bullXw(data.homeBullXwF) * (data.homeBullPlatF||1);
+  // K%+whiff del pen vs la alineación: más Ks (f>1) → menos carreras → ERA efectivo menor.
+  // Amortiguado a 0.35 y acotado ±4% porque se traslapa parcialmente con el xwOBA.
+  const bullK = f => f!=null ? cl(1-(f-1)*.35,.96,1.04) : 1;
+  const aBPE = (bpEff(data.awayBullpen) ?? sf(awayStats?.pitching?.era,4.0)) * bullXw(data.awayBullXwF) * bullK(data.awayBullKF) * (data.awayBullPlatF||1);
+  const hBPE = (bpEff(data.homeBullpen) ?? sf(homeStats?.pitching?.era,4.0)) * bullXw(data.homeBullXwF) * bullK(data.homeBullKF) * (data.homeBullPlatF||1);
 
   const apIPr=ipOf(awayPitcher), hpIPr=ipOf(homePitcher);
   // Crudos (para mostrar en la pestaña Lanzadores)
@@ -2657,7 +2660,8 @@ async function runAnalysis() {
         homeSplit: hSplit, awaySplit: aSplit, homePHand: hHand, awayPHand: aHand,
         homeForm: homeForm*homeLineupF, awayForm: awayForm*awayLineupF,
         homeBullpen: hBull, awayBullpen: aBull,                   // bullpen con calidad DISPONIBLE
-        awayBullXwF: aBullLM?.xwobaF ?? null, homeBullXwF: hBullLM?.xwobaF ?? null,   // matchup arsenal del pen vs la alineación
+        awayBullXwF: aBullLM?.xwobaF ?? null, homeBullXwF: hBullLM?.xwobaF ?? null,   // matchup arsenal del pen vs la alineación (xwOBA)
+        awayBullKF: kMatchF(aBullLM) ?? null, homeBullKF: kMatchF(hBullLM) ?? null,   // K%+whiff del pen vs la alineación
         awayBullPlatF: aBullPlatF, homeBullPlatF: hBullPlatF,   // platoon del pen (splits L/R) vs la alineación
         homePTrend: hTrend, awayPTrend: aTrend,                  // K/9 reciente del abridor
         awayTravel: aCtx?.awayStreak||0,                        // racha de juegos de visita del equipo visitante

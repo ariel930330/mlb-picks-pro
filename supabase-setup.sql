@@ -98,6 +98,12 @@ create table if not exists public.signals (
   result          text,      -- ML del equipo señalado: 'win' | 'loss' | 'push' | null
   f5_result       text       -- F5 del equipo señalado: 'win' | 'loss' | 'push' | null
 );
+-- Mercado que recomendó el tablero, normalizado para poder calificarlo. Es lo ÚNICO
+-- que se califica: si el tablero dijo F5, se mide F5 y no el ML. 'Team Total Over' es
+-- el único que necesita guardar su línea, porque el texto del tablero no la lleva.
+alter table public.signals add column if not exists best_mkt  text;      -- 'ML' | 'F5' | 'TT' | 'RL'
+alter table public.signals add column if not exists best_line numeric;   -- línea del team total (solo TT)
+
 create unique index if not exists signals_game on public.signals (game_date, game_pk);
 create index if not exists signals_tier on public.signals (tier);
 

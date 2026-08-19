@@ -482,8 +482,8 @@ body{background:radial-gradient(1200px 600px at 70% -10%,#f7f9fc,var(--bg)) fixe
       <div class="stats-bar" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr))">
         <div class="stat-card"><div class="stat-label">Señales</div><div class="stat-val" id="sg-total">0</div></div>
         <div class="stat-card"><div class="stat-label">Calificadas</div><div class="stat-val" id="sg-graded">0</div></div>
-        <div class="stat-card"><div class="stat-label">Acierto ML</div><div class="stat-val" style="color:var(--green)" id="sg-ml">—</div></div>
-        <div class="stat-card"><div class="stat-label">Acierto F5</div><div class="stat-val" style="color:var(--blue)" id="sg-f5">—</div></div>
+        <div class="stat-card"><div class="stat-label">Acierto</div><div class="stat-val" style="color:var(--green)" id="sg-ml">—</div></div>
+        <div class="stat-card"><div class="stat-label">Récord</div><div class="stat-val" style="color:var(--blue)" id="sg-f5">—</div></div>
         <div class="stat-card"><div class="stat-label">Solo con edge</div><div class="stat-val" style="color:var(--gold)" id="sg-edge">—</div></div>
         <div class="stat-card"><div class="stat-label">DQ promedio</div><div class="stat-val" id="sg-dq">—</div></div>
       </div>
@@ -3158,12 +3158,30 @@ function renderBatters(batData) {
 const esc = s => String(s??'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const TIER_RANK = {'NO EDGE':0, 'LEAN':1, 'STRONG':2, 'ELITE':3};
 
+// El tablero recomienda UN mercado. Se normaliza a una clave para poder calificarlo
+// con el marcador final. 'Team Total Over' es el único que necesita guardar su línea:
+// el texto del tablero no la lleva, así que se toma del pick que ya calculó el modelo.
+function bestMarket(er, g){
+  const b = er.best?.[0] || '';
+  if(/Team Total/i.test(b)){
+    const p = (g.allPicks||[]).find(x=>x.cat==='Total de equipo' && (x.main||'').startsWith(er.edgeTeam+' '));
+    const v = p ? parseFloat((p.main||'').trim().split(/\s+/)[2]) : NaN;
+    return {mkt:'TT', line: isFinite(v)?v:null};
+  }
+  if(/Run Line/i.test(b)) return {mkt:'RL', line:1.5};    // por convención, el señalado -1.5
+  if(/\bF5\b/.test(b))    return {mkt:'F5', line:null};
+  if(/\bML\b/.test(b))    return {mkt:'ML', line:null};
+  return {mkt:null, line:null};
+}
+
 // Fila de Supabase a partir de un juego ya analizado
 function signalRow(date, g){
   const er = g.edgeRead;
   if(!er || !g.gamePk) return null;
   const edgeWP = er.edgeTeam===g.home ? g.homeWP : g.awayWP;   // prob. del MODELO para el equipo señalado
+  const bm = bestMarket(er, g);
   return {
+    best_mkt: bm.mkt, best_line: bm.line,
     game_date:date, game_pk:g.gamePk, away:g.away, home:g.home, venue:g.venue||'',
     edge_team:er.edgeTeam, tier:er.tier,
     conv_eff:+(er.convEff||0).toFixed(1), net_abs:+(er.netAbs||0).toFixed(1), net:+(er.net||0).toFixed(1),
@@ -3225,13 +3243,12 @@ const recTxt   = r => r.n ? `${r.w}-${r.l}` : '0-0';
 // Tabla de rendimiento por grupo (tier, DQ, acuerdo con el modelo…)
 function sigGroupTable(title, note, hd, groups){
   const body = groups.filter(g=>g.rows.length).map(g=>{
-    const m=sigRate(g.rows,'result'), f=sigRate(g.rows,'f5_result');
+    const m=sigRate(g.rows,'result');
     const c=avgOf(g.rows,'conv_eff'), d=avgOf(g.rows,'dq');
     return `<tr>
       <td>${g.label}</td>
       <td class="num">${g.rows.length}</td>
       <td class="num" style="font-weight:700;color:${rateColor(m)}">${rateTxt(m)}</td>
-      <td class="num" style="font-weight:700;color:${rateColor(f)}">${rateTxt(f)}</td>
       <td class="num">${c!=null?'+'+c.toFixed(1):'—'}</td>
       <td class="num">${d!=null?Math.round(d):'—'}</td>
     </tr>`;
@@ -3240,9 +3257,14 @@ function sigGroupTable(title, note, hd, groups){
   return `<div class="card" style="margin-bottom:12px">
     <div class="card-hdr"><span class="card-hdr-title">${title}</span><span style="font-size:10px;color:var(--text3)">${note}</span></div>
     <div style="overflow-x:auto"><table class="htable">
-      <thead><tr><th>${hd}</th><th class="num">n</th><th class="num">Acierto ML</th><th class="num">Acierto F5</th><th class="num">Conv. media</th><th class="num">DQ medio</th></tr></thead>
+      <thead><tr><th>${hd}</th><th class="num">n</th><th class="num">Acierto</th><th class="num">Conv. media</th><th class="num">DQ medio</th></tr></thead>
       <tbody>${body}</tbody></table></div></div>`;
 }
+
+// Etiqueta del mercado recomendado, EXACTAMENTE como la muestra el tablero de
+// convicción de la página principal: quita el paréntesis y el nombre del equipo.
+// "LAD ML (juego completo)" -> "ML"   ·   "WSH F5 (primeros 5)" -> "F5"
+const mktLabel = r => (r.best_bet||'').replace(/\s*\(.*?\)/,'').replace((r.edge_team||'')+' ','') || '—';
 
 // Una fila de la tabla de una sección (un juego señalado)
 function sigGameRow(r){
@@ -3256,10 +3278,9 @@ function sigGameRow(r){
     <td style="white-space:nowrap"><strong>${esc(r.away)}</strong> <span style="color:var(--text3)">@</span> <strong>${esc(r.home)}</strong></td>
     <td style="white-space:nowrap"><span style="font-weight:800;color:${etC}">${esc(r.edge_team)}</span> <span style="font-variant-numeric:tabular-nums;color:var(--text2)">+${Math.round(r.conv_eff||0)}</span></td>
     <td class="num" style="font-weight:800;color:${dqColor(r.dq)}">${r.dq??'—'}</td>
-    <td style="font-size:10px;font-weight:700;color:var(--gold);max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.best_bet||'—')}</td>
+    <td class="c" style="font-size:11px;font-weight:700;color:var(--gold);white-space:nowrap">${esc(mktLabel(r))}</td>
     <td class="num" style="font-size:10px">${score}</td>
     <td class="c">${mark(r.result)}</td>
-    <td class="c">${mark(r.f5_result)}</td>
   </tr>`;
 }
 
@@ -3275,7 +3296,7 @@ function sigSection(tier, dayRows, allRows){
 
   const body = rows.length
     ? `<div style="overflow-x:auto"><table class="htable">
-         <thead><tr><th>Partido</th><th>Señal</th><th class="num">DQ</th><th>Mejor apuesta</th><th class="num">Final</th><th class="c">ML</th><th class="c">F5</th></tr></thead>
+         <thead><tr><th>Partido</th><th>Señal</th><th class="num">DQ</th><th class="c">Mercado</th><th class="num">Final</th><th class="c" title="Resultado del mercado que recomendó el tablero">Resultado</th></tr></thead>
          <tbody>${rows.sort((a,b)=>(b.conv_eff||0)-(a.conv_eff||0)).map(sigGameRow).join('')}</tbody></table></div>`
     : `<div class="sig-empty">Sin señales de este tier ese día.</div>`;
 
@@ -3304,13 +3325,13 @@ async function loadSignals(){
   const rows = all||[];
 
   // ── Cabecera de métricas (acumulado de TODO el histórico) ──
-  const ml=sigRate(rows,'result'), f5=sigRate(rows,'f5_result');
+  const ml=recordOf(rows);
   const conEdge=rows.filter(r=>(TIER_RANK[r.tier]??0)>=1), mlEdge=sigRate(conEdge,'result');
   const dqAvg=avgOf(rows,'dq');
   txt('sg-total', rows.length);
   txt('sg-graded', ml.n);
   txt('sg-ml',   ml.pct!=null?Math.round(ml.pct*100)+'%':'—');
-  txt('sg-f5',   f5.pct!=null?Math.round(f5.pct*100)+'%':'—');
+  txt('sg-f5',   recTxt(ml));
   txt('sg-edge', mlEdge.pct!=null?`${Math.round(mlEdge.pct*100)}% (${mlEdge.n})`:'—');
   txt('sg-dq',   dqAvg!=null?Math.round(dqAvg):'—');
 
@@ -3363,13 +3384,13 @@ async function loadSignals(){
       <thead><tr><th>Fecha</th><th class="num">🏆 Elite</th><th class="num">💪 Strong</th><th class="num">📈 Lean</th><th class="num">Total</th><th class="num">%</th><th class="num">Pend.</th></tr></thead>
       <tbody>${dayHist}</tbody></table></div>
     <div style="padding:8px 12px;font-size:10px;color:var(--text3)">
-      Récord = <b>ganadas-perdidas</b> del ML del equipo señalado. Los push y los juegos aún sin marcador quedan fuera del récord.
-      <b>Total</b> agrupa Elite + Strong + Lean (excluye NO EDGE).
+      Récord = <b>ganadas-perdidas</b> del <b>mercado que recomendó el tablero</b> en cada juego (ML, F5, Team Total u Run Line — la columna Mercado).
+      Los push y los juegos aún sin marcador quedan fuera. <b>Total</b> agrupa Elite + Strong + Lean (excluye NO EDGE).
     </div>
   </div>`;
 
   // ── Acumulado: los tres cortes estadísticos, plegados ──
-  const porTier = sigGroupTable('🎯 Rendimiento por tier','si el tablero sirve, el acierto debe SUBIR de LEAN → STRONG → ELITE','Tier',
+  const porTier = sigGroupTable('🎯 Rendimiento por tier','acierto del mercado recomendado · si el tablero sirve debe SUBIR de LEAN → STRONG → ELITE','Tier',
     ['ELITE','STRONG','LEAN','NO EDGE'].map(t=>({label:tierPill(t), rows:rows.filter(r=>r.tier===t)})));
   const porDQ = sigGroupTable('🧪 Rendimiento por Data Quality','DQ alto = alineaciones confirmadas y buena muestra; debería acertar más','Data Quality',
     [{label:'85–100 (alta)', rows:rows.filter(r=>r.dq>=85)},
@@ -3609,17 +3630,26 @@ async function autoGradeSignals(){
       if(hS==null||aS==null){ pending++; continue; }
       const isHome = r.edge_team===r.home;
       const ts = isHome?hS:aS, os = isHome?aS:hS;
-      const upd = {home_score:hS, away_score:aS, result: ts>os?'win':ts<os?'loss':'push'};
-      // F5: suma de las primeras 5 entradas del linescore
+      const upd = {home_score:hS, away_score:aS};
+      // F5: suma de las primeras 5 entradas (se guarda siempre, como contexto)
       const inn=g.linescore?.innings||[];
+      let f5=null;
       if(inn.length>=5){
-        const f5=inn.slice(0,5).reduce((o,i)=>({a:o.a+(i.away?.runs||0), h:o.h+(i.home?.runs||0)}),{a:0,h:0});
+        f5=inn.slice(0,5).reduce((o,i)=>({a:o.a+(i.away?.runs||0), h:o.h+(i.home?.runs||0)}),{a:0,h:0});
         upd.f5_home=f5.h; upd.f5_away=f5.a;
-        const tf=isHome?f5.h:f5.a, of=isHome?f5.a:f5.h;
-        upd.f5_result = tf>of?'win':tf<of?'loss':'push';
       }
+      // Se califica ÚNICAMENTE el mercado que recomendó el tablero de convicción.
+      // Si falta el dato para calificarlo, la señal queda pendiente en vez de
+      // calificarse por un mercado que el sistema nunca sugirió.
+      const mkt = r.best_mkt;
+      let res = null;
+      if(mkt==='ML')      res = ts>os ? 'win' : ts<os ? 'loss' : 'push';
+      else if(mkt==='RL') res = (ts-os) > 1.5 ? 'win' : 'loss';                 // -1.5: gana por 2+
+      else if(mkt==='TT') { if(r.best_line!=null) res = ts>r.best_line ? 'win' : ts<r.best_line ? 'loss' : 'push'; }
+      else if(mkt==='F5') { if(f5){ const tf=isHome?f5.h:f5.a, of=isHome?f5.a:f5.h;
+                                    res = tf>of ? 'win' : tf<of ? 'loss' : 'push'; } }
+      if(res){ upd.result = res; graded++; } else { pending++; }
       await sb.from('signals').update(upd).eq('id',r.id);
-      graded++;
     }
   }
   const pred = await gradePredictions();   // mantiene viva la Validación

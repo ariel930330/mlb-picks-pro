@@ -140,6 +140,22 @@ a{color:var(--blue);text-decoration:none}
 .board-tier{font-size:10px;font-weight:800;letter-spacing:.3px;padding:2px 7px;border-radius:5px;color:#fff;text-align:center;white-space:nowrap}
 .board-dq{font-size:11px;font-weight:800;font-variant-numeric:tabular-nums;text-align:center}
 .board-bet{font-size:11px;font-weight:700;color:var(--gold);text-align:right;white-space:nowrap}
+
+/* ── Señales: secciones por tier (Elite / Strong / Lean) ── */
+.sig-hd{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;background:var(--bg3);border-bottom:1px solid var(--border);flex-wrap:wrap}
+.sig-nm{font-size:12px;font-weight:800;letter-spacing:.5px;display:flex;align-items:center;gap:8px}
+.sig-dot{width:10px;height:10px;border-radius:50%;flex:none}
+.sig-sub{font-size:10px;color:var(--text3);font-weight:500;letter-spacing:0}
+.sig-rec{display:flex;align-items:baseline;gap:8px;white-space:nowrap}
+.sig-rec .r{font-size:18px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:.5px}
+.sig-rec .p{font-size:11px;font-weight:700}
+.sig-rec .a{font-size:10px;color:var(--text3);font-weight:500}
+.sig-empty{padding:14px;text-align:center;color:var(--text3);font-size:11px}
+.day-btn{background:var(--bg2);color:var(--text2);border:1px solid var(--border);padding:5px 11px;border-radius:99px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;font-variant-numeric:tabular-nums}
+.day-btn.active{background:linear-gradient(135deg,var(--gold),var(--gold2));color:#fff;border-color:transparent;box-shadow:0 2px 8px rgba(224,128,8,.3)}
+.day-btn:hover:not(.active){background:var(--bg4)}
+.dayrow{cursor:pointer}
+.dayrow.active td{background:var(--bg3);font-weight:700}
 @media(max-width:560px){
   .board-row{grid-template-columns:88px 1fr 52px;gap:8px}
   .board-tier,.board-dq{display:none}
@@ -466,13 +482,7 @@ body{background:radial-gradient(1200px 600px at 70% -10%,#f7f9fc,var(--bg)) fixe
         <div class="stat-card"><div class="stat-label">Solo con edge</div><div class="stat-val" style="color:var(--gold)" id="sg-edge">—</div></div>
         <div class="stat-card"><div class="stat-label">DQ promedio</div><div class="stat-val" id="sg-dq">—</div></div>
       </div>
-      <div class="filterbar" id="sig-filterbar">
-        <span style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase">Tier:</span>
-        <button class="pf-btn active" data-t="all"    onclick="setSigTier('all')">Todos</button>
-        <button class="pf-btn"        data-t="edge"   onclick="setSigTier('edge')">Con edge (≥LEAN)</button>
-        <button class="pf-btn"        data-t="STRONG" onclick="setSigTier('STRONG')">STRONG+</button>
-        <button class="pf-btn"        data-t="ELITE"  onclick="setSigTier('ELITE')">ELITE</button>
-      </div>
+      <div class="filterbar" id="sig-daybar"></div>
       <div id="signals-area"><div class="empty">Cargando…</div></div>
     </div>
 
@@ -3178,12 +3188,18 @@ async function saveSignals(date, games){
   }catch(e){ console.warn('saveSignals:',e.message); }
 }
 
-// ── Filtro por tier ───────────────────────────────────────────────────────────
-let sigTier = localStorage.getItem('sig_tier')||'all';
-function setSigTier(t){ sigTier=t; localStorage.setItem('sig_tier',t); loadSignals(); }
-const sigPasses = r => sigTier==='all'  ? true
-                     : sigTier==='edge' ? (TIER_RANK[r.tier]??0)>=1
-                     : (TIER_RANK[r.tier]??0) >= (TIER_RANK[sigTier]??0);
+// ── Día activo (las 3 secciones muestran un día a la vez) ─────────────────────
+let sigDay = null;                       // null = el día más reciente con señales
+function setSigDay(d){ sigDay=d; loadSignals(); }
+
+// Las tres secciones de la pestaña, en orden de fuerza. NO EDGE no tiene sección:
+// es el "no bet" del tablero, se cuenta aparte para no inflar los récords.
+const SECTION_TIERS = ['ELITE','STRONG','LEAN'];
+const TIER_META = {
+  ELITE : {icon:'🏆', name:'ELITE SIGNAL',  sub:'convicción ≥ 45'},
+  STRONG: {icon:'💪', name:'STRONG SIGNAL', sub:'convicción 27 – 45'},
+  LEAN  : {icon:'📈', name:'LEAN SIGNAL',   sub:'convicción 12 – 27'},
+};
 
 // ── Estadística ───────────────────────────────────────────────────────────────
 // Acierto sobre las señales calificadas. Los push (empate F5) no cuentan a favor
@@ -3197,6 +3213,9 @@ const rateTxt   = r => r.pct==null ? '—' : `${Math.round(r.pct*100)}% <span st
 const rateColor = r => r.pct==null ? 'var(--text3)' : r.pct>=.60 ? 'var(--gtx)' : r.pct>=.52 ? 'var(--atx)' : 'var(--rtx)';
 const avgOf     = (rows,f) => rows.length ? rows.reduce((s,r)=>s+(+r[f]||0),0)/rows.length : null;
 const tierPill  = t => `<span class="board-tier" style="background:${tierBg(t)};display:inline-block">${esc(t)}</span>`;
+// Récord W-L (los push no entran; los pendientes tampoco)
+const recordOf = rows => { const r=sigRate(rows,'result'); return {...r, l:r.n-r.w}; };
+const recTxt   = r => r.n ? `${r.w}-${r.l}` : '0-0';
 
 // Tabla de rendimiento por grupo (tier, DQ, acuerdo con el modelo…)
 function sigGroupTable(title, note, hd, groups){
@@ -3220,18 +3239,66 @@ function sigGroupTable(title, note, hd, groups){
       <tbody>${body}</tbody></table></div></div>`;
 }
 
+// Una fila de la tabla de una sección (un juego señalado)
+function sigGameRow(r){
+  const mark = v => v==='win'  ? '<span style="color:var(--gtx);font-weight:800">✓</span>'
+                  : v==='loss' ? '<span style="color:var(--rtx);font-weight:800">✗</span>'
+                  : v==='push' ? '<span style="color:var(--blue);font-weight:800">↔</span>'
+                  : '<span style="color:var(--text3)">·</span>';
+  const etC = r.edge_team===r.home ? 'var(--green)' : 'var(--blue)';
+  const score = r.home_score!=null ? `${r.away_score}–${r.home_score}` : '—';
+  return `<tr>
+    <td style="white-space:nowrap"><strong>${esc(r.away)}</strong> <span style="color:var(--text3)">@</span> <strong>${esc(r.home)}</strong></td>
+    <td style="font-weight:800;white-space:nowrap;color:${etC}">${esc(r.edge_team)} <span style="font-variant-numeric:tabular-nums">+${Math.round(r.conv_eff||0)}</span></td>
+    <td style="font-weight:800;text-align:center;color:${dqColor(r.dq)}">${r.dq??'—'}</td>
+    <td style="font-size:10px;font-weight:700;color:var(--gold);max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(r.best_bet||'—')}</td>
+    <td style="text-align:center;font-size:10px;font-variant-numeric:tabular-nums">${score}</td>
+    <td style="text-align:center">${mark(r.result)}</td>
+    <td style="text-align:center">${mark(r.f5_result)}</td>
+  </tr>`;
+}
+
+// Sección de un tier: nombre + RÉCORD DEL DÍA al lado, y los juegos de ese día
+function sigSection(tier, dayRows, allRows){
+  const meta = TIER_META[tier];
+  const rows = dayRows.filter(r=>r.tier===tier);
+  const rec  = recordOf(rows);                              // récord del día
+  const acc  = recordOf(allRows.filter(r=>r.tier===tier));  // acumulado histórico
+  const pend = rows.filter(r=>!r.result).length;
+  const col  = tierBg(tier);
+  const recCol = rec.pct==null ? 'var(--text3)' : rec.pct>=.6 ? 'var(--gtx)' : rec.pct>=.5 ? 'var(--atx)' : 'var(--rtx)';
+
+  const body = rows.length
+    ? `<div style="overflow-x:auto"><table class="htable">
+         <thead><tr><th>Partido</th><th>Señal</th><th>DQ</th><th>Mejor apuesta</th><th>Final</th><th>ML</th><th>F5</th></tr></thead>
+         <tbody>${rows.sort((a,b)=>(b.conv_eff||0)-(a.conv_eff||0)).map(sigGameRow).join('')}</tbody></table></div>`
+    : `<div class="sig-empty">Sin señales de este tier ese día.</div>`;
+
+  return `<div class="card">
+    <div class="sig-hd" style="border-left:4px solid ${col}">
+      <span class="sig-nm"><span class="sig-dot" style="background:${col}"></span>${meta.icon} ${meta.name}
+        <span class="sig-sub">${meta.sub} · ${rows.length} señal${rows.length===1?'':'es'}${pend?` · ${pend} pend.`:''}</span></span>
+      <span class="sig-rec">
+        <span class="r" style="color:${recCol}">${recTxt(rec)}</span>
+        <span class="p" style="color:${recCol}">${rec.pct!=null?Math.round(rec.pct*100)+'%':''}</span>
+        <span class="a">acum. ${recTxt(acc)}${acc.pct!=null?` · ${Math.round(acc.pct*100)}%`:''}</span>
+      </span>
+    </div>
+    ${body}
+  </div>`;
+}
+
 async function loadSignals(){
   $('signals-area').innerHTML='<div class="loading"><div class="spin"></div>Cargando señales…</div>';
-  document.querySelectorAll('#sig-filterbar .pf-btn').forEach(b=>b.classList.toggle('active',b.dataset.t===sigTier));
-  const {data:all,error} = await sb.from('signals').select('*').order('game_date',{ascending:false}).limit(2000);
+  const {data:all,error} = await sb.from('signals').select('*').order('game_date',{ascending:false}).limit(3000);
   if(error){
     const falta=/relation|does not exist|schema cache|not find the table/i.test(error.message||'');
     $('signals-area').innerHTML=`<div class="error-box">${esc(error.message)}${falta?'<br><br><b>Falta la tabla <code>signals</code></b> — corre el SQL de <code>supabase-setup.sql</code> en el SQL Editor de Supabase.':''}</div>`;
-    return;
+    $('sig-daybar').innerHTML=''; return;
   }
-  const rows = (all||[]).filter(sigPasses);
+  const rows = all||[];
 
-  // ── Cabecera de métricas ──
+  // ── Cabecera de métricas (acumulado de TODO el histórico) ──
   const ml=sigRate(rows,'result'), f5=sigRate(rows,'f5_result');
   const conEdge=rows.filter(r=>(TIER_RANK[r.tier]??0)>=1), mlEdge=sigRate(conEdge,'result');
   const dqAvg=avgOf(rows,'dq');
@@ -3243,76 +3310,79 @@ async function loadSignals(){
   txt('sg-dq',   dqAvg!=null?Math.round(dqAvg):'—');
 
   if(!rows.length){
-    $('signals-area').innerHTML = (all||[]).length
-      ? '<div class="empty">Ninguna señal cumple el filtro de tier. Prueba con <b>Todos</b>.</div>'
-      : '<div class="empty">Todavía no hay señales.<br>Corre el análisis (con sesión iniciada) y el tablero de convicción se irá registrando aquí.</div>';
+    $('sig-daybar').innerHTML='';
+    $('signals-area').innerHTML='<div class="empty">Todavía no hay señales.<br>Corre el análisis (con sesión iniciada) y el tablero de convicción se irá registrando aquí.</div>';
     return;
   }
 
-  // ── Rendimiento por tier: la pregunta central ──
-  const porTier = sigGroupTable(
-    '🎯 Rendimiento por tier',
-    'si el tablero sirve, el acierto debe SUBIR de LEAN → STRONG → ELITE',
-    'Tier',
-    ['ELITE','STRONG','LEAN','NO EDGE'].map(t=>({label:tierPill(t), rows:rows.filter(r=>r.tier===t)}))
-  );
+  // ── Días disponibles · el activo por defecto es el más reciente ──
+  const byDay={};
+  rows.forEach(r=>{ (byDay[r.game_date]=byDay[r.game_date]||[]).push(r); });
+  const days = Object.keys(byDay).sort().reverse();
+  const day  = (sigDay && byDay[sigDay]) ? sigDay : days[0];
+  const dayRows = byDay[day]||[];
 
-  // ── Rendimiento por Data Quality: ¿la penalización por DQ está bien puesta? ──
-  const porDQ = sigGroupTable(
-    '🧪 Rendimiento por Data Quality',
-    'DQ alto = alineaciones confirmadas y buena muestra; debería acertar más',
-    'Data Quality',
-    [{label:'85–100 (alta)', rows:rows.filter(r=>r.dq>=85)},
-     {label:'70–84 (media)', rows:rows.filter(r=>r.dq>=70&&r.dq<85)},
-     {label:'50–69 (baja)',  rows:rows.filter(r=>r.dq>=50&&r.dq<70)},
-     {label:'&lt;50 (muy baja)', rows:rows.filter(r=>r.dq!=null&&r.dq<50)}]
-  );
+  $('sig-daybar').innerHTML =
+    `<span style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase">Día:</span>`+
+    days.slice(0,14).map(d=>`<button class="day-btn${d===day?' active':''}" onclick="setSigDay('${esc(d)}')">${esc(d)}</button>`).join('')+
+    (days.length>14?`<span style="font-size:10px;color:var(--text3)">+${days.length-14} días más (abajo)</span>`:'');
 
-  // ── Tablero vs modelo: ¿el Edge Read aporta algo que la regresión no vea? ──
-  const conM = rows.filter(r=>r.edge_wp!=null && +r.edge_wp>=.5);
-  const vsM  = rows.filter(r=>r.edge_wp!=null && +r.edge_wp<.5);
-  const porAcuerdo = sigGroupTable(
-    '⚖️ Tablero vs modelo',
-    'cuando el Edge Read señala al NO favorito del modelo, ¿quién tiene razón?',
-    'Acuerdo',
-    [{label:'Coinciden <span style="color:var(--text3)">(señala al favorito del modelo)</span>', rows:conM},
-     {label:'Contradice <span style="color:var(--text3)">(señala al underdog del modelo)</span>', rows:vsM}]
-  );
+  // ── Las 3 secciones, con el récord del día al lado del nombre ──
+  const secciones = SECTION_TIERS.map(t=>sigSection(t,dayRows,rows)).join('');
+  const noEdge = dayRows.filter(r=>r.tier==='NO EDGE');
+  const noEdgeNota = noEdge.length
+    ? `<div style="font-size:10px;color:var(--text3);margin:-2px 0 12px 2px">+ ${noEdge.length} juego${noEdge.length===1?'':'s'} sin edge ese día (NO EDGE) — el tablero no los señaló, no cuentan en ningún récord.</div>`
+    : '';
 
-  // ── Historial detallado ──
-  const mark = v => v==='win'  ? '<span style="color:var(--gtx);font-weight:700">✓</span>'
-                  : v==='loss' ? '<span style="color:var(--rtx);font-weight:700">✗</span>'
-                  : v==='push' ? '<span style="color:var(--blue);font-weight:700">↔</span>'
-                  : '<span style="color:var(--text3)">pend.</span>';
-  const hist = rows.slice(0,400).map(r=>{
-    const noEdge = r.tier==='NO EDGE';
-    const etC = r.edge_team===r.home ? 'var(--green)' : 'var(--blue)';
-    const score = r.home_score!=null ? `${esc(r.away)} ${r.away_score}–${r.home_score} ${esc(r.home)}` : '—';
-    const f5s = r.f5_home!=null ? ` <span style="color:var(--text3)">· F5 ${r.f5_away}–${r.f5_home}</span>` : '';
-    return `<tr>
-      <td style="white-space:nowrap">${esc(r.game_date)}</td>
-      <td style="white-space:nowrap"><strong>${esc(r.away)}</strong> <span style="color:var(--text3)">@</span> <strong>${esc(r.home)}</strong></td>
-      <td style="font-weight:800;white-space:nowrap;color:${noEdge?'var(--text3)':etC}">${noEdge?'—':esc(r.edge_team)+' +'+Math.round(r.conv_eff||0)}</td>
-      <td>${tierPill(r.tier)}</td>
-      <td style="font-weight:800;text-align:center;color:${dqColor(r.dq)}">${r.dq??'—'}</td>
-      <td style="font-size:10px;font-weight:700;color:var(--gold);max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${noEdge?'—':esc(r.best_bet||'—')}</td>
-      <td style="font-size:10px;white-space:nowrap">${score}${f5s}</td>
-      <td style="text-align:center">${mark(r.result)}</td>
-      <td style="text-align:center">${mark(r.f5_result)}</td>
+  // ── Historial por días: una fila por fecha con el récord de cada tier ──
+  const cell = r => r.n
+    ? `<span style="font-weight:700;color:${r.pct>=.6?'var(--gtx)':r.pct>=.5?'var(--atx)':'var(--rtx)'}">${recTxt(r)}</span>`
+    : '<span style="color:var(--text3)">—</span>';
+  const dayHist = days.map(d=>{
+    const dr=byDay[d];
+    const recs=SECTION_TIERS.map(t=>recordOf(dr.filter(x=>x.tier===t)));
+    const tot=recordOf(dr.filter(x=>(TIER_RANK[x.tier]??0)>=1));
+    const pend=dr.filter(x=>!x.result && (TIER_RANK[x.tier]??0)>=1).length;
+    return `<tr class="dayrow${d===day?' active':''}" onclick="setSigDay('${esc(d)}')">
+      <td style="white-space:nowrap;font-weight:700">${esc(d)}</td>
+      ${recs.map(r=>`<td style="text-align:center">${cell(r)}</td>`).join('')}
+      <td style="text-align:center">${cell(tot)}</td>
+      <td style="text-align:center;font-weight:700;color:${tot.pct==null?'var(--text3)':tot.pct>=.6?'var(--gtx)':tot.pct>=.5?'var(--atx)':'var(--rtx)'}">${tot.pct!=null?Math.round(tot.pct*100)+'%':'—'}</td>
+      <td style="text-align:center;font-size:10px;color:var(--text3)">${pend||''}</td>
     </tr>`;
   }).join('');
 
-  $('signals-area').innerHTML = porTier + porDQ + porAcuerdo + `
-    <div class="card">
-      <div class="card-hdr"><span class="card-hdr-title">📋 Historial de señales</span><span style="font-size:10px;color:var(--text3)">${rows.length} señales${rows.length>400?' · mostrando las 400 más recientes':''}</span></div>
-      <div style="overflow-x:auto"><table class="htable">
-        <thead><tr><th>Fecha</th><th>Partido</th><th>Señal</th><th>Tier</th><th>DQ</th><th>Mejor apuesta</th><th>Resultado</th><th>ML</th><th>F5</th></tr></thead>
-        <tbody>${hist}</tbody></table></div>
-      <div style="padding:8px 12px;font-size:10px;color:var(--text3)">
-        <b>ML</b> = ganó el equipo señalado · <b>F5</b> = ganó las primeras 5 innings (↔ = empate, no cuenta).
-        Es <b>% de acierto, no ROI</b>: el tablero señala un lado, no un precio. Con menos de ~100 señales calificadas por tier, las diferencias todavía son ruido.
+  const histCard = `<div class="card" style="margin-top:4px">
+    <div class="card-hdr"><span class="card-hdr-title">📅 Historial por días</span><span style="font-size:10px;color:var(--text3)">${days.length} día${days.length===1?'':'s'} · clic en una fecha para verla arriba</span></div>
+    <div style="overflow-x:auto"><table class="htable">
+      <thead><tr><th>Fecha</th><th style="text-align:center">🏆 Elite</th><th style="text-align:center">💪 Strong</th><th style="text-align:center">📈 Lean</th><th style="text-align:center">Total</th><th style="text-align:center">%</th><th style="text-align:center">Pend.</th></tr></thead>
+      <tbody>${dayHist}</tbody></table></div>
+    <div style="padding:8px 12px;font-size:10px;color:var(--text3)">
+      Récord = <b>ganadas-perdidas</b> del ML del equipo señalado. Los push y los juegos aún sin marcador quedan fuera del récord.
+      <b>Total</b> agrupa Elite + Strong + Lean (excluye NO EDGE).
+    </div>
+  </div>`;
+
+  // ── Acumulado: los tres cortes estadísticos, plegados ──
+  const porTier = sigGroupTable('🎯 Rendimiento por tier','si el tablero sirve, el acierto debe SUBIR de LEAN → STRONG → ELITE','Tier',
+    ['ELITE','STRONG','LEAN','NO EDGE'].map(t=>({label:tierPill(t), rows:rows.filter(r=>r.tier===t)})));
+  const porDQ = sigGroupTable('🧪 Rendimiento por Data Quality','DQ alto = alineaciones confirmadas y buena muestra; debería acertar más','Data Quality',
+    [{label:'85–100 (alta)', rows:rows.filter(r=>r.dq>=85)},
+     {label:'70–84 (media)', rows:rows.filter(r=>r.dq>=70&&r.dq<85)},
+     {label:'50–69 (baja)',  rows:rows.filter(r=>r.dq>=50&&r.dq<70)},
+     {label:'&lt;50 (muy baja)', rows:rows.filter(r=>r.dq!=null&&r.dq<50)}]);
+  const porAcuerdo = sigGroupTable('⚖️ Tablero vs modelo','cuando el Edge Read señala al NO favorito del modelo, ¿quién tiene razón?','Acuerdo',
+    [{label:'Coinciden <span style="color:var(--text3)">(señala al favorito del modelo)</span>', rows:rows.filter(r=>r.edge_wp!=null && +r.edge_wp>=.5)},
+     {label:'Contradice <span style="color:var(--text3)">(señala al underdog del modelo)</span>', rows:rows.filter(r=>r.edge_wp!=null && +r.edge_wp<.5)}]);
+
+  $('signals-area').innerHTML = secciones + noEdgeNota + histCard + `
+    <details class="er-more" style="margin-top:12px"><summary>📊 Estadística acumulada (todos los días)</summary>
+      <div style="padding-top:12px">${porTier}${porDQ}${porAcuerdo}
+        <div style="font-size:10px;color:var(--text3);padding:0 2px 4px">
+          Es <b>% de acierto, no ROI</b>: el tablero señala un lado, no un precio. Con menos de ~100 señales calificadas por tier, las diferencias todavía son ruido.
+        </div>
       </div>
-    </div>`;
+    </details>`;
 }
 
 async function clearSignals(){

@@ -68,6 +68,14 @@ a{color:var(--blue);text-decoration:none}
 .picks{border-top:1px solid var(--border)}
 .pick-row{display:flex;align-items:stretch;border-bottom:1px solid var(--border)}
 .pick-row:last-child{border-bottom:none}
+.f5-strip{border-top:1px solid var(--border);padding:8px 12px 10px;background:var(--bg3)}
+.f5-hd{font-size:10px;font-weight:800;color:var(--text2);margin-bottom:7px;text-transform:uppercase;letter-spacing:.3px}
+.f5-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+.f5-cell{background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:6px 7px;text-align:center;min-width:0}
+.f5-lbl{font-size:8.5px;color:var(--text3);font-weight:700;text-transform:uppercase}
+.f5-main{font-size:11px;font-weight:700;margin:2px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.f5-prob{font-size:13px;font-weight:800;font-variant-numeric:tabular-nums}
+@media(max-width:520px){.f5-grid{grid-template-columns:repeat(2,1fr)}}
 .pick-accent{width:4px;flex-shrink:0}
 .pick-badge{width:76px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px 4px;border-right:1px solid var(--border);gap:3px}
 .pick-badge .icon{font-size:13px}
@@ -1157,6 +1165,8 @@ function computePicks(data) {
     awayWP:+awp.toFixed(4),homeWP:+hwp.toFixed(4),
     awayML:p2ml(awp),homeML:p2ml(hwp),
     total,totalLine,pf,
+    // F5 (primeras 5 entradas): total O/U, run line ±0.5 y ML — solo modelo (sin cuota de mercado)
+    f5:{ total:f5total, line:f5line, overP:f5Over, favTeam:f5fav, favML:p2ml(f5favP), favProb:f5favP, favHome:f5favHome, cover:f5cover },
     pitchers:{away:{id:awayPitcherId,name:data.awayPitcherName||'TBD',era:+apERA0.toFixed(2),fip:+apFIP0.toFixed(2),xfip:+apXFIP0.toFixed(2),xera:data.awayPXera?+(+data.awayPXera).toFixed(2):null,whiff:aD?.whiff??null,chase:aD?.chase??null,shape:data.awayPShape,k9:+apK90.toFixed(1),kExp:apKExp,kLine:apKLine,kMkt:aKMkt,rating:+aps.toFixed(3),luck:apLuck,kMatch:data.awayKMatch??null,kMatchK:data.awayKMatchK??null,kMatchWh:data.awayKMatchWh??null},
               home:{id:homePitcherId,name:data.homePitcherName||'TBD',era:+hpERA0.toFixed(2),fip:+hpFIP0.toFixed(2),xfip:+hpXFIP0.toFixed(2),xera:data.homePXera?+(+data.homePXera).toFixed(2):null,whiff:hD?.whiff??null,chase:hD?.chase??null,shape:data.homePShape,k9:+hpK90.toFixed(1),kExp:hpKExp,kLine:hpKLine,kMkt:hKMkt,rating:+hps.toFixed(3),luck:hpLuck,kMatch:data.homeKMatch??null,kMatchK:data.homeKMatchK??null,kMatchWh:data.homeKMatchWh??null}},
     luck:{awayPitch:apLuck,homePitch:hpLuck,awayBat:aBatLuck,homeBat:hBatLuck},
@@ -2833,7 +2843,8 @@ const byEdgeDesc = (a,b)=>(b.edge??-1)-(a.edge??-1);
 // tiene que poder aparecer, y antes el umbral del 58% lo eliminaba siempre.
 function selectGamePicks(g){
   const byCat={};
-  (g.allPicks||g.picks||[]).filter(pickPasses).forEach(p=>{ const c=byCat[p.cat]; if(!c||byEdgeDesc(p,c)<0) byCat[p.cat]=p; });
+  // Excluye los mercados F5 de la lista: ya se muestran siempre en la tira F5 dedicada.
+  (g.allPicks||g.picks||[]).filter(p=>pickPasses(p)&&!/F5/.test(p.cat)).forEach(p=>{ const c=byCat[p.cat]; if(!c||byEdgeDesc(p,c)<0) byCat[p.cat]=p; });
   return Object.values(byCat).sort(byEdgeDesc).slice(0,5);
 }
 
@@ -2920,6 +2931,18 @@ function renderPicks(games) {
           </div>`;
         }).join(''):'<div style="padding:10px 12px;font-size:11px;color:var(--text3)">Sin picks de mercado de alta confianza — la lectura de edge de arriba es la señal.</div>'}
       </div>
+      ${g.f5?(f=>{
+        const dog=f.favHome?g.away:g.home, overSide=f.overP>=.5, ovP=overSide?f.overP:1-f.overP;
+        const cell=(lbl,main,prob,hot)=>`<div class="f5-cell"><div class="f5-lbl">${lbl}</div><div class="f5-main">${main}</div><div class="f5-prob"${hot?' style="color:var(--gtx)"':''}>${pct(prob)}</div></div>`;
+        return `<div class="f5-strip">
+          <div class="f5-hd">⏱ F5 · primeras 5 entradas <span style="color:var(--text3);font-weight:400">· proyección del modelo (sin cuota de mercado)</span></div>
+          <div class="f5-grid">
+            ${cell('Total', `${overSide?'OVER':'UNDER'} ${f.line}`, ovP, ovP>=.55)}
+            ${cell('Run line', `${f.favTeam} -0.5`, f.cover, f.cover>=.55)}
+            ${cell('Run line', `${dog} +0.5`, 1-f.cover, (1-f.cover)>=.55)}
+            ${cell('ML F5', `${f.favTeam} ${f.favML}`, f.favProb, f.favProb>=.58)}
+          </div></div>`;
+      })(g.f5):''}
       <details class="er-more"><summary>Detalle de los 13 factores</summary>
       <div class="game-footer">PF ${g.pf} · Total proy. ${g.total} runs${g.wx?.temp!=null?` · 🌡 ${Math.round(g.wx.temp)}°F`+(g.wx.humid!=null?` · 💧 ${Math.round(g.wx.humid)}%`:'')+(g.wx.wind!=null?` · 💨 ${windDesc(g.wx,VENUE_BEARING[g.homeId])}`:'')+(g.wx.density!=null?` · ρ ${g.wx.density}`:'')+(g.wx.precip>0?` · 🌧 ${g.wx.precip}mm`:'')+(g.wx.night!=null?` · ${g.wx.night?'🌙':'☀️'}`:''):(g.wx===null?' · 🏟 techado':'')}${(g.awayOAA!=null||g.homeOAA!=null)?` · 🧤 OAA ${g.away} ${g.awayOAA>=0?'+':''}${g.awayOAA??'—'}${g.awayDef?` (IF ${g.awayDef.ifOAA>=0?'+':''}${g.awayDef.ifOAA}/OF ${g.awayDef.ofOAA>=0?'+':''}${g.awayDef.ofOAA}, FRV ${g.awayDef.frv>=0?'+':''}${g.awayDef.frv})`:''} / ${g.home} ${g.homeOAA>=0?'+':''}${g.homeOAA??'—'}${g.homeDef?` (IF ${g.homeDef.ifOAA>=0?'+':''}${g.homeDef.ifOAA}/OF ${g.homeDef.ofOAA>=0?'+':''}${g.homeDef.ofOAA}, FRV ${g.homeDef.frv>=0?'+':''}${g.homeDef.frv})`:''}`:''}${(g.awayCatch||g.homeCatch)?(cd=>` · 🎯 Catcher ${g.away} ${cd(g.awayCatch)} / ${g.home} ${cd(g.homeCatch)}`)(c=>c?`${c.total>=0?'+':''}${c.total} (Fr ${c.framing>=0?'+':''}${c.framing}, Bl ${c.blocking>=0?'+':''}${c.blocking}, Th ${c.throwing>=0?'+':''}${c.throwing}${c.pop?`, pop ${c.pop}`:''})`:'—'):''}${(g.awayBull?.fip||g.homeBull?.fip)?` · 🔥 Bull FIP(disp) ${g.away} ${g.awayBull?.availFip??g.awayBull?.fip??'—'}${g.awayBull?.top3Avail!=null?` [${g.awayBull.top3Avail}/3]`:''} / ${g.home} ${g.homeBull?.availFip??g.homeBull?.fip??'—'}${g.homeBull?.top3Avail!=null?` [${g.homeBull.top3Avail}/3]`:''}`:''}${g.ump?` · 👨‍⚖️ ${g.ump}${g.umpT?` (${g.umpT.run>1?'hitter':g.umpT.run<1?'pitcher':'neutral'})`:''}`:''} · ${g.pitchers.away.name.split(' ').slice(-1)[0]} vs ${g.pitchers.home.name.split(' ').slice(-1)[0]}</div>
       ${(g.awayLU||g.homeLU)?(lu=>`<div class="game-footer" style="border-top:none;padding-top:0">Alineación · ${g.away} ${lu(g.awayLU)} · ${g.home} ${lu(g.homeLU)}</div>`)(i=>i?`${i.conf?'<b style="color:var(--gtx)">✓ confirmada</b>':'proyectada'} · ${i.nR}R/${i.nL}L${i.nS?`/${i.nS}S`:''}${i.kpct!=null?` · K ${i.kpct}%`:''}${i.bbpct!=null?` · BB ${i.bbpct}%`:''}${i.missing&&i.missing.length?` · <span style="color:var(--rtx)">⚠ sin ${i.missing.join(', ')}</span>`:''}`:'—'):''}

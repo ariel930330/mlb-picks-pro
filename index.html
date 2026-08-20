@@ -232,6 +232,7 @@ a{color:var(--blue);text-decoration:none}
 .bt-name{font-weight:700;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:5px}
 .bt-hand{color:var(--text3);font-size:9px;font-weight:700}
 .bt-ok{color:var(--gtx);font-size:9px;font-weight:800}
+.bt-nc{color:var(--text3);font-size:9px;font-weight:700;border:1px solid var(--border);border-radius:3px;padding:0 3px}
 .bt-vs{font-size:9.5px;color:var(--text2);display:flex;align-items:center;gap:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bt-mtag{font-weight:800}
 .bt-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:1px}
@@ -1637,9 +1638,24 @@ async function getFormWindows(id,yr,date) {
   const [d7,d15,d30]=await Promise.all([range(7),range(15),range(30)]);
   return {d7,d15,d30};
 }
-async function getInjuries(id) {
-  try{ const d=await mlb(`/teams/${id}/roster?rosterType=allInjuries`);
-    return (d.roster||[]).filter(p=>!['P','RP','SP'].includes(p.position?.abbreviation)).map(p=>({name:p.person?.fullName})); }catch{return[];}
+// Roster de 40: en UNA petición da quién puede jugar hoy y quién está lesionado.
+//   status A                   → roster activo de 26 (disponible hoy)
+//   status D7/D10/D15/D60/ILF  → lista de lesionados
+// OJO: rosterType=allInjuries NO existe en la API de MLB. Pedirlo devolvía el roster
+// activo completo — exactamente lo mismo que pedir un tipo inventado — así que el
+// "parte de lesionados" jamás trajo un solo lesionado.
+// Se guarda el ID además del nombre: el filtro descarta por ID (exacto), no por
+// nombre, que falla con acentos, sufijos (Jr.) y homónimos.
+// active devuelve null si la petición falla, para no vaciar al equipo por un error de red.
+async function getRoster(id) {
+  try{
+    const d=await mlb(`/teams/${id}/roster?rosterType=40Man`);
+    const r=d.roster||[], isP=p=>['P','SP','RP','TWP'].includes(p.position?.abbreviation);
+    const active=r.filter(p=>p.status?.code==='A').map(p=>p.person?.id).filter(Boolean);
+    const injured=r.filter(p=>/^(D\d+|ILF)$/.test(p.status?.code||'') && !isP(p))
+                   .map(p=>({id:p.person?.id, name:p.person?.fullName, status:p.status?.description||''}));
+    return {active:active.length?active:null, injured};
+  }catch{return {active:null, injured:[]};}
 }
 // Clutch del equipo: OPS con corredores en posición de anotar (risp) y con bases llenas (r123)
 async function getTeamClutch(id,yr){
@@ -2643,11 +2659,11 @@ async function runAnalysis() {
       const hId=g.teams.home.team.id, aId=g.teams.away.team.id;
       const hpId=g.teams.home.probablePitcher?.id, apId=g.teams.away.probablePitcher?.id;
 
-      const [hpSt,apSt,hTSt,aTSt,hWL,aWL,hInj,aInj,hBat,aBat,wx,hSplit,aSplit,hHand,aHand,hWin,aWin,hBull,aBull,hTrend,aTrend,hCtx,aCtx,hPSplit,aPSplit,hClutch,aClutch,hTStP,aTStP] = await Promise.all([
+      const [hpSt,apSt,hTSt,aTSt,hWL,aWL,hRos,aRos,hBat,aBat,wx,hSplit,aSplit,hHand,aHand,hWin,aWin,hBull,aBull,hTrend,aTrend,hCtx,aCtx,hPSplit,aPSplit,hClutch,aClutch,hTStP,aTStP] = await Promise.all([
         getPitcherStats(hpId,yr), getPitcherStats(apId,yr),
         getTeamStats(hId,yr), getTeamStats(aId,yr),
         getRecentGames(hId,yr), getRecentGames(aId,yr),
-        getInjuries(hId), getInjuries(aId),
+        getRoster(hId), getRoster(aId),               // disponibilidad real: activos + lesionados
         getTopBatters(hId,yr), getTopBatters(aId,yr),
         getWeather(VENUE_GEO[hId], date, g.gameDate),
         getTeamSplitOPS(hId,yr), getTeamSplitOPS(aId,yr),
@@ -2660,6 +2676,8 @@ async function runAnalysis() {
         getTeamClutch(hId,yr), getTeamClutch(aId,yr),         // clutch: OPS con RISP y bases llenas
         getTeamStats(hId,yr-1), getTeamStats(aId,yr-1),       // año PREVIO (2025): estabiliza el baseline
       ]);
+      const hInj=hRos.injured, aInj=aRos.injured;   // bateadores en la IL (parte real)
+      const hAct=hRos.active,  aAct=aRos.active;    // IDs del roster activo de 26
       // Forma reciente multi-ventana: la TEMPORADA siempre domina (50%); 30/15/7 días con peso
       // decreciente. Nunca reemplaza la temporada por el last-7. Acotado ±10%.
       // Además, la desviación se AMORTIGUA si lo subyacente (K% e ISO recientes) no la respalda:
@@ -2875,6 +2893,11 @@ async function runAnalysis() {
         homeOppScore:gd.features?.aps??.5,   // bateadores locales enfrentan al pitcher VISITANTE
         awayPlatoon, homePlatoon, awayOppHand:hHand, homeOppHand:aHand,
         awayLineup:aConf?aLine:null, homeLineup:hConf?hLine:null,   // IDs de titulares confirmados
+        // DISPONIBILIDAD: sin estos datos la pestaña proponía props de jugadores en la IL,
+        // porque getTopBatters ordena el roster COMPLETO de la temporada por OPS.
+        awayActive:aAct, homeActive:hAct,                                    // IDs del roster activo (26)
+        awayOut:(aInj||[]).map(p=>p.id).filter(Boolean),                     // IDs lesionados / day-to-day
+        homeOut:(hInj||[]).map(p=>p.id).filter(Boolean),
         pf:gd.pf||1, wx:gd.wx||null});
     }
 
@@ -3285,9 +3308,26 @@ function renderBatters(batData) {
       const evHR  =bp?.hr  ?evalProp(poissonOver(expHR,bp.hr.line),  bp.hr)  :null;
       return {id:b.id,name:b.name,pos:b.pos,pitcher:oppPitcher,oppHand,hand:b.hand,split:bs?{...bs,rel:+bsRel.toFixed(2)}:bs,bvp:b.bvp,tag,hitP,expTB,hrbiR,expBB,expHR,evHits,evTB,evHR};
     };
-    const aSet=g.awayLineup?new Set(g.awayLineup):null, hSet=g.homeLineup?new Set(g.homeLineup):null;
-    (g.awayBatters||[]).forEach(b=>{ if(aSet&&!aSet.has(b.id)) return; const r=mk(b,g.awayOppScore??.5,g.homePitcher,g.awayPlatoon,g.awayOppHand); if(r){r.team=g.away;r.gamePk=g.gamePk;r.conf=!!aSet;rows.push(r);} });
-    (g.homeBatters||[]).forEach(b=>{ if(hSet&&!hSet.has(b.id)) return; const r=mk(b,g.homeOppScore??.5,g.awayPitcher,g.homePlatoon,g.homeOppHand); if(r){r.team=g.home;r.gamePk=g.gamePk;r.conf=!!hSet;rows.push(r);} });
+    // ── DISPONIBILIDAD ────────────────────────────────────────────────────────
+    // getTopBatters ordena el roster COMPLETO de la temporada por OPS, así que un
+    // jugador que se lesionó en julio sigue saliendo entre los mejores. Se descarta
+    // a quien no puede jugar, en este orden:
+    //   1. Alineación confirmada → manda ella y nada más (es el dato más fresco).
+    //   2. Sin confirmar → tiene que estar en el roster activo (la IL queda fuera)
+    //      y no aparecer en el parte de lesionados (incluye day-to-day).
+    // Si la API de roster falla (null) no se filtra por ahí, para no vaciar el equipo.
+    const setOf = a => Array.isArray(a) ? new Set(a) : null;
+    const play = (lineSet, actSet, outSet, b) => {
+      if(lineSet) return lineSet.has(b.id);
+      if(actSet && !actSet.has(b.id)) return false;
+      if(outSet && outSet.has(b.id))  return false;
+      return true;
+    };
+    const aSet=setOf(g.awayLineup), hSet=setOf(g.homeLineup);
+    const aAct=setOf(g.awayActive), hAct=setOf(g.homeActive);
+    const aOut=setOf(g.awayOut),    hOut=setOf(g.homeOut);
+    (g.awayBatters||[]).forEach(b=>{ if(!play(aSet,aAct,aOut,b)) return; const r=mk(b,g.awayOppScore??.5,g.homePitcher,g.awayPlatoon,g.awayOppHand); if(r){r.team=g.away;r.gamePk=g.gamePk;r.conf=!!aSet;rows.push(r);} });
+    (g.homeBatters||[]).forEach(b=>{ if(!play(hSet,hAct,hOut,b)) return; const r=mk(b,g.homeOppScore??.5,g.awayPitcher,g.homePlatoon,g.homeOppHand); if(r){r.team=g.home;r.gamePk=g.gamePk;r.conf=!!hSet;rows.push(r);} });
   });
   if(!rows.length){$('batters-area').innerHTML='<div class="empty">Corre el análisis primero.</div>';return;}
   // Filtro por VALOR, nunca por probabilidad pelada: bateadores con edge de mercado
@@ -3319,7 +3359,7 @@ function renderBatters(batData) {
       <span class="bt-rank">${i+1}</span>
       <img class="headshot-sm" src="${playerImg(r.id)}" onerror="${IMG_FALLBACK}">
       <div class="bt-info">
-        <div class="bt-name">${r.name}${r.hand?`<span class="bt-hand">${r.hand}HB</span>`:''}${r.conf?`<span class="bt-ok">✓</span>`:''}</div>
+        <div class="bt-name">${r.name}${r.hand?`<span class="bt-hand">${r.hand}HB</span>`:''}${r.conf?`<span class="bt-ok" title="Titular confirmado en la alineación">✓</span>`:`<span class="bt-nc" title="La alineación aún no se publica: está activo y sin lesión, pero no está confirmado que sea titular hoy">sin confirmar</span>`}</div>
         <div class="bt-vs"><img class="logo-xs" src="${teamLogo(ABBR2ID[r.team])}" onerror="${IMG_FALLBACK}">${r.team} · vs ${(r.pitcher||'').split(' ').slice(-1)[0]||'—'}${r.oppHand?` (${r.oppHand})`:''} · <span class="bt-mtag" style="color:${r.tag.c}">${r.tag.t}</span></div>
         ${chips.length?`<div class="bt-chips">${chips.join('')}</div>`:''}
       </div>
@@ -3327,7 +3367,7 @@ function renderBatters(batData) {
     </div>`;
   };
   $('batters-area').innerHTML=`
-    <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los 2 de <b>mayor edge (valor)</b> por categoría · contra la <b>línea real de casa</b>; sin línea, ordenados por proyección y siempre detrás de quien sí tiene edge · ajustado por pitcher rival, mano, estadio y clima${rows.some(r=>r.conf)?' · <b style="color:var(--gtx)">✓</b> = titular confirmado':' · alineaciones sin confirmar'}${rows.some(r=>r.evHits||r.evTB||r.evHR)?' · <b>casa</b> = línea real con edge y stake':''}.</div>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los 2 de <b>mayor edge (valor)</b> por categoría · contra la <b>línea real de casa</b>; sin línea, ordenados por proyección y siempre detrás de quien sí tiene edge · ajustado por pitcher rival, mano, estadio y clima${rows.some(r=>r.conf)?' · <b style="color:var(--gtx)">✓</b> = titular confirmado':''}${rows.some(r=>!r.conf)?' · <b>sin confirmar</b> = activo y sin lesión, pero la alineación no se publica todavía':''} · <b>se excluyen lesionados y jugadores fuera del roster activo</b>${rows.some(r=>r.evHits||r.evTB||r.evHR)?' · <b>casa</b> = línea real con edge y stake':''}.</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px">
       ${cats.map(cat=>{
         // Orden SIEMPRE por EDGE de mercado. Quien tiene línea real de casa con edge

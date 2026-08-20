@@ -1143,16 +1143,22 @@ function computePicks(data) {
   // El diferencial de 5 innings escala la SD por sqrt(5/9) respecto al juego completo.
   const F5_SD=RUN_SD*Math.sqrt(5/9), f5hMargin=F5_SD*probit(f5hwpM), f5favHome=f5hwp>=.5;
   const f5spMkt=odds?.f5spread||null;
-  let f5cover, f5covPick;
+  // La tira de la tarjeta se dibuja con el punto y la probabilidad REALES de cada lado
+  // (covHomePt / covHome). Antes se forzaba todo a "-0.5 del favorito del MODELO", y
+  // cuando el mercado tenía como favorito al otro equipo la celda mostraba el número
+  // del contrario. covSide marca el lado que el sistema recomienda, para el edge.
+  let f5cover, f5covPick, f5covHome, f5covHomePt, f5covSide=null;
   if(f5spMkt){ // run line F5 real (usa el punto del mercado, ±0.5)
     const s=f5spMkt, mHomeCover=normOver(f5hMargin,F5_SD,-s.homePoint);   // modelo: home cubre su punto
     const bHome=blend(mHomeCover,s.fairHomeCover), homeSide=bHome>=.5;
     const team=homeSide?home:away, pt=homeSide?s.homePoint:s.awayPoint, price=homeSide?s.priceHome:s.priceAway;
     const prob=homeSide?bHome:1-bHome, fair=homeSide?s.fairHomeCover:s.fairAwayCover, mRaw=homeSide?mHomeCover:1-mHomeCover;
-    f5cover=f5favHome?(s.homePoint<0?bHome:1-bHome):(s.homePoint<0?1-bHome:bHome);   // prob. favorito -0.5 (para la tira)
+    f5covHome=bHome; f5covHomePt=s.homePoint; f5covSide=homeSide?'home':'away';
     f5covPick={cat:'Spread F5',main:`${team} ${pt>0?'+':''}${pt} (F5) ${amFmt(price)}`,sub:`Modelo ${pct(mRaw)} → ${pct(prob)} vs Mercado ${pct(fair)}`,prob,edge:+(prob-fair).toFixed(3),bEdge:+(mRaw-fair).toFixed(3),mkt:true,price,fair};
   } else {
-    f5cover=f5favHome?normOver(f5hMargin,F5_SD,0.5):normOver(-f5hMargin,F5_SD,0.5);   // prob. favorito -0.5 (modelo)
+    f5covHomePt=f5favHome?-0.5:0.5;                                  // sin mercado: el favorito del modelo da -0.5
+    f5covHome=normOver(f5hMargin,F5_SD,-f5covHomePt);                // prob. de que el LOCAL cubra su punto
+    f5cover=f5favHome?f5covHome:1-f5covHome;                         // prob. favorito -0.5 (modelo)
     f5covPick=f5cover>=.5
       ? {cat:'Spread F5',main:`${f5fav} -0.5 (F5)`,sub:`${pct(f5cover)} gana las primeras 5`,prob:f5cover,edge:+(f5cover-BREAKEVEN).toFixed(3)}
       : {cat:'Spread F5',main:`${f5favHome?away:home} +0.5 (F5)`,sub:`${pct(1-f5cover)} gana o empata F5`,prob:1-f5cover,edge:+((1-f5cover)-BREAKEVEN).toFixed(3)};
@@ -1199,7 +1205,9 @@ function computePicks(data) {
     awayML:p2ml(awp),homeML:p2ml(hwp),
     total,totalLine,pf,
     // F5 (primeras 5 entradas): total O/U y ML con edge de MERCADO si hay línea; run line ±0.5 es modelo
-    f5:{ total:f5total, line:f5line, overP:f5Over, favTeam:f5fav, favProb:f5favP, favHome:f5favHome, cover:f5cover,
+    f5:{ total:f5total, line:f5line, overP:f5Over, favTeam:f5fav, favProb:f5favP, favHome:f5favHome,
+         cover:f5cover??null,                                  // legado (solo modelo): favorito -0.5
+         covHome:f5covHome, covHomePt:f5covHomePt, covSide:f5covSide,   // punto y prob. reales de cada lado
          totalMkt:!!f5tMkt, totalEdge:f5tMkt?f5totPick.edge:null,
          mlMkt:!!f5mlMkt, mlEdge:f5mlMkt?f5mlPick.edge:null,
          coverMkt:!!f5spMkt, coverEdge:f5spMkt?f5covPick.edge:null,
@@ -2797,7 +2805,7 @@ async function runAnalysis() {
                aBrv:aBrun?.brv, hBrv:hBrun?.brv, aConf, hConf, aMiss:aLUinfo?.missing, hMiss:hLUinfo?.missing,
                aLUk:aLUinfo?.kpct, hLUk:hLUinfo?.kpct, aBpTop3:aBull?.top3Avail, hBpTop3:hBull?.top3Avail },
         awayRecent: aWL, homeRecent: hWL,
-        awayInj: aInj, homeInj: hInj, wx, kprops,
+        awayInj: aInj, homeInj: hInj, wx,
         homeSplit: hSplit, awaySplit: aSplit, homePHand: hHand, awayPHand: aHand,
         homeForm: homeForm*homeLineupF, awayForm: awayForm*awayLineupF,
         homeBullpen: hBull, awayBullpen: aBull,                   // bullpen con calidad DISPONIBLE
@@ -3064,16 +3072,22 @@ function renderPicks(games) {
         }).join(''):'<div style="padding:10px 12px;font-size:11px;color:var(--text3)">Sin picks de mercado de alta confianza — la lectura de edge de arriba es la señal.</div>'}
       </div>
       ${g.f5?(f=>{
-        const dog=f.favHome?g.away:g.home, overSide=f.overP>=.5, ovP=overSide?f.overP:1-f.overP;
+        const overSide=f.overP>=.5, ovP=overSide?f.overP:1-f.overP;
         const eTag=e=>e!=null?`<div class="f5-edge" style="color:${e>0?'var(--gtx)':'var(--text3)'}">edge ${e>=0?'+':''}${(e*100).toFixed(1)}%</div>`:'';
         const cell=(lbl,main,prob,hot,edge)=>`<div class="f5-cell"><div class="f5-lbl">${lbl}</div><div class="f5-main">${main}</div><div class="f5-prob"${hot?' style="color:var(--gtx)"':''}>${pct(prob)}</div>${eTag(edge)}</div>`;
         const anyMkt=f.totalMkt||f.mlMkt||f.coverMkt;
+        // Run line F5: cada celda lleva SU punto y SU probabilidad. El punto sale del
+        // mercado cuando lo hay, así que no siempre es ±0.5 ni el favorito del modelo.
+        // (?? f.cover = compatibilidad con juegos guardados antes de este cambio.)
+        const hPt = f.covHomePt ?? (f.favHome?-0.5:0.5);
+        const hP  = f.covHome ?? (f.favHome?f.cover:1-f.cover);
+        const rl  = [{t:g.home, pt:hPt, p:hP, mine:f.covSide==='home'},
+                     {t:g.away, pt:-hPt, p:1-hP, mine:f.covSide==='away'}].sort((a,b)=>a.pt-b.pt);
         return `<div class="f5-strip">
           <div class="f5-hd">⏱ F5 · primeras 5 entradas <span style="color:var(--text3);font-weight:400">· ${anyMkt?'vs mercado real (edge)':'proyección del modelo (sin cuota de mercado)'}</span></div>
           <div class="f5-grid">
             ${cell('Total', `${overSide?'OVER':'UNDER'} ${f.line}`, ovP, ovP>=.55, f.totalMkt?f.totalEdge:null)}
-            ${cell('Run line', `${f.favTeam} -0.5`, f.cover, f.cover>=.55, f.coverMkt?f.coverEdge:null)}
-            ${cell('Run line', `${dog} +0.5`, 1-f.cover, (1-f.cover)>=.55)}
+            ${rl.map(s=>cell('Run line', `${s.t} ${s.pt>0?'+':''}${s.pt}`, s.p, s.p>=.55, (f.coverMkt&&s.mine)?f.coverEdge:null)).join('')}
             ${cell('ML F5', `${f.favTeam} ${f.favML}`, f.favProb, f.favProb>=.58, f.mlMkt?f.mlEdge:null)}
           </div></div>`;
       })(g.f5):''}
@@ -3283,7 +3297,7 @@ function renderBatters(batData) {
   if(!pool.length){$('batters-area').innerHTML='<div class="empty">Ningún bateador con edge de mercado ni matchup favorable en la jornada.</div>';return;}
 
   const propTag=ev=>ev?`<span class="bt-casa" style="color:${ev.edge>0?'var(--gtx)':'var(--text3)'}">casa ${ev.over?'O':'U'}${ev.line} ${ev.edge>=0?'+':''}${(ev.edge*100).toFixed(0)}%${ev.stake>0?` · ${ev.stake}%`:''}</span>`:'';
-  // Cada categoría: los 2 MÁS PROBABLES (mayor proyección). mkt/target/prob para el historial.
+  // Cada categoría: los 2 de MAYOR EDGE contra la línea real de casa. mkt/target/prob para el historial.
   const cats=[
     {title:'⚾ Probabilidad de Hit', mkt:'Hit', target:.5, prob:r=>r.hitP,               metric:r=>r.hitP,  fmt:r=>Math.round(r.hitP*100)+'%', tag:r=>r.evHits},
     {title:'💥 Bases totales (TB)',  mkt:'TB',  target:r=>r.evTB?.line??1.5, prob:r=>1-Math.exp(-r.expTB), metric:r=>r.expTB, fmt:r=>r.expTB.toFixed(1), tag:r=>r.evTB},
@@ -3313,15 +3327,23 @@ function renderBatters(batData) {
     </div>`;
   };
   $('batters-area').innerHTML=`
-    <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los 2 de <b>mayor edge (valor)</b> por categoría · <b>Hit/HR</b> contra la línea real de casa; el resto vs breakeven · ajustado por pitcher rival, mano, estadio y clima${rows.some(r=>r.conf)?' · <b style="color:var(--gtx)">✓</b> = titular confirmado':' · alineaciones sin confirmar'}${rows.some(r=>r.evHits||r.evTB||r.evHR)?' · <b>casa</b> = línea real con edge y stake':''}.</div>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los 2 de <b>mayor edge (valor)</b> por categoría · contra la <b>línea real de casa</b>; sin línea, ordenados por proyección y siempre detrás de quien sí tiene edge · ajustado por pitcher rival, mano, estadio y clima${rows.some(r=>r.conf)?' · <b style="color:var(--gtx)">✓</b> = titular confirmado':' · alineaciones sin confirmar'}${rows.some(r=>r.evHits||r.evTB||r.evHR)?' · <b>casa</b> = línea real con edge y stake':''}.</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px">
       ${cats.map(cat=>{
-        // Orden SIEMPRE por EDGE: real vs la línea de casa cuando existe (Hit/HR); si esa
-        // categoría no tiene mercado, vs el breakeven (-110) — igual que juegos y pitchers.
-        // Nunca por probabilidad pelada.
-        const eOf = r => { const ev = cat.tag ? cat.tag(r) : null; if(ev) return ev.edge;
-          const p = cat.prob ? cat.prob(r) : null; return p!=null ? p-BREAKEVEN : (cat.metric(r)||0)/1000; };
-        const top2 = [...pool].sort((a,b)=>eOf(b)-eOf(a)).slice(0,2);
+        // Orden SIEMPRE por EDGE de mercado. Quien tiene línea real de casa con edge
+        // positivo va primero, de mayor a menor edge; los demás quedan detrás y entre
+        // ellos se ordenan por proyección.
+        // NO se mezcla "prob - breakeven" con el edge real: son escalas distintas y el
+        // sesgo se voltea por categoría (en Hit vale ~+0.18 y en HR ~-0.38 frente a un
+        // edge de mercado de ~±0.05), así que el orden salía al revés en cada tarjeta.
+        const evOf = r => { const e = cat.tag ? cat.tag(r) : null; return (e && e.edge>0) ? e : null; };
+        const top2 = [...pool].sort((a,b)=>{
+          const ea=evOf(a), eb=evOf(b);
+          if(ea&&eb) return eb.edge-ea.edge;                   // ambos con línea → mayor edge
+          if(ea) return -1;                                    // con edge real manda sobre sin línea
+          if(eb) return 1;
+          return (cat.metric(b)||0)-(cat.metric(a)||0);        // sin mercado → proyección
+        }).slice(0,2);
         top2.forEach(r=>{ const ev=cat.tag?cat.tag(r):null; propsBatter.push({gamePk:r.gamePk,player_id:r.id,player_name:r.name,team:r.team,market:cat.mkt,
           target:typeof cat.target==='function'?cat.target(r):cat.target, side:'over',
           prob:cat.prob?+cat.prob(r).toFixed(3):null, proj:+cat.metric(r).toFixed(2), edge:ev?+ev.edge.toFixed(3):null}); });

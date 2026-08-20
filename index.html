@@ -610,14 +610,34 @@ async function doLogout(){ await sb.auth.signOut(); session=null; updateAuthUI()
 // ── MLB Stats API ─────────────────────────────────────────────────────────────
 const MLB = 'https://statsapi.mlb.com/api/v1';
 const _mlbCache = new Map();   // caché de sesión (stats estables); el schedule nunca se cachea
+// Tope GLOBAL de peticiones simultáneas a la MLB Stats API, más reintento.
+// Al analizar varios partidos a la vez saldrían ~90 peticiones de golpe. La API
+// empieza a responder 429 y, como cada getX atrapa su error y sigue, el modelo se
+// quedaría sin datos EN SILENCIO: picks calculados con la mitad de la información.
+// Eso es peor que ir lento, así que el tope va aquí abajo, en el transporte, y no
+// importa cuántos partidos corran en paralelo: nunca pasan de MLB_MAX a la vez.
+const MLB_MAX = 12;
+let _mlbActive = 0; const _mlbQueue = [];
+const _mlbGate = () => new Promise(res => { if(_mlbActive < MLB_MAX){ _mlbActive++; res(); } else _mlbQueue.push(res); });
+const _mlbRelease = () => { const next = _mlbQueue.shift(); if(next) next(); else _mlbActive--; };
+
 const mlb = async (path) => {
   const cacheable = !path.includes('/schedule');
   if (cacheable && _mlbCache.has(path)) return _mlbCache.get(path);
-  const r = await fetch(MLB + path);
-  if (!r.ok) throw new Error('MLB ' + r.status);
-  const j = await r.json();
-  if (cacheable) _mlbCache.set(path, j);
-  return j;
+  await _mlbGate();
+  try {
+    let r;
+    for (let intento = 0; intento < 3; intento++) {
+      r = await fetch(MLB + path);
+      if (r.ok) break;
+      if (r.status !== 429 && r.status < 500) break;   // 404 y demás no se reintentan
+      await new Promise(s => setTimeout(s, 300 * (intento + 1)));
+    }
+    if (!r.ok) throw new Error('MLB ' + r.status);
+    const j = await r.json();
+    if (cacheable) _mlbCache.set(path, j);
+    return j;
+  } finally { _mlbRelease(); }
 };
 
 // ── Park factors ──────────────────────────────────────────────────────────────
@@ -1787,6 +1807,18 @@ async function getTopBatters(id,yr) {
   }catch{return[];}
 }
 
+// Corre fn sobre cada elemento con un tope de N a la vez. Las peticiones por partido
+// (F5, props de Ks, props de bateadores) se hacían con for...await, o sea una por una:
+// con 9 partidos eran 27 viajes en fila (~8 s). Con tope 5 bajan a ~1.5 s.
+// El tope existe para no disparar 30 peticiones de golpe y toparse con límite de tasa.
+async function mapLimit(items, limit, fn){
+  const out = new Array(items.length);
+  let i = 0;
+  const worker = async () => { while(i < items.length){ const k = i++; out[k] = await fn(items[k], k); } };
+  await Promise.all(Array.from({length: Math.min(limit, items.length)}, worker));
+  return out;
+}
+
 // ── The Odds API (cuotas reales) ────────────────────────────────────────────
 const ODDS_BASE = 'https://api.the-odds-api.com/v4';
 // La key NO va escrita en el código: este repo es público y GitHub Pages sirve el
@@ -1868,10 +1900,10 @@ function evalProp(mOver, mkt) {
 // Props de ponches (pitcher_strikeouts): línea REAL de las casas. 1 petición por partido.
 async function getStrikeoutProps(key, events) {
   const byPitcher = {};
-  for (const ev of events) {
+  await mapLimit(events, 5, async (ev) => {
     try {
       const url = `${ODDS_BASE}/sports/baseball_mlb/events/${ev.id}/odds?apiKey=${key}&regions=us&markets=pitcher_strikeouts&oddsFormat=american`;
-      const r = await fetch(url); if (!r.ok) continue;
+      const r = await fetch(url); if (!r.ok) return;
       const rem = r.headers.get('x-requests-remaining'); if (rem != null) oddsRemaining = rem;
       const d = await r.json();
       const agg = {};   // nombre pitcher -> [{point,over,under}]
@@ -1891,7 +1923,7 @@ async function getStrikeoutProps(key, events) {
         byPitcher[normName(n)] = { name: n, line: median(arr.map(v => v.point)), fairOver: fo, fairUnder: 1 - fo, priceOver: bestAm(arr.map(v => v.over)), priceUnder: bestAm(arr.map(v => v.under)) };
       });
     } catch {}
-  }
+  });
   return byPitcher;
 }
 
@@ -1899,10 +1931,10 @@ async function getStrikeoutProps(key, events) {
 async function getBatterProps(key, events) {
   const MK = { batter_hits: 'hits', batter_total_bases: 'tb', batter_home_runs: 'hr' };
   const byBatter = {};
-  for (const ev of events) {
+  await mapLimit(events, 5, async (ev) => {
     try {
       const url = `${ODDS_BASE}/sports/baseball_mlb/events/${ev.id}/odds?apiKey=${key}&regions=us&markets=batter_hits,batter_total_bases,batter_home_runs&oddsFormat=american`;
-      const r = await fetch(url); if (!r.ok) continue;
+      const r = await fetch(url); if (!r.ok) return;
       const rem = r.headers.get('x-requests-remaining'); if (rem != null) oddsRemaining = rem;
       const d = await r.json();
       const agg = {};   // "norm|slot" -> [{point,over,under}]
@@ -1923,17 +1955,17 @@ async function getBatterProps(key, events) {
         (byBatter[nn] = byBatter[nn] || {})[slot] = { line: median(arr.map(v => v.point)), fairOver: fo, fairUnder: 1 - fo, priceOver: bestAm(arr.map(v => v.over)), priceUnder: bestAm(arr.map(v => v.under)) };
       });
     } catch {}
-  }
+  });
   return byBatter;
 }
 
 // Props de F5 (primeras 5 entradas): ML, total y run line REALES. 1 petición por partido.
 async function getF5Odds(key, events) {
   const byGame = {};
-  for (const ev of events) {
+  await mapLimit(events, 5, async (ev) => {
     try {
       const url = `${ODDS_BASE}/sports/baseball_mlb/events/${ev.id}/odds?apiKey=${key}&regions=us&markets=h2h_1st_5_innings,totals_1st_5_innings,spreads_1st_5_innings&oddsFormat=american`;
-      const r = await fetch(url); if (!r.ok) continue;
+      const r = await fetch(url); if (!r.ok) return;
       const rem = r.headers.get('x-requests-remaining'); if (rem != null) oddsRemaining = rem;
       const d = await r.json(); const home = ev.home_team, away = ev.away_team;
       const mlP = [], totP = [], spP = [];
@@ -1948,7 +1980,7 @@ async function getF5Odds(key, events) {
       if (spP.length) { const fhc = avg(spP.map(p => { const ih = amProb(p.hpr), ia = amProb(p.apr); return ih / (ih + ia); })); o.f5spread = { homePoint: median(spP.map(p => p.hp)), awayPoint: median(spP.map(p => p.ap)), fairHomeCover: fhc, fairAwayCover: 1 - fhc, priceHome: bestAm(spP.map(p => p.hpr)), priceAway: bestAm(spP.map(p => p.apr)) }; }
       if (Object.keys(o).length) byGame[normName(home) + '|' + normName(away)] = o;
     } catch {}
-  }
+  });
   return byGame;
 }
 // Devuelve un mapa { "homeNorm|awayNorm": {ml,total,spread,f5*} } con consenso entre casas.
@@ -1997,13 +2029,15 @@ async function getOdds(date) {
       const key = normName(home) + '|' + normName(away);
       (map[key] = map[key] || []).push(o);   // array: soporta doubleheaders (mismo matchup 2 veces)
     }
-    // F5 real (ML/total/run line de las primeras 5) → se fusiona en cada juego
-    const f5map = await getF5Odds(key, events);
+    // F5, ponches y bateadores son tres grupos INDEPENDIENTES de peticiones por partido.
+    // Antes se esperaban en cadena (F5 completo → luego Ks → luego bateadores). Ahora
+    // arrancan a la vez, y dentro de cada grupo mapLimit corre 5 en paralelo.
+    const [f5map, kprops, bprops] = await Promise.all([
+      getF5Odds(key, events),
+      getKProps() ? getStrikeoutProps(key, events) : Promise.resolve({}),
+      getBProps() ? getBatterProps(key, events)    : Promise.resolve({}),
+    ]);
     for (const k in map) { const f5 = f5map[k]; if (f5) map[k].forEach(o => Object.assign(o, f5)); }
-    // Props de ponches (línea real de Ks por pitcher), si están activadas
-    const kprops = getKProps() ? await getStrikeoutProps(key, events) : {};
-    // Props de bateadores (hits/bases/HR), si están activadas
-    const bprops = getBProps() ? await getBatterProps(key, events) : {};
     return { map, kprops, bprops };
   } catch (e) { console.warn('getOdds:', e.message); return { map: {}, kprops: {}, bprops: {} }; }
 }
@@ -2635,24 +2669,34 @@ async function runAnalysis() {
     if(!games.length){$('picks-area').innerHTML=`<div class="empty">${allG.length?`Los ${allG.length} partidos de esta fecha ya empezaron o terminaron.<br>El modelo solo analiza juegos por comenzar (las cuotas en vivo dan edges falsos).`:'No hay partidos para esta fecha.'}</div>`;return;}
     $('run-status').textContent=`Analizando ${games.length} partidos...`+(started?` (${started} ya empezaron, excluidos)`:'');
 
-    const {map:oddsMap, kprops, bprops} = await getMlbOdds(date);
+    // Las cuotas y las 10 fuentes de temporada son INDEPENDIENTES entre sí: antes se
+    // pedían una tras otra y cada una esperaba a la anterior sin motivo (~14 s en fila).
+    // Ahora arrancan todas juntas y el tiempo total es el de la más lenta.
+    $('run-status').textContent=`Trayendo cuotas y datos de temporada...`;
+    const [{map:oddsMap, kprops, bprops}, SC, ARS, DISC, BQ, BT, DEF, FRAME, SHAPE, BRUN, UMP] = await Promise.all([
+      getMlbOdds(date),
+      getStatcast(yr),          // Statcast (xwOBA/xERA/xSLG)
+      getPitchArsenal(yr),      // Repertorio (whiff por pitch) para el matchup de Ks
+      getPitchDiscipline(yr),   // Plate discipline por abridor (whiff/chase/K-BB%)
+      getBatterQuality(yr),     // Calidad de contacto por bateador (barrel/hard-hit/EV)
+      getBatTracking(yr),       // Bat-tracking (bat speed/squared-up/blast/fast-swing)
+      getTeamDefense(yr),       // Defensa por equipo (OAA) — suprime carreras del rival
+      getCatcherDefense(yr),    // Catcher edge (framing+blocking+throwing) por equipo
+      getPitchShape(yr),        // Pitch-shape del abridor (velocidad/iVB/movimiento)
+      getBaserunning(yr),       // Baserunning por equipo (run value + sprint speed)
+      getUmpires(date),         // Árbitro de home por juego (si ya está asignado)
+    ]);
     const oddsCount = Object.keys(oddsMap).length;
     allBProps = bprops || {};
-    const SC = await getStatcast(yr);   // Statcast (xwOBA/xERA/xSLG) una sola vez
-    const ARS = await getPitchArsenal(yr);   // Repertorio (whiff por pitch) para el matchup de Ks
-    const DISC = await getPitchDiscipline(yr);   // Plate discipline por abridor (whiff/chase/K-BB%)
-    const BQ = await getBatterQuality(yr);   // Calidad de contacto por bateador (barrel/hard-hit/EV)
-    const BT = await getBatTracking(yr);   // Bat-tracking (bat speed/squared-up/blast/fast-swing)
-    const DEF = await getTeamDefense(yr);   // Defensa por equipo (OAA) — suprime carreras del rival
-    const FRAME = await getCatcherDefense(yr);   // Catcher edge (framing+blocking+throwing) por equipo
-    const SHAPE = await getPitchShape(yr);   // Pitch-shape del abridor (velocidad/iVB/movimiento)
-    const BRUN = await getBaserunning(yr);   // Baserunning por equipo (run value + sprint speed)
-    const UMP = await getUmpires(date);   // Árbitro de home por juego (si ya está asignado)
 
     const results=[];
     const batchBatters=[];
 
-    for(const g of games){
+    // Los partidos se procesaban de uno en uno, aunque no dependen entre sí. Ahora van
+    // de 3 en 3. El tope de MLB_MAX vive dentro de mlb(), así que esto NO multiplica las
+    // peticiones simultáneas: solo evita que cada partido espere a que termine el anterior.
+    let hechos = 0;
+    await mapLimit(games, 3, async (g) => {
       const hId=g.teams.home.team.id, aId=g.teams.away.team.id;
       const hpId=g.teams.home.probablePitcher?.id, apId=g.teams.away.probablePitcher?.id;
 
@@ -2896,25 +2940,24 @@ async function runAnalysis() {
         awayOut:(aInj||[]).map(p=>p.id).filter(Boolean),                     // IDs lesionados / day-to-day
         homeOut:(hInj||[]).map(p=>p.id).filter(Boolean),
         pf:gd.pf||1, wx:gd.wx||null});
-    }
+      $('run-status').textContent=`Analizando partidos... ${++hechos}/${games.length}`;
+    });
+    // Al correr en paralelo terminan desordenados: se devuelve el orden del calendario.
+    const orden = new Map(games.map((g,i)=>[g.gamePk, i]));
+    results.sort((a,b)=>(orden.get(a.gamePk)??0)-(orden.get(b.gamePk)??0));
+    batchBatters.sort((a,b)=>(orden.get(a.gamePk)??0)-(orden.get(b.gamePk)??0));
 
     saveOpen(date, OPEN);   // persiste las líneas de apertura vistas hoy
     allGames = results;
     allBatters = batchBatters;
     allParlays = buildParlays(results);
 
-    // Save to Supabase — historial TODO por edge: por juego el pick de mayor edge, y los 5 juegos con más edge
-    const best5Games = [...results].map(g=>({g,bp:bestEdgePick(g)})).filter(x=>x.bp)
-      .sort((x,y)=>byValue(x.bp,y.bp)).slice(0,5).map(x=>x.g);
-    await savePredictions(date, best5Games);
-    await saveSignals(date, results);   // Señales: el tablero de convicción COMPLETO (todos los juegos)
-
-    // Update UI
+    // PINTAR PRIMERO. Guardar en Supabase no cambia nada de lo que se ve, y hacerlo
+    // antes obligaba a esperar ~20 viajes a la base con la pantalla en blanco.
     renderPicks(results);
     renderParlays(allParlays);
     renderPitchers(results);
     renderBatters(batchBatters);
-    savePropPicks(date);   // guarda los picks de props (pitchers Ks + bateadores) para el historial
 
     const high=results.flatMap(g=>g.picks).filter(p=>p.conf==='High').length;
     const med =results.flatMap(g=>g.picks).filter(p=>p.conf==='Medium').length;
@@ -2925,6 +2968,15 @@ async function runAnalysis() {
     $('run-status').textContent=`✅ ${results.length} partidos analizados`+(started?` · ${started} ya empezaron (excluidos)`:'')+
       (getOddsKey()?(oddsCount?` · 📈 cuotas reales (${oddsCount} partidos)`+(oddsRemaining!=null?` · ${oddsRemaining} req restantes`:''):` · ⚠ sin cuotas (revisa API key o fecha)`):` · sin cuotas (edge vs -110)`);
     cacheAnalysis(date);   // guarda el análisis completo para restaurarlo al refrescar
+
+    // Guardado en segundo plano: por juego el pick de mayor edge, los 5 juegos con más
+    // edge, el tablero de convicción completo y los props. Si falla se avisa en la
+    // barra de estado en vez de fallar en silencio.
+    const best5Games = [...results].map(g=>({g,bp:bestEdgePick(g)})).filter(x=>x.bp)
+      .sort((x,y)=>byValue(x.bp,y.bp)).slice(0,5).map(x=>x.g);
+    Promise.all([ savePredictions(date, best5Games), saveSignals(date, results), savePropPicks(date) ])
+      .catch(e => { console.warn('guardado:', e.message);
+        $('run-status').textContent += ' · ⚠ no se pudo guardar en Supabase'; });
 
   } catch(e) {
     $('picks-area').innerHTML=`<div class="error-box"><i class="ti ti-alert-circle"></i> ${e.message}</div>`;

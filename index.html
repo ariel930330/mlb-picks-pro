@@ -755,6 +755,34 @@ const poissonOver = (lambda,line) => {
 const normOver = (mean,sd,line) => cl(1-normCDF((line-mean)/sd),.02,.98);
 const BREAKEVEN = .524; // breakeven real frente al vig de -110
 
+// ══════════════════════════════════════════════════════════════════════════════
+// ── VALOR: la regla ÚNICA de orden de todo el sistema ─────────────────────────
+// Un pick sin cuota de casa NO tiene edge. "prob − 0.524" es la probabilidad con
+// otro nombre: restarle una constante a todos no cambia el orden de nada, así que
+// ordenar por eso ES ordenar por probabilidad. Y ordenar por probabilidad asciende
+// favoritos caros y trampas seguras (el Run Line +1.5 se llevaba 2 de cada 3 juegos
+// por ser lo más probable del tablero, no por pagar bien).
+//
+// Por eso el orden va en TRES niveles, nunca mezclando escalas:
+//   0. Con cuota real y edge > 0  → por edge, de mayor a menor. Valor verificable.
+//   1. Sin cuota                  → por probabilidad del modelo. No hay edge que medir.
+//   2. Con cuota y edge ≤ 0       → hasta el final: sabemos que NO tienen valor.
+//
+// hasPrice se apoya en `fair` (prob. implícita sin comisión), que solo existe
+// cuando el pick se construyó contra una cuota real.
+const hasPrice = p => !!p && p.fair != null;
+const valTier  = p => hasPrice(p) ? (p.edge > 0 ? 0 : 2) : 1;
+const byValue  = (a,b) => (valTier(a)-valTier(b)) ||
+  (valTier(a)===1 ? (b.prob??0)-(a.prob??0) : (b.edge??-1)-(a.edge??-1));
+// Misma regla para props (Ks y bateadores), donde el edge es null si no hay línea.
+const byPropValue = (a,b) => {
+  const ta = (a.edge!=null&&a.edge>0)?0:(a.edge!=null?2:1);
+  const tb = (b.edge!=null&&b.edge>0)?0:(b.edge!=null?2:1);
+  return (ta-tb) || (ta===1 ? ((b.prob??0)-(a.prob??0))||((b.proj??0)-(a.proj??0))
+                            : (b.edge??-1)-(a.edge??-1));
+};
+// ══════════════════════════════════════════════════════════════════════════════
+
 // ── Cuotas americanas / mercado ─────────────────────────────────────────────
 const amProb   = a => a<0 ? (-a)/(-a+100) : 100/(a+100);   // prob implícita (con vig)
 const amPayout = a => a>0 ? a/100 : 100/(-a);              // ganancia por unidad apostada
@@ -1183,7 +1211,7 @@ function computePicks(data) {
   picks.forEach(p=>{ p.stake = (p.price!=null && p.edge>0) ? stakePct(p.prob,p.price) : 0; });
   // Selección por EDGE (valor), NUNCA por probabilidad: un favorito al 70% sin valor
   // vale menos que un underdog al 45% que el mercado paga de más.
-  picks.sort((a,b)=>(b.edge??-1)-(a.edge??-1));
+  picks.sort(byValue);
   const top3=picks.slice(0,3).map(p=>({...p,conf:p.prob>=.58?'High':p.prob>=.53?'Medium':'Low'}));
 
   // ── MLB EDGE READ: lectura de juego por categoría + convicción + data quality ──
@@ -2908,7 +2936,7 @@ async function runAnalysis() {
 
     // Save to Supabase — historial TODO por edge: por juego el pick de mayor edge, y los 5 juegos con más edge
     const best5Games = [...results].map(g=>({g,bp:bestEdgePick(g)})).filter(x=>x.bp)
-      .sort((a,b)=>(b.bp.edge??-1)-(a.bp.edge??-1)).slice(0,5).map(x=>x.g);
+      .sort((x,y)=>byValue(x.bp,y.bp)).slice(0,5).map(x=>x.g);
     await savePredictions(date, best5Games);
     await saveSignals(date, results);   // Señales: el tablero de convicción COMPLETO (todos los juegos)
 
@@ -2941,9 +2969,8 @@ async function runAnalysis() {
 // Guarda los picks de props (pitchers Ks + bateadores) recolectados al renderizar
 async function savePropPicks(date){
   if(!isOwner()) return;
-  // Solo los 5 MEJORES por edge de cada categoría (edge de mercado; sin línea → al final, desempata prob)
-  const byEdge=(a,b)=>((b.edge??-1)-(a.edge??-1))||((b.prob??0)-(a.prob??0));
-  const top5=arr=>[...arr].filter(p=>p.player_id&&p.gamePk).sort(byEdge).slice(0,5);
+  // Solo los 5 MEJORES por VALOR de cada categoría (misma regla de 3 niveles del sistema)
+  const top5=arr=>[...arr].filter(p=>p.player_id&&p.gamePk).sort(byPropValue).slice(0,5);
   const picks=[...top5(propsPitcher).map(p=>({...p,kind:'pitcher'})),...top5(propsBatter).map(p=>({...p,kind:'batter'}))];
   if(!picks.length) return;
   try{
@@ -2961,7 +2988,7 @@ async function savePropPicks(date){
 }
 
 // El pick de MAYOR edge del juego (busca en TODOS los mercados, no solo el top-3 por probabilidad)
-const bestEdgePick = g => (g.allPicks||g.picks||[]).filter(Boolean).slice().sort((a,b)=>(b.edge??-1)-(a.edge??-1))[0];
+const bestEdgePick = g => (g.allPicks||g.picks||[]).filter(Boolean).slice().sort(byValue)[0];
 async function savePredictions(date, games) {
   for(const g of games){
     const top = bestEdgePick(g);
@@ -2995,20 +3022,22 @@ function setPickFilter(f){
   document.querySelectorAll('.pf-btn').forEach(b=>b.classList.toggle('active',b.dataset.f===f));
   renderPicks(allGames);
 }
-function pickPasses(p){ return pickFilter==='ev' ? p.edge>0 : pickFilter==='high' ? (p.conf||confOf(p))==='High' : true; }
+// "+EV (valor)" ahora significa valor DE VERDAD: cuota real de casa y edge positivo.
+// Antes dejaba pasar cualquier pick con prob > 52.4%, que no es valor, es probabilidad.
+// Si no hay cuotas conectadas este filtro se queda vacío — y eso es lo correcto:
+// sin precio no hay forma de saber si algo tiene valor.
+function pickPasses(p){ return pickFilter==='ev' ? (hasPrice(p)&&p.edge>0) : pickFilter==='high' ? (p.conf||confOf(p))==='High' : true; }
 // confOf sigue existiendo SOLO como etiqueta visual (🟢🟡🔴) y para el filtro manual
 // "Alta conf.". Nunca decide qué picks se muestran ni en qué orden.
 const confOf = p => p.prob>=.58?'High':p.prob>=.53?'Medium':'Low';
-// Orden único del sistema: mayor edge primero.
-const byEdgeDesc = (a,b)=>(b.edge??-1)-(a.edge??-1);
 // Máxima variedad: el mejor pick de cada TIPO de mercado (sin repetir), hasta 5,
-// elegido y ordenado por EDGE. Sin piso de probabilidad: un underdog con valor real
-// tiene que poder aparecer, y antes el umbral del 58% lo eliminaba siempre.
+// elegido y ordenado con byValue. Sin piso de probabilidad: un underdog con valor
+// real tiene que poder aparecer, y antes el umbral del 58% lo eliminaba siempre.
 function selectGamePicks(g){
   const byCat={};
   // Excluye los mercados F5 de la lista: ya se muestran siempre en la tira F5 dedicada.
-  (g.allPicks||g.picks||[]).filter(p=>pickPasses(p)&&!/F5/.test(p.cat)).forEach(p=>{ const c=byCat[p.cat]; if(!c||byEdgeDesc(p,c)<0) byCat[p.cat]=p; });
-  return Object.values(byCat).sort(byEdgeDesc).slice(0,5);
+  (g.allPicks||g.picks||[]).filter(p=>pickPasses(p)&&!/F5/.test(p.cat)).forEach(p=>{ const c=byCat[p.cat]; if(!c||byValue(p,c)<0) byCat[p.cat]=p; });
+  return Object.values(byCat).sort(byValue).slice(0,5);
 }
 
 // Colores compartidos por el Edge Read y el tablero de convicción
@@ -3041,6 +3070,16 @@ function renderPicks(games) {
   const confMap = {High:'high',Medium:'med',Low:'low'};
   const labelMap = {High:'🟢 ALTA',Medium:'🟡 MEDIA',Low:'🔴 BAJA'};
   $('filterbar').style.display = games.length ? 'flex' : 'none';
+  // Sin una sola cuota real en toda la jornada NO hay edge en ningún lado, y el
+  // orden se cae a probabilidad del modelo. Se avisa fuerte en vez de disimularlo:
+  // es la diferencia entre "estos son los de más valor" y "estos son los más probables".
+  const nMkt = games.reduce((n,g)=>n+((g.allPicks||g.picks||[]).some(hasPrice)?1:0),0);
+  const aviso = (games.length && !nMkt)
+    ? `<div class="card" style="border-color:var(--rtx);padding:11px 13px;margin-bottom:10px">
+         <div style="font-size:12px;font-weight:800;color:var(--rtx);margin-bottom:4px">⚠ Sin cuotas de casa: no se puede calcular edge</div>
+         <div style="font-size:11px;color:var(--text2);line-height:1.5">Ninguno de los ${games.length} partidos trae precio de mercado, así que estos picks están ordenados por <b>probabilidad del modelo</b>, no por valor. Un favorito muy probable que paga de menos se va a ver arriba igual. Revisa tu API key de The Odds API en ⚙ Ajustes.</div>
+       </div>`
+    : '';
   const html = games.map(g=>{
     // Un pick por tipo de mercado (variedad), hasta 5, según el orden elegido
     const picks = selectGamePicks(g).map(p=>({...p,conf:confOf(p)}));
@@ -3090,7 +3129,9 @@ function renderPicks(games) {
             <div class="pick-accent"></div>
             <div class="pick-badge"><span class="icon">${lbl.split(' ')[0]}</span><span class="label">${lbl.split(' ')[1]||''}</span></div>
             <div class="pick-body"><div class="pick-cat">${p.cat}</div><div class="pick-main">${p.main}</div><div class="pick-sub">${p.sub||''}</div></div>
-            <div class="pick-pct"><div class="pick-prob">${pct(p.prob)}</div>${p.bEdge!=null?`<div class="pick-edge" title="Baseball Edge: modelo puro vs mercado">⚾ ${p.bEdge>=0?'+':''}${(p.bEdge*100).toFixed(1)}%</div>`:''}<div class="pick-edge">${p.bEdge!=null?'mkt ':'edge '}${p.edge>=0?'+':''}${(p.edge*100).toFixed(1)}%</div>${p.stake>0?`<div class="pick-stake">apostar ${p.stake}%</div>`:''}</div>
+            <div class="pick-pct"><div class="pick-prob">${pct(p.prob)}</div>${p.bEdge!=null?`<div class="pick-edge" title="Baseball Edge: modelo puro vs mercado">⚾ ${p.bEdge>=0?'+':''}${(p.bEdge*100).toFixed(1)}%</div>`:''}${hasPrice(p)
+              ? `<div class="pick-edge">mkt ${p.edge>=0?'+':''}${(p.edge*100).toFixed(1)}%</div>`
+              : `<div class="pick-edge" style="color:var(--text3)" title="Sin cuota de casa no hay edge que calcular: lo que ves es la probabilidad del modelo, no valor.">sin cuota</div>`}${p.stake>0?`<div class="pick-stake">apostar ${p.stake}%</div>`:''}</div>
           </div>`;
         }).join(''):'<div style="padding:10px 12px;font-size:11px;color:var(--text3)">Sin picks de mercado de alta confianza — la lectura de edge de arriba es la señal.</div>'}
       </div>
@@ -3130,7 +3171,7 @@ function renderPicks(games) {
       </details>
     </div>`;
   }).join('');
-  $('picks-area').innerHTML = (games.length?convictionBoard(games):'') + (html || '<div class="empty">Ningún pick cumple el filtro seleccionado.</div>');
+  $('picks-area').innerHTML = (games.length?convictionBoard(games):'') + aviso + (html || `<div class="empty">Ningún pick cumple el filtro seleccionado.${pickFilter==='ev'?'<br>El filtro <b>+EV</b> solo muestra picks con cuota real de casa y edge positivo.':''}</div>`);
 }
 
 // Copia los picks visibles al portapapeles (texto plano para compartir)
@@ -3141,7 +3182,7 @@ function copyPicks(){
     const picks=selectGamePicks(g);
     if(!picks.length) return;
     lines.push(`⚾ ${g.away} @ ${g.home}`);
-    picks.forEach(p=>lines.push(`  • ${p.cat}: ${p.main}  (${pct(p.prob)}, edge ${p.edge>=0?'+':''}${(p.edge*100).toFixed(1)}%${p.stake>0?`, apostar ${p.stake}%`:''})`));
+    picks.forEach(p=>lines.push(`  • ${p.cat}: ${p.main}  (${pct(p.prob)}, ${hasPrice(p)?`edge ${p.edge>=0?'+':''}${(p.edge*100).toFixed(1)}%`:'sin cuota'}${p.stake>0?`, apostar ${p.stake}%`:''})`));
   });
   const txt=lines.join('\n')||'Sin picks.';
   navigator.clipboard?.writeText(txt).then(()=>alert('📋 Picks copiados al portapapeles')).catch(()=>alert(txt));
@@ -3151,16 +3192,15 @@ function copyPicks(){
 // Reglas: 1 pata por partido (sin correlación), 3 y 4 patas, cuota real si existe,
 // ordenados por VALOR (edge combinado = prob. del modelo − prob. implícita del pago).
 function buildParlays(games) {
-  // Mejor pata por juego: la de mayor edge entre picks con prob >= 55%
+  // Pata del juego: la de mayor VALOR (byValue), sin piso de probabilidad.
   const cand=[];
   games.forEach(g=>{
-    // Pata del juego: la de mayor EDGE, sin piso de probabilidad.
     const elig=(g.allPicks||[]).filter(Boolean);
     if(!elig.length) return;
-    const best=elig.reduce((a,b)=>((b.edge??-1)>(a.edge??-1))?b:a);
+    const best=elig.slice().sort(byValue)[0];
     cand.push({...best, matchup:`${g.away} @ ${g.home}`, dec: best.price!=null?amDec(best.price):1/Math.max(best.prob,.01)});
   });
-  cand.sort((a,b)=>b.edge-a.edge);
+  cand.sort(byValue);
   const pool=cand.slice(0,8);   // top 8 por valor, para limitar combinaciones
   const out=[];
   const combos=(k)=>{ const res=[],rec=(s,acc)=>{ if(acc.length===k){res.push(acc.slice());return;} for(let i=s;i<pool.length;i++){acc.push(pool[i]);rec(i+1,acc);acc.pop();} }; rec(0,[]); return res; };
@@ -3170,7 +3210,12 @@ function buildParlays(games) {
     const realOdds=legs.every(l=>l.price!=null);       // ¿todas tienen cuota de casa?
     out.push({legs,cp,dec,edge:cp-1/dec,realOdds,type:`${k} patas`});
   });});
-  return out.sort((a,b)=>b.edge-a.edge||b.cp-a.cp).slice(0,6);
+  // Mismo criterio de niveles: primero los parlays con cuota REAL en TODAS las patas,
+  // porque son los únicos cuyo edge se puede medir. Sin cuotas, cada pata usa
+  // dec = 1/prob, así que dec combinada = 1/cp y el edge sale 0 para todos por igual:
+  // ordenar por ese "edge" era, otra vez, ordenar por probabilidad.
+  return out.sort((a,b)=> (Number(b.realOdds)-Number(a.realOdds)) ||
+    (a.realOdds ? b.edge-a.edge : b.cp-a.cp)).slice(0,6);
 }
 
 function renderParlays(parlays) {
@@ -3222,9 +3267,14 @@ function renderPitchers(games) {
     return {line, over, modelP, fair:BREAKEVEN, price:null, edge, ev:null, mkt:false, rec:edge>=K_MIN_EDGE_NOMKT};
   };
   // Rankea por VALOR: EV con línea de casa (o edge vs breakeven sin ella). Nunca por probabilidad.
-  const scoreOf = e => !e||e.short ? -1 : (e.ev!=null?e.ev:e.edge);
+  // Misma regla de 3 niveles: con línea de casa y EV positivo primero (valor medible),
+  // después los que no tienen línea por probabilidad, y al final los de EV negativo.
+  // Antes competían EV (~±0.05) contra "prob − 0.524" (~±0.15) en la misma lista.
+  const kTier = e => (!e||e.short) ? 3 : (e.mkt ? (e.ev>0?0:2) : 1);
+  const kSort = (a,b) => { const ta=kTier(a.e), tb=kTier(b.e);
+    return (ta-tb) || (ta===1 ? (b.e.modelP??0)-(a.e.modelP??0) : (b.e.ev??-1)-(a.e.ev??-1)); };
   const topPitchers = pitchers.map(p=>({p,e:kEval(p)})).filter(x=>x.e)
-    .sort((a,b)=>scoreOf(b.e)-scoreOf(a.e)).slice(0,5);
+    .sort(kSort).slice(0,5);
   propsPitcher=[];   // recolectar picks de Ks a guardar (solo del top mostrado)
 
   if(!topPitchers.length){ $('pitchers-area').innerHTML='<div class="empty">Corre el análisis primero.</div>'; return; }
@@ -3376,14 +3426,12 @@ function renderBatters(batData) {
         // NO se mezcla "prob - breakeven" con el edge real: son escalas distintas y el
         // sesgo se voltea por categoría (en Hit vale ~+0.18 y en HR ~-0.38 frente a un
         // edge de mercado de ~±0.05), así que el orden salía al revés en cada tarjeta.
-        const evOf = r => { const e = cat.tag ? cat.tag(r) : null; return (e && e.edge>0) ? e : null; };
-        const top2 = [...pool].sort((a,b)=>{
-          const ea=evOf(a), eb=evOf(b);
-          if(ea&&eb) return eb.edge-ea.edge;                   // ambos con línea → mayor edge
-          if(ea) return -1;                                    // con edge real manda sobre sin línea
-          if(eb) return 1;
-          return (cat.metric(b)||0)-(cat.metric(a)||0);        // sin mercado → proyección
-        }).slice(0,2);
+        const bEv   = r => cat.tag ? cat.tag(r) : null;
+        const bTier = r => { const e=bEv(r); return e ? (e.edge>0?0:2) : 1; };   // 0 valor · 1 sin línea · 2 sin valor
+        const bEdge = r => { const e=bEv(r); return e ? e.edge : -1; };
+        const top2 = [...pool].sort((a,b)=>{ const ta=bTier(a), tb=bTier(b);
+          return (ta-tb) || (ta===1 ? (cat.metric(b)||0)-(cat.metric(a)||0)      // sin mercado → proyección
+                                    : bEdge(b)-bEdge(a)); }).slice(0,2);        // con mercado → edge
         top2.forEach(r=>{ const ev=cat.tag?cat.tag(r):null; propsBatter.push({gamePk:r.gamePk,player_id:r.id,player_name:r.name,team:r.team,market:cat.mkt,
           target:typeof cat.target==='function'?cat.target(r):cat.target, side:'over',
           prob:cat.prob?+cat.prob(r).toFixed(3):null, proj:+cat.metric(r).toFixed(2), edge:ev?+ev.edge.toFixed(3):null}); });
@@ -3944,7 +3992,7 @@ async function loadProps(){
     const grp={};
     list.forEach(r=>{ const k=(r.game_date||'')+'|'+(r.market||''); (grp[k]=grp[k]||[]).push(r); });
     const out=[];
-    Object.values(grp).forEach(arr=>{ arr.sort((a,b)=>((b.edge??-1)-(a.edge??-1))||((b.proj??0)-(a.proj??0))); out.push(...arr.slice(0,n)); });
+    Object.values(grp).forEach(arr=>{ arr.sort(byPropValue); out.push(...arr.slice(0,n)); });
     return out.sort((a,b)=> (a.game_date<b.game_date?1:a.game_date>b.game_date?-1:0));
   };
   const pit = topPerMarket(rows.filter(r=>r.kind==='pitcher'), 3);

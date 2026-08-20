@@ -3121,50 +3121,46 @@ function renderPitchers(games) {
     {...g.pitchers.away,team:g.away,teamId:g.awayId,opp:g.home,matchup:`${g.away} @ ${g.home}`,gamePk:g.gamePk},
     {...g.pitchers.home,team:g.home,teamId:g.homeId,opp:g.away,matchup:`${g.away} @ ${g.home}`,gamePk:g.gamePk},
   ]).filter(p=>p.name!=='TBD');
-  // EDGE del lado recomendado. Con línea de casa es el edge real contra el mercado
-  // sin comisión; sin línea, contra el breakeven de -110. Nunca se rankea por
-  // probabilidad pelada.
-  const leanEdge = p => {
-    if(!p.id) return -1;
-    const l = p.kMkt ? p.kMkt.line : p.kLine;
-    if(p.kMkt && l<3.5) return -1;                // salida corta/opener: el modelo no aplica
-    const over = p.kExp>=l;
-    const pr = over ? poissonOver(p.kExp,l) : 1-poissonOver(p.kExp,l);
-    if(p.kMkt) return pr - (over ? p.kMkt.fairOver : p.kMkt.fairUnder);
-    return pr - BREAKEVEN;
+  // Evalúa el pick de Ks: LADO por EDGE (no por probabilidad) y EV real vs el precio.
+  // Un under a -450 necesita prob. muy alta para pasar el EV mínimo → deja de recomendar "grinds".
+  const K_MIN_EV=0.01, K_MIN_EDGE_NOMKT=0.02;
+  const kEval = p => {
+    if(!p.id) return null;
+    const mkt=p.kMkt, line=mkt?mkt.line:p.kLine;
+    if(mkt && line<3.5) return {line, short:true, rec:false};   // opener/salida corta
+    const mOver=poissonOver(p.kExp,line);
+    if(mkt){
+      const eO=mOver-mkt.fairOver, eU=(1-mOver)-mkt.fairUnder, over=eO>=eU;   // lado con MÁS edge
+      const modelP=over?mOver:1-mOver, fair=over?mkt.fairOver:mkt.fairUnder, price=over?mkt.priceOver:mkt.priceUnder;
+      const edge=modelP-fair, ev=modelP*amDec(price)-1;                       // EV real (cuenta el precio)
+      return {line, over, modelP, fair, price, edge, ev, mkt:true, rec:ev>=K_MIN_EV};
+    }
+    const over=mOver>=.5, modelP=over?mOver:1-mOver, edge=modelP-BREAKEVEN;    // sin mercado: vs breakeven
+    return {line, over, modelP, fair:BREAKEVEN, price:null, edge, ev:null, mkt:false, rec:edge>=K_MIN_EDGE_NOMKT};
   };
-  // Los 5 abridores de MAYOR EDGE de la jornada
-  const topPitchers = pitchers.map(p=>({p,e:leanEdge(p)})).sort((a,b)=>b.e-a.e).slice(0,5).map(x=>x.p);
+  // Rankea por VALOR: EV con línea de casa (o edge vs breakeven sin ella). Nunca por probabilidad.
+  const scoreOf = e => !e||e.short ? -1 : (e.ev!=null?e.ev:e.edge);
+  const topPitchers = pitchers.map(p=>({p,e:kEval(p)})).filter(x=>x.e)
+    .sort((a,b)=>scoreOf(b.e)-scoreOf(a.e)).slice(0,5);
   propsPitcher=[];   // recolectar picks de Ks a guardar (solo del top mostrado)
 
   if(!topPitchers.length){ $('pitchers-area').innerHTML='<div class="empty">Corre el análisis primero.</div>'; return; }
-  $('pitchers-area').innerHTML=`<div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los <b>5 abridores con mayor edge</b> en ponches (lado recomendado) de la jornada.</div>`+topPitchers.map(p=>{
+  $('pitchers-area').innerHTML=`<div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los <b>5 abridores con mayor valor (EV)</b> en ponches · lado elegido por <b>edge</b>, no por probabilidad · solo se marca <b>apostable</b> si el EV supera el mínimo (así deja de sugerir unders caros tipo -450).</div>`+topPitchers.map(({p,e})=>{
     const mkt=p.kMkt;
-    let line, lineSrc, rec, recColor, badge, sub;
-    // Pick de Ks a guardar: línea real si existe, si no la del modelo; lado = over si proyección > línea
-    if(p.id){ const l=mkt?mkt.line:p.kLine, over=p.kExp>=l, pr=over?poissonOver(p.kExp,l):1-poissonOver(p.kExp,l);
-      // Edge vs la línea de casa sin comisión; sin línea, contra el breakeven de -110
-      const kEdge=(mkt&&l>=3.5)?+(pr-(over?mkt.fairOver:mkt.fairUnder)).toFixed(3):+(pr-BREAKEVEN).toFixed(3);
-      // Se guardan los 5 mostrados, que ya vienen seleccionados por edge
-      propsPitcher.push({gamePk:p.gamePk,player_id:p.id,player_name:p.name,team:p.team,market:'Ks',target:l,side:over?'over':'under',prob:+pr.toFixed(3),proj:p.kExp,edge:kEdge}); }
-    if(mkt){
-      line=mkt.line; lineSrc='casa';
-      if(line<3.5){
-        // Línea muy baja = salida corta/opener: el modelo (que asume abridor completo) no aplica
-        rec='—'; recColor='var(--text3)';
-        badge=`casa ${line}K`;
-        sub=`Línea de casa ${line}K · Mercado: Over ${pct(mkt.fairOver)} / Under ${pct(mkt.fairUnder)} · ⚠ salida corta (proyección del modelo no aplica)`;
-      } else {
-        const mOver=poissonOver(p.kExp,line), over=mOver>=.5;
-        const modelP=over?mOver:1-mOver, fair=over?mkt.fairOver:mkt.fairUnder, price=over?mkt.priceOver:mkt.priceUnder;
-        const edge=modelP-fair, stake=edge>0?stakePct(modelP,price):0;
-        rec=over?'OVER':'UNDER'; recColor=edge>0?(over?'var(--green)':'var(--red)'):'var(--text3)';  // sin valor => neutro
-        badge=`${rec} ${line}K ${amFmt(price)}`;
-        sub=`Proy ${p.kExp}K · Modelo ${pct(modelP)} vs Mercado ${pct(fair)} · edge ${edge>=0?'+':''}${(edge*100).toFixed(1)}%${stake>0?` · apostar ${stake}%`:''}`;
-      }
+    let line=e.line, lineSrc=mkt?'casa':'modelo', rec, recColor, badge, sub;
+    // Guarda el pick con el LADO por edge (coincide con lo mostrado)
+    if(!e.short) propsPitcher.push({gamePk:p.gamePk,player_id:p.id,player_name:p.name,team:p.team,market:'Ks',target:e.line,side:e.over?'over':'under',prob:+e.modelP.toFixed(3),proj:p.kExp,edge:+e.edge.toFixed(3)});
+    if(mkt && e.short){
+      rec='—'; recColor='var(--text3)'; badge=`casa ${line}K`;
+      sub=`Línea de casa ${line}K · Mercado: Over ${pct(mkt.fairOver)} / Under ${pct(mkt.fairUnder)} · ⚠ salida corta (proyección del modelo no aplica)`;
+    } else if(mkt){
+      const stake=e.rec?stakePct(e.modelP,e.price):0;
+      rec=e.over?'OVER':'UNDER';
+      recColor=e.rec?(e.over?'var(--green)':'var(--red)'):'var(--text3)';   // sin valor apostable => neutro
+      badge=`${rec} ${line}K ${amFmt(e.price)}`;
+      sub=`Proy ${p.kExp}K · Modelo ${pct(e.modelP)} vs Mercado ${pct(e.fair)} · edge ${e.edge>=0?'+':''}${(e.edge*100).toFixed(1)}% · EV ${e.ev>=0?'+':''}${(e.ev*100).toFixed(1)}%${e.rec?` · apostar ${stake}%`:` · <span style="color:var(--rtx)">no apostable (EV bajo / precio caro)</span>`}`;
     } else {
-      line=p.kLine; lineSrc='modelo'; rec='proy'; recColor='var(--text3)';
-      badge=`~${p.kExp}K`;
+      rec='proy'; recColor='var(--text3)'; badge=`~${p.kExp}K`;
       sub=`Proyección del modelo: ${p.kExp}K · sin línea de casa`;
     }
     return `<div class="card">

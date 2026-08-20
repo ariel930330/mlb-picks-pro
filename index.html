@@ -1137,11 +1137,23 @@ function computePicks(data) {
   picks.push(f5totPick);
   // Spread F5 (hándicap ±0.5 de las primeras 5): favorito -0.5 = gana F5; dog +0.5 = gana o empata F5.
   // El diferencial de 5 innings escala la SD por sqrt(5/9) respecto al juego completo.
-  const F5_SD=RUN_SD*Math.sqrt(5/9), f5hMargin=F5_SD*probit(f5hwp), f5favHome=f5hwp>=.5;
-  const f5cover=f5favHome?normOver(f5hMargin,F5_SD,0.5):normOver(-f5hMargin,F5_SD,0.5);   // prob. favorito -0.5
-  picks.push(f5cover>=.5
-    ? {cat:'Spread F5',main:`${f5fav} -0.5 (F5)`,sub:`${pct(f5cover)} gana las primeras 5`,prob:f5cover,edge:+(f5cover-BREAKEVEN).toFixed(3)}
-    : {cat:'Spread F5',main:`${f5favHome?away:home} +0.5 (F5)`,sub:`${pct(1-f5cover)} gana o empata F5`,prob:1-f5cover,edge:+((1-f5cover)-BREAKEVEN).toFixed(3)});
+  const F5_SD=RUN_SD*Math.sqrt(5/9), f5hMargin=F5_SD*probit(f5hwpM), f5favHome=f5hwp>=.5;
+  const f5spMkt=odds?.f5spread||null;
+  let f5cover, f5covPick;
+  if(f5spMkt){ // run line F5 real (usa el punto del mercado, ±0.5)
+    const s=f5spMkt, mHomeCover=normOver(f5hMargin,F5_SD,-s.homePoint);   // modelo: home cubre su punto
+    const bHome=blend(mHomeCover,s.fairHomeCover), homeSide=bHome>=.5;
+    const team=homeSide?home:away, pt=homeSide?s.homePoint:s.awayPoint, price=homeSide?s.priceHome:s.priceAway;
+    const prob=homeSide?bHome:1-bHome, fair=homeSide?s.fairHomeCover:s.fairAwayCover, mRaw=homeSide?mHomeCover:1-mHomeCover;
+    f5cover=f5favHome?(s.homePoint<0?bHome:1-bHome):(s.homePoint<0?1-bHome:bHome);   // prob. favorito -0.5 (para la tira)
+    f5covPick={cat:'Spread F5',main:`${team} ${pt>0?'+':''}${pt} (F5) ${amFmt(price)}`,sub:`Modelo ${pct(mRaw)} → ${pct(prob)} vs Mercado ${pct(fair)}`,prob,edge:+(prob-fair).toFixed(3),bEdge:+(mRaw-fair).toFixed(3),mkt:true,price,fair};
+  } else {
+    f5cover=f5favHome?normOver(f5hMargin,F5_SD,0.5):normOver(-f5hMargin,F5_SD,0.5);   // prob. favorito -0.5 (modelo)
+    f5covPick=f5cover>=.5
+      ? {cat:'Spread F5',main:`${f5fav} -0.5 (F5)`,sub:`${pct(f5cover)} gana las primeras 5`,prob:f5cover,edge:+(f5cover-BREAKEVEN).toFixed(3)}
+      : {cat:'Spread F5',main:`${f5favHome?away:home} +0.5 (F5)`,sub:`${pct(1-f5cover)} gana o empata F5`,prob:1-f5cover,edge:+((1-f5cover)-BREAKEVEN).toFixed(3)};
+  }
+  picks.push(f5covPick);
 
   // ── Mercados extra (proyección del modelo, lado más probable) ──
   const addP=(cat,main,sub,prob)=>picks.push({cat,main,sub,prob,edge:+(prob-BREAKEVEN).toFixed(3)});
@@ -1186,6 +1198,7 @@ function computePicks(data) {
     f5:{ total:f5total, line:f5line, overP:f5Over, favTeam:f5fav, favProb:f5favP, favHome:f5favHome, cover:f5cover,
          totalMkt:!!f5tMkt, totalEdge:f5tMkt?f5totPick.edge:null,
          mlMkt:!!f5mlMkt, mlEdge:f5mlMkt?f5mlPick.edge:null,
+         coverMkt:!!f5spMkt, coverEdge:f5spMkt?f5covPick.edge:null,
          favML: f5mlMkt ? (f5hwp>=.5?amFmt(f5mlMkt.priceHome):amFmt(f5mlMkt.priceAway)) : p2ml(f5favP) },
     pitchers:{away:{id:awayPitcherId,name:data.awayPitcherName||'TBD',era:+apERA0.toFixed(2),fip:+apFIP0.toFixed(2),xfip:+apXFIP0.toFixed(2),xera:data.awayPXera?+(+data.awayPXera).toFixed(2):null,whiff:aD?.whiff??null,chase:aD?.chase??null,shape:data.awayPShape,k9:+apK90.toFixed(1),kExp:apKExp,kLine:apKLine,kMkt:aKMkt,rating:+aps.toFixed(3),luck:apLuck,kMatch:data.awayKMatch??null,kMatchK:data.awayKMatchK??null,kMatchWh:data.awayKMatchWh??null},
               home:{id:homePitcherId,name:data.homePitcherName||'TBD',era:+hpERA0.toFixed(2),fip:+hpFIP0.toFixed(2),xfip:+hpXFIP0.toFixed(2),xera:data.homePXera?+(+data.homePXera).toFixed(2):null,whiff:hD?.whiff??null,chase:hD?.chase??null,shape:data.homePShape,k9:+hpK90.toFixed(1),kExp:hpKExp,kLine:hpKLine,kMkt:hKMkt,rating:+hps.toFixed(3),luck:hpLuck,kMatch:data.homeKMatch??null,kMatchK:data.homeKMatchK??null,kMatchWh:data.homeKMatchWh??null}},
@@ -1689,8 +1702,8 @@ const saveOddsKey = v => { v=v.trim(); v?localStorage.setItem('odds_api_key',v):
 let oddsRemaining = null;  // peticiones restantes del plan (header x-requests-remaining)
 const getKProps = () => localStorage.getItem('kprops_off')!=='1';   // props de Ks activas por defecto
 const saveKProps = on => on?localStorage.removeItem('kprops_off'):localStorage.setItem('kprops_off','1');
-const getBProps = () => localStorage.getItem('bprops_on')==='1';    // props de bateadores APAGADAS por defecto (gastan cuota)
-const saveBProps = on => on?localStorage.setItem('bprops_on','1'):localStorage.removeItem('bprops_on');
+const getBProps = () => localStorage.getItem('bprops_off')!=='1';   // props de bateadores ACTIVAS por defecto (plan de pago)
+const saveBProps = on => on?localStorage.removeItem('bprops_off'):localStorage.setItem('bprops_off','1');
 const getBvPOn  = () => localStorage.getItem('bvp_on')==='1';       // BvP APAGADO por defecto (muchas llamadas)
 const saveBvPOn = on => on?localStorage.setItem('bvp_on','1'):localStorage.removeItem('bvp_on');
 const getSplitsOn = () => localStorage.getItem('splits_on')==='1';  // splits del bateador vs L/R APAGADO por defecto
@@ -1777,7 +1790,31 @@ async function getBatterProps(key, events) {
   return byBatter;
 }
 
-// Devuelve un mapa { "homeNorm|awayNorm": {ml,total,spread} } con consenso entre casas.
+// Props de F5 (primeras 5 entradas): ML, total y run line REALES. 1 petición por partido.
+async function getF5Odds(key, events) {
+  const byGame = {};
+  for (const ev of events) {
+    try {
+      const url = `${ODDS_BASE}/sports/baseball_mlb/events/${ev.id}/odds?apiKey=${key}&regions=us&markets=h2h_1st_5_innings,totals_1st_5_innings,spreads_1st_5_innings&oddsFormat=american`;
+      const r = await fetch(url); if (!r.ok) continue;
+      const rem = r.headers.get('x-requests-remaining'); if (rem != null) oddsRemaining = rem;
+      const d = await r.json(); const home = ev.home_team, away = ev.away_team;
+      const mlP = [], totP = [], spP = [];
+      (d.bookmakers || []).forEach(bk => (bk.markets || []).forEach(mk => {
+        if (mk.key === 'h2h_1st_5_innings') { let h, a; mk.outcomes.forEach(o => { if (o.name === home) h = o.price; else if (o.name === away) a = o.price; }); if (h != null && a != null) mlP.push({ h, a }); }
+        else if (mk.key === 'totals_1st_5_innings') { let ov, un, pt; mk.outcomes.forEach(o => { if (o.name === 'Over') { ov = o.price; pt = o.point; } else if (o.name === 'Under') un = o.price; }); if (ov != null && un != null) totP.push({ point: pt, over: ov, under: un }); }
+        else if (mk.key === 'spreads_1st_5_innings') { let hp, hpr, ap, apr; mk.outcomes.forEach(o => { if (o.name === home) { hp = o.point; hpr = o.price; } else if (o.name === away) { ap = o.point; apr = o.price; } }); if (hpr != null && apr != null) spP.push({ hp, hpr, ap, apr }); }
+      }));
+      const o = {};
+      if (mlP.length) { const fh = avg(mlP.map(p => { const ih = amProb(p.h), ia = amProb(p.a); return ih / (ih + ia); })); o.f5ml = { fairHome: fh, fairAway: 1 - fh, priceHome: bestAm(mlP.map(p => p.h)), priceAway: bestAm(mlP.map(p => p.a)) }; }
+      if (totP.length) { const fo = avg(totP.map(p => { const io = amProb(p.over), iu = amProb(p.under); return io / (io + iu); })); o.f5total = { point: median(totP.map(p => p.point)), fairOver: fo, fairUnder: 1 - fo, priceOver: bestAm(totP.map(p => p.over)), priceUnder: bestAm(totP.map(p => p.under)) }; }
+      if (spP.length) { const fhc = avg(spP.map(p => { const ih = amProb(p.hpr), ia = amProb(p.apr); return ih / (ih + ia); })); o.f5spread = { homePoint: median(spP.map(p => p.hp)), awayPoint: median(spP.map(p => p.ap)), fairHomeCover: fhc, fairAwayCover: 1 - fhc, priceHome: bestAm(spP.map(p => p.hpr)), priceAway: bestAm(spP.map(p => p.apr)) }; }
+      if (Object.keys(o).length) byGame[normName(home) + '|' + normName(away)] = o;
+    } catch {}
+  }
+  return byGame;
+}
+// Devuelve un mapa { "homeNorm|awayNorm": {ml,total,spread,f5*} } con consenso entre casas.
 // Cada mercado trae probabilidades JUSTAS (sin vig) y la mejor línea disponible.
 async function getOdds(date) {
   const key = getOddsKey();
@@ -1823,6 +1860,9 @@ async function getOdds(date) {
       const key = normName(home) + '|' + normName(away);
       (map[key] = map[key] || []).push(o);   // array: soporta doubleheaders (mismo matchup 2 veces)
     }
+    // F5 real (ML/total/run line de las primeras 5) → se fusiona en cada juego
+    const f5map = await getF5Odds(key, events);
+    for (const k in map) { const f5 = f5map[k]; if (f5) map[k].forEach(o => Object.assign(o, f5)); }
     // Props de ponches (línea real de Ks por pitcher), si están activadas
     const kprops = getKProps() ? await getStrikeoutProps(key, events) : {};
     // Props de bateadores (hits/bases/HR), si están activadas
@@ -2324,10 +2364,12 @@ async function getMlbOddsIO(date){
   }catch(e){ console.warn('mlb io:',e.message); }
   return {map, kprops, bprops};
 }
-// Dispatcher de cuotas MLB: odds-api.io (500/día) si hay su key; si no, The Odds API.
+// Dispatcher de cuotas MLB: prefiere The Odds API (pago) por su cobertura de props
+// (incl. Total Bases) y F5 completo; si no hay su key, cae a odds-api.io (500/día).
 async function getMlbOdds(date){
-  if(getOddsIoKey()) return getMlbOddsIO(date);   // {map, kprops, bprops}
-  return getOdds(date);
+  if(getOddsKey())   return getOdds(date);        // The Odds API: juegos + props (TB) + F5
+  if(getOddsIoKey()) return getMlbOddsIO(date);   // odds-api.io (respaldo, cobertura delgada)
+  return {map:{}, kprops:{}, bprops:{}};
 }
 
 // ── Fútbol: UI (switch de deporte, análisis, render) ──────────────────────────
@@ -3021,12 +3063,12 @@ function renderPicks(games) {
         const dog=f.favHome?g.away:g.home, overSide=f.overP>=.5, ovP=overSide?f.overP:1-f.overP;
         const eTag=e=>e!=null?`<div class="f5-edge" style="color:${e>0?'var(--gtx)':'var(--text3)'}">edge ${e>=0?'+':''}${(e*100).toFixed(1)}%</div>`:'';
         const cell=(lbl,main,prob,hot,edge)=>`<div class="f5-cell"><div class="f5-lbl">${lbl}</div><div class="f5-main">${main}</div><div class="f5-prob"${hot?' style="color:var(--gtx)"':''}>${pct(prob)}</div>${eTag(edge)}</div>`;
-        const anyMkt=f.totalMkt||f.mlMkt;
+        const anyMkt=f.totalMkt||f.mlMkt||f.coverMkt;
         return `<div class="f5-strip">
-          <div class="f5-hd">⏱ F5 · primeras 5 entradas <span style="color:var(--text3);font-weight:400">· ${anyMkt?'Total/ML vs mercado real · run line = modelo':'proyección del modelo (sin cuota de mercado)'}</span></div>
+          <div class="f5-hd">⏱ F5 · primeras 5 entradas <span style="color:var(--text3);font-weight:400">· ${anyMkt?'vs mercado real (edge)':'proyección del modelo (sin cuota de mercado)'}</span></div>
           <div class="f5-grid">
             ${cell('Total', `${overSide?'OVER':'UNDER'} ${f.line}`, ovP, ovP>=.55, f.totalMkt?f.totalEdge:null)}
-            ${cell('Run line', `${f.favTeam} -0.5`, f.cover, f.cover>=.55)}
+            ${cell('Run line', `${f.favTeam} -0.5`, f.cover, f.cover>=.55, f.coverMkt?f.coverEdge:null)}
             ${cell('Run line', `${dog} +0.5`, 1-f.cover, (1-f.cover)>=.55)}
             ${cell('ML F5', `${f.favTeam} ${f.favML}`, f.favProb, f.favProb>=.58, f.mlMkt?f.mlEdge:null)}
           </div></div>`;

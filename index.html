@@ -3025,24 +3025,29 @@ async function savePropPicks(date){
 }
 
 // El pick de MAYOR edge del juego (busca en TODOS los mercados, no solo el top-3 por probabilidad)
-const bestEdgePick = g => (g.allPicks||g.picks||[]).filter(Boolean).slice().sort(byValue)[0];
+// Solo picks CON cuota real: es el único pick que se puede calificar de verdad.
+const bestEdgePick = g => (g.allPicks||g.picks||[]).filter(hasPrice).sort(byValue)[0];
 async function savePredictions(date, games) {
   for(const g of games){
+    // Si el juego no trae NINGUNA cuota real, la fila igual se guarda: los campos de
+    // features y home_won son los que alimentan el reentrenamiento y el historial, y
+    // no dependen del pick. Lo que va vacío es el pick, para que nada sin cuota se
+    // cuele al historial ni se califique como si fuera una recomendación.
     const top = bestEdgePick(g);
-    if(!top) continue;
     const row = {
       game_date: date, away:g.away, home:g.home, venue:g.venue||'',
       fav: g.homeWP>=g.awayWP?g.home:g.away,
       fav_prob: +Math.max(g.homeWP,g.awayWP).toFixed(4),
-      confidence: top.conf||confOf(top),
+      confidence: top?(top.conf||confOf(top)):'',
       predicted_total: g.total||0,
       home_wp:+g.homeWP.toFixed(4), away_wp:+g.awayWP.toFixed(4),
       home_ml:g.homeML||'', away_ml:g.awayML||'',
-      top_pick_cat:top.cat||'', top_pick_main:top.main||'',
-      top_pick_prob:+(top.prob||0).toFixed(4), top_pick_edge:+(top.edge||0).toFixed(4),
-      top_pick_price: top.price??null, top_pick_fair: top.fair!=null?+top.fair.toFixed(4):null,
+      top_pick_cat:top?.cat||'', top_pick_main:top?.main||'',
+      top_pick_prob:top?+(top.prob||0).toFixed(4):null, top_pick_edge:top?+(top.edge||0).toFixed(4):null,
+      top_pick_price: top?.price??null, top_pick_fair: top?.fair!=null?+top.fair.toFixed(4):null,
       features_json: g.features?JSON.stringify(g.features):null,   // para reentrenar el modelo
-      all_picks_json: JSON.stringify(g.picks.map(p=>({cat:p.cat,main:p.main,prob:p.prob,edge:p.edge,conf:p.conf}))),
+      // Solo los picks CON cuota entran al historial guardado.
+      all_picks_json: JSON.stringify((g.picks||[]).filter(hasPrice).map(p=>({cat:p.cat,main:p.main,prob:p.prob,edge:p.edge,conf:p.conf,price:p.price,fair:p.fair}))),
     };
     const {data:ex} = await sb.from('predictions').select('id,result').eq('game_date',date).eq('away',g.away).eq('home',g.home);
     if(ex?.length){ if(!ex[0].result) await sb.from('predictions').update(row).eq('id',ex[0].id); }
@@ -3070,10 +3075,13 @@ const confOf = p => p.prob>=.58?'High':p.prob>=.53?'Medium':'Low';
 // Máxima variedad: el mejor pick de cada TIPO de mercado (sin repetir), hasta 5,
 // elegido y ordenado con byValue. Sin piso de probabilidad: un underdog con valor
 // real tiene que poder aparecer, y antes el umbral del 58% lo eliminaba siempre.
+// SIN CUOTA NO HAY PICK. Un pick sin precio de casa no se puede evaluar: no se sabe
+// si paga bien o mal, así que no se recomienda. Antes se mostraban igual, con un
+// "edge" que era la probabilidad disfrazada, y por eso enterraban a los picks reales.
 function selectGamePicks(g){
   const byCat={};
   // Excluye los mercados F5 de la lista: ya se muestran siempre en la tira F5 dedicada.
-  (g.allPicks||g.picks||[]).filter(p=>pickPasses(p)&&!/F5/.test(p.cat)).forEach(p=>{ const c=byCat[p.cat]; if(!c||byValue(p,c)<0) byCat[p.cat]=p; });
+  (g.allPicks||g.picks||[]).filter(p=>hasPrice(p)&&pickPasses(p)&&!/F5/.test(p.cat)).forEach(p=>{ const c=byCat[p.cat]; if(!c||byValue(p,c)<0) byCat[p.cat]=p; });
   return Object.values(byCat).sort(byValue).slice(0,5);
 }
 
@@ -3111,10 +3119,10 @@ function renderPicks(games) {
   // orden se cae a probabilidad del modelo. Se avisa fuerte en vez de disimularlo:
   // es la diferencia entre "estos son los de más valor" y "estos son los más probables".
   const nMkt = games.reduce((n,g)=>n+((g.allPicks||g.picks||[]).some(hasPrice)?1:0),0);
-  const aviso = (games.length && !nMkt)
-    ? `<div class="card" style="border-color:var(--rtx);padding:11px 13px;margin-bottom:10px">
-         <div style="font-size:12px;font-weight:800;color:var(--rtx);margin-bottom:4px">⚠ Sin cuotas de casa: no se puede calcular edge</div>
-         <div style="font-size:11px;color:var(--text2);line-height:1.5">Ninguno de los ${games.length} partidos trae precio de mercado, así que estos picks están ordenados por <b>probabilidad del modelo</b>, no por valor. Un favorito muy probable que paga de menos se va a ver arriba igual. Revisa tu API key de The Odds API en ⚙ Ajustes.</div>
+  const aviso = (games.length && nMkt<games.length)
+    ? `<div class="card" style="border-color:${nMkt?'var(--border)':'var(--rtx)'};padding:11px 13px;margin-bottom:10px">
+         <div style="font-size:12px;font-weight:800;color:${nMkt?'var(--text2)':'var(--rtx)'};margin-bottom:4px">${nMkt?`⚠ ${games.length-nMkt} de ${games.length} partidos sin cuotas`:'⚠ Ningún partido trae cuotas de casa'}</div>
+         <div style="font-size:11px;color:var(--text2);line-height:1.5">Sin precio de mercado no hay pick: no se puede saber si algo paga bien o mal, así que esos partidos aparecen sin recomendación. La lectura de convicción de arriba sí se calcula igual.${nMkt?'':' Revisa tu API key de The Odds API en ⚙ Ajustes.'}</div>
        </div>`
     : '';
   const html = games.map(g=>{
@@ -3172,7 +3180,7 @@ function renderPicks(games) {
                 ? `<div class="pick-edge" style="color:var(--text3)" title="Edge ESTIMADO contra el precio típico de este mercado, no contra una cuota real. Es una suposición: sirve para ordenar, no para apostar a ciegas.">est. ${estEdge(p)>=0?'+':''}${(estEdge(p)*100).toFixed(1)}%</div>`
                 : `<div class="pick-edge" style="color:var(--text3)" title="Sin cuota de casa y sin precio típico de referencia: no hay edge que calcular.">sin cuota</div>`)}${p.stake>0?`<div class="pick-stake">apostar ${p.stake}%</div>`:''}</div>
           </div>`;
-        }).join(''):'<div style="padding:10px 12px;font-size:11px;color:var(--text3)">Sin picks de mercado de alta confianza — la lectura de edge de arriba es la señal.</div>'}
+        }).join(''):`<div style="padding:10px 12px;font-size:11px;color:var(--text3)">${(g.allPicks||g.picks||[]).some(hasPrice)?'Ningún pick cumple el filtro seleccionado.':'<b>Sin cuotas de casa para este partido</b> — no hay pick. La lectura de convicción de arriba sí aplica.'}</div>`}
       </div>
       ${g.f5?(f=>{
         const overSide=f.overP>=.5, ovP=overSide?f.overP:1-f.overP;
@@ -3231,13 +3239,15 @@ function copyPicks(){
 // Reglas: 1 pata por partido (sin correlación), 3 y 4 patas, cuota real si existe,
 // ordenados por VALOR (edge combinado = prob. del modelo − prob. implícita del pago).
 function buildParlays(games) {
-  // Pata del juego: la de mayor VALOR (byValue), sin piso de probabilidad.
+  // Pata del juego: la de mayor VALOR, y SOLO con cuota real. Sin precio no se puede
+  // calcular el pago combinado ni el edge del parlay: antes se inventaba dec = 1/prob,
+  // lo que daba edge 0 en todos y los ordenaba por probabilidad combinada.
   const cand=[];
   games.forEach(g=>{
-    const elig=(g.allPicks||[]).filter(Boolean);
+    const elig=(g.allPicks||[]).filter(hasPrice);
     if(!elig.length) return;
-    const best=elig.slice().sort(byValue)[0];
-    cand.push({...best, matchup:`${g.away} @ ${g.home}`, dec: best.price!=null?amDec(best.price):1/Math.max(best.prob,.01)});
+    const best=elig.sort(byValue)[0];
+    cand.push({...best, matchup:`${g.away} @ ${g.home}`, dec: amDec(best.price)});
   });
   cand.sort(byValue);
   const pool=cand.slice(0,8);   // top 8 por valor, para limitar combinaciones
@@ -3249,16 +3259,12 @@ function buildParlays(games) {
     const realOdds=legs.every(l=>l.price!=null);       // ¿todas tienen cuota de casa?
     out.push({legs,cp,dec,edge:cp-1/dec,realOdds,type:`${k} patas`});
   });});
-  // Mismo criterio de niveles: primero los parlays con cuota REAL en TODAS las patas,
-  // porque son los únicos cuyo edge se puede medir. Sin cuotas, cada pata usa
-  // dec = 1/prob, así que dec combinada = 1/cp y el edge sale 0 para todos por igual:
-  // ordenar por ese "edge" era, otra vez, ordenar por probabilidad.
-  return out.sort((a,b)=> (Number(b.realOdds)-Number(a.realOdds)) ||
-    (a.realOdds ? b.edge-a.edge : b.cp-a.cp)).slice(0,6);
+  // Todas las patas traen cuota real, así que el edge combinado es medible: orden directo.
+  return out.sort((a,b)=>b.edge-a.edge||b.cp-a.cp).slice(0,6);
 }
 
 function renderParlays(parlays) {
-  if(!parlays.length){$('parlays-area').innerHTML='<div class="empty">No hay suficientes picks de valor (se necesitan ≥3 partidos con pick sólido).</div>';return;}
+  if(!parlays.length){$('parlays-area').innerHTML='<div class="empty">No hay suficientes patas con cuota real (se necesitan ≥3 partidos con precio de casa).<br>Sin cuota no hay pick, y sin pick no hay parlay.</div>';return;}
   $('parlays-area').innerHTML=`<div style="font-size:10px;color:var(--text3);margin-bottom:10px">1 pata por partido (sin correlación) · ordenados por <b>valor</b> (edge) · pago con cuota real cuando existe.</div>`+parlays.map((p,i)=>{
     const dec=p.dec, odds=dec>=2?`+${Math.round((dec-1)*100)}`:String(Math.round(-100/(dec-1))), pay=Math.round((dec-1)*100);
     const eC=p.edge>0?'var(--gtx)':'var(--text3)';
@@ -3306,22 +3312,15 @@ function renderPitchers(games) {
     const over=mOver>=.5, modelP=over?mOver:1-mOver, edge=+(modelP-KS_REF_BE).toFixed(3);
     return {line, over, modelP, fair:null, refBe:KS_REF_BE, price:null, edge, ev:null, mkt:false, rec:edge>=K_MIN_EDGE_NOMKT};
   };
-  // Rankea por VALOR: EV con línea de casa (o edge vs breakeven sin ella). Nunca por probabilidad.
-  // Misma regla de 3 niveles: con línea de casa y EV positivo primero (valor medible),
-  // después los que no tienen línea por probabilidad, y al final los de EV negativo.
-  // Antes competían EV (~±0.05) contra "prob − 0.524" (~±0.15) en la misma lista.
-  const kTier = e => (!e||e.short) ? 3 : (e.mkt ? (e.ev>0?0:2) : 1);
-  // Sin línea de casa: edge estimado contra el precio típico de un O/U de Ks (-115),
-  // no contra la probabilidad pelada ni contra un -110 que ese mercado no cobra.
-  const kEst  = e => (e?.modelP??0) - KS_REF_BE;
-  const kSort = (a,b) => { const ta=kTier(a.e), tb=kTier(b.e);
-    return (ta-tb) || (ta===1 ? kEst(b.e)-kEst(a.e) : (b.e.ev??-1)-(a.e.ev??-1)); };
-  const topPitchers = pitchers.map(p=>({p,e:kEval(p)})).filter(x=>x.e)
+  // SIN LÍNEA DE CASA NO HAY PICK: solo abridores con mercado real de ponches.
+  // Se ordenan por EV contra el precio; los de EV negativo quedan al final.
+  const kSort = (a,b) => ((a.e.ev>0?0:1)-(b.e.ev>0?0:1)) || (b.e.ev-a.e.ev);
+  const topPitchers = pitchers.map(p=>({p,e:kEval(p)})).filter(x=>x.e&&x.e.mkt&&!x.e.short)
     .sort(kSort).slice(0,5);
   propsPitcher=[];   // recolectar picks de Ks a guardar (solo del top mostrado)
 
-  if(!topPitchers.length){ $('pitchers-area').innerHTML='<div class="empty">Corre el análisis primero.</div>'; return; }
-  $('pitchers-area').innerHTML=`<div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los <b>5 abridores con mayor valor (EV)</b> en ponches · lado elegido por <b>edge</b>, no por probabilidad · solo se marca <b>apostable</b> si el EV supera el mínimo (así deja de sugerir unders caros tipo -450).</div>`+topPitchers.map(({p,e})=>{
+  if(!topPitchers.length){ $('pitchers-area').innerHTML=`<div class="empty">${allGames.length?'Ningún abridor tiene línea real de ponches en esta jornada.<br>Sin cuota de casa no hay pick: no se puede saber si el precio paga bien.':'Corre el análisis primero.'}</div>`; return; }
+  $('pitchers-area').innerHTML=`<div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los <b>5 abridores con mayor valor (EV)</b> en ponches · solo con <b>línea real de casa</b>: sin cuota no hay pick · lado elegido por <b>edge</b> · solo se marca <b>apostable</b> si el EV supera el mínimo (así deja de sugerir unders caros tipo -450).</div>`+topPitchers.map(({p,e})=>{
     const mkt=p.kMkt;
     let line=e.line, lineSrc=mkt?'casa':'modelo', rec, recColor, badge, sub;
     // Guarda el pick con el LADO por edge (coincide con lo mostrado)
@@ -3423,11 +3422,12 @@ function renderBatters(batData) {
     (g.homeBatters||[]).forEach(b=>{ if(!play(hSet,hAct,hOut,b)) return; const r=mk(b,g.homeOppScore??.5,g.awayPitcher,g.homePlatoon,g.homeOppHand); if(r){r.team=g.home;r.gamePk=g.gamePk;r.conf=!!hSet;rows.push(r);} });
   });
   if(!rows.length){$('batters-area').innerHTML='<div class="empty">Corre el análisis primero.</div>';return;}
-  // Filtro por VALOR, nunca por probabilidad pelada: bateadores con edge de mercado
-  // positivo (línea real de casa) o, en su defecto, matchup favorable.
-  const anyEdge = r => (r.evHits&&r.evHits.edge>0)||(r.evHR&&r.evHR.edge>0)||(r.evTB&&r.evTB.edge>0);
-  const pool = rows.filter(r=> anyEdge(r) || r.tag.t==='favorable');
-  if(!pool.length){$('batters-area').innerHTML='<div class="empty">Ningún bateador con edge de mercado ni matchup favorable en la jornada.</div>';return;}
+  // SIN CUOTA NO HAY PICK: solo bateadores con línea REAL de casa en alguna categoría.
+  // El "matchup favorable" ya no basta: sin precio no se sabe si el prop paga bien,
+  // y un bateador contra un abridor flojo puede estar carísimo en la casa.
+  const anyLine = r => !!(r.evHits||r.evTB||r.evHR);
+  const pool = rows.filter(anyLine);
+  if(!pool.length){$('batters-area').innerHTML='<div class="empty">Ningún bateador tiene línea real de casa en esta jornada.<br>Sin cuota no hay pick: no se puede saber si el precio paga bien.</div>';return;}
 
   const propTag=ev=>ev?`<span class="bt-casa" style="color:${ev.edge>0?'var(--gtx)':'var(--text3)'}">casa ${ev.over?'O':'U'}${ev.line} ${ev.edge>=0?'+':''}${(ev.edge*100).toFixed(0)}%${ev.stake>0?` · ${ev.stake}%`:''}</span>`:'';
   // Cada categoría: los 2 de MAYOR EDGE contra la línea real de casa. mkt/target/prob para el historial.
@@ -3460,24 +3460,19 @@ function renderBatters(batData) {
     </div>`;
   };
   $('batters-area').innerHTML=`
-    <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los 2 de <b>mayor edge (valor)</b> por categoría · contra la <b>línea real de casa</b>; sin línea, ordenados por proyección y siempre detrás de quien sí tiene edge · ajustado por pitcher rival, mano, estadio y clima${rows.some(r=>r.conf)?' · <b style="color:var(--gtx)">✓</b> = titular confirmado':''}${rows.some(r=>!r.conf)?' · <b>sin confirmar</b> = activo y sin lesión, pero la alineación no se publica todavía':''} · <b>se excluyen lesionados y jugadores fuera del roster activo</b>${rows.some(r=>r.evHits||r.evTB||r.evHR)?' · <b>casa</b> = línea real con edge y stake':''}.</div>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los 2 de <b>mayor edge (valor)</b> por categoría, siempre contra la <b>línea real de casa</b> · <b>sin cuota no hay pick</b>: las categorías sin mercado (H+R+RBI, BB) no se muestran · ajustado por pitcher rival, mano, estadio y clima${rows.some(r=>r.conf)?' · <b style="color:var(--gtx)">✓</b> = titular confirmado':''}${rows.some(r=>!r.conf)?' · <b>sin confirmar</b> = activo y sin lesión, pero la alineación no se publica todavía':''} · <b>se excluyen lesionados y jugadores fuera del roster activo</b>.</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px">
       ${cats.map(cat=>{
-        // Orden SIEMPRE por EDGE de mercado. Quien tiene línea real de casa con edge
-        // positivo va primero, de mayor a menor edge; los demás quedan detrás y entre
-        // ellos se ordenan por proyección.
-        // NO se mezcla "prob - breakeven" con el edge real: son escalas distintas y el
-        // sesgo se voltea por categoría (en Hit vale ~+0.18 y en HR ~-0.38 frente a un
-        // edge de mercado de ~±0.05), así que el orden salía al revés en cada tarjeta.
-        const bEv   = r => cat.tag ? cat.tag(r) : null;
-        const bTier = r => { const e=bEv(r); return e ? (e.edge>0?0:2) : 1; };   // 0 valor · 1 sin línea · 2 sin valor
-        const bEdge = r => { const e=bEv(r); return e ? e.edge : -1; };
-        const top2 = [...pool].sort((a,b)=>{ const ta=bTier(a), tb=bTier(b);
-          return (ta-tb) || (ta===1 ? (cat.metric(b)||0)-(cat.metric(a)||0)      // sin mercado → proyección
-                                    : bEdge(b)-bEdge(a)); }).slice(0,2);        // con mercado → edge
-        top2.forEach(r=>{ const ev=cat.tag?cat.tag(r):null; propsBatter.push({gamePk:r.gamePk,player_id:r.id,player_name:r.name,team:r.team,market:cat.mkt,
+        // SIN CUOTA NO HAY PICK: solo entran los que tienen línea real de casa en ESTA
+        // categoría, ordenados por edge de mercado. Las categorías que nunca tienen
+        // mercado (cat.tag null) no se dibujan: no hay nada que recomendar ahí.
+        if(!cat.tag) return '';
+        const conLinea = pool.filter(r=>!!cat.tag(r));
+        if(!conLinea.length) return '';
+        const top2 = conLinea.sort((a,b)=>cat.tag(b).edge-cat.tag(a).edge).slice(0,2);
+        top2.forEach(r=>{ const ev=cat.tag(r); propsBatter.push({gamePk:r.gamePk,player_id:r.id,player_name:r.name,team:r.team,market:cat.mkt,
           target:typeof cat.target==='function'?cat.target(r):cat.target, side:'over',
-          prob:cat.prob?+cat.prob(r).toFixed(3):null, proj:+cat.metric(r).toFixed(2), edge:ev?+ev.edge.toFixed(3):null}); });
+          prob:cat.prob?+cat.prob(r).toFixed(3):null, proj:+cat.metric(r).toFixed(2), edge:+ev.edge.toFixed(3)}); });
         return `<div class="card"><div class="card-hdr"><span class="card-hdr-title">${cat.title}</span></div>${top2.map((r,i)=>row(r,i,cat)).join('')}</div>`;
       }).join('')}
     </div>`;
@@ -4260,7 +4255,11 @@ async function restoreToday() {
   const games = rows.map(r=>{
     let picks=[];
     try{picks=JSON.parse(r.all_picks_json||'[]');}catch{}
-    if(!picks.length&&r.top_pick_main) picks=[{cat:r.top_pick_cat||'',main:r.top_pick_main,prob:r.top_pick_prob||.55,edge:r.top_pick_edge||0,conf:r.confidence||'Medium',sub:''}];
+    if(!picks.length&&r.top_pick_main) picks=[{cat:r.top_pick_cat||'',main:r.top_pick_main,prob:r.top_pick_prob||.55,edge:r.top_pick_edge||0,conf:r.confidence||'Medium',sub:'',price:r.top_pick_price??null,fair:r.top_pick_fair??null}];
+    // Filas guardadas ANTES de este cambio no traen price/fair en all_picks_json, y sin
+    // fair el pick se trata como "sin cuota" y no se muestra. Se recupera lo que sí hay:
+    // si la fila tiene top_pick_fair, se le devuelve al pick que le corresponde.
+    if(r.top_pick_fair!=null) picks.forEach(p=>{ if(p.fair==null&&p.main===r.top_pick_main){ p.fair=r.top_pick_fair; p.price=r.top_pick_price??null; } });
     return {
       away:r.away, home:r.home, awayId:ABBR2ID[r.away], homeId:ABBR2ID[r.home], venue:r.venue||'',
       awayWP:r.away_wp||.5, homeWP:r.home_wp||.5,

@@ -764,16 +764,47 @@ const BREAKEVEN = .524; // breakeven real frente al vig de -110
 // por ser lo más probable del tablero, no por pagar bien).
 //
 // Por eso el orden va en TRES niveles, nunca mezclando escalas:
-//   0. Con cuota real y edge > 0  → por edge, de mayor a menor. Valor verificable.
-//   1. Sin cuota                  → por probabilidad del modelo. No hay edge que medir.
+//   0. Con cuota real y edge > 0  → por edge real, de mayor a menor. Valor verificable.
+//   1. Sin cuota                  → por edge ESTIMADO contra el precio típico del mercado.
 //   2. Con cuota y edge ≤ 0       → hasta el final: sabemos que NO tienen valor.
 //
 // hasPrice se apoya en `fair` (prob. implícita sin comisión), que solo existe
 // cuando el pick se construyó contra una cuota real.
+//
+// ── Precio de REFERENCIA por mercado (nivel 1) ────────────────────────────────
+// El breakeven plano de 0.524 (o sea -110) es falso para casi todos los mercados.
+// El +1.5 no cuesta -110: cuesta como -165. Comparar su 61% contra 52.4% inventaba
+// +8.6% de edge en una apuesta que en realidad va perdiendo, y por eso se llevaba
+// 2 de cada 3 juegos. Aquí va el precio TÍPICO de cada mercado en MLB.
+//
+// Esto es una SUPOSICIÓN, no una medición. Por eso el nivel 1 NUNCA se mezcla con
+// el nivel 0, y en pantalla se marca "est." y no "mkt". Si un día quieres afinar
+// los números, se cambian aquí y nada más aquí.
+const REF_BE = {
+  'Run Line +1.5'    : 0.623,   // ~ -165
+  'Run Line -1.5'    : 0.412,   // ~ +143
+  'Total del partido': 0.524,   // -110
+  'Total de equipo'  : 0.535,   // -115
+  '1er inning'       : 0.556,   // ~ -125 (NRFI/YRFI)
+  'F5 Total'         : 0.535,   // -115
+  'Spread F5'        : 0.535,   // -115
+};
+const KS_REF_BE = 0.535;        // over/under de ponches, -115 típico
+// En el Money Line el precio NO es fijo: escala con la propia probabilidad, así que
+// no existe un número de referencia. Se asume mercado eficiente (overround ~4.5% en
+// un ML de MLB, la mitad por lado) y queda en -2.2%. Traducido: "sin cuota no puedo
+// afirmar que esto tenga valor" — que es exactamente la verdad.
+const ML_VIG = 0.022;
+const estEdge = p => {
+  if(!p) return null;
+  if(p.cat==='Money Line'||p.cat==='ML F5') return -ML_VIG;
+  const be = REF_BE[p.cat];
+  return be!=null ? +(p.prob-be).toFixed(3) : null;
+};
 const hasPrice = p => !!p && p.fair != null;
 const valTier  = p => hasPrice(p) ? (p.edge > 0 ? 0 : 2) : 1;
 const byValue  = (a,b) => (valTier(a)-valTier(b)) ||
-  (valTier(a)===1 ? (b.prob??0)-(a.prob??0) : (b.edge??-1)-(a.edge??-1));
+  (valTier(a)===1 ? (estEdge(b)??-9)-(estEdge(a)??-9) : (b.edge??-1)-(a.edge??-1));
 // Misma regla para props (Ks y bateadores), donde el edge es null si no hay línea.
 const byPropValue = (a,b) => {
   const ta = (a.edge!=null&&a.edge>0)?0:(a.edge!=null?2:1);
@@ -1206,7 +1237,13 @@ function computePicks(data) {
   // Los Ks de pitcher NO van como pick del partido; se muestran en la pestaña "Lanzadores".
 
   // Recalibración aprendida del historial: corrige la prob. y recalcula el edge
-  picks.forEach(p=>{ p.prob=calibrate(p.prob); p.edge=+(p.prob-(p.fair!=null?p.fair:BREAKEVEN)).toFixed(3); });
+  // Recalibra la prob. y recalcula el edge: real contra la cuota de casa si la hay,
+  // si no ESTIMADO contra el precio típico del mercado (estEdge). Así el número que
+  // se muestra y el que se guarda en Supabase son el mismo, y ninguno de los dos
+  // sigue siendo "prob − 0.524" disfrazado de edge.
+  picks.forEach(p=>{ p.prob=calibrate(p.prob);
+    p.edge = p.fair!=null ? +(p.prob-p.fair).toFixed(3)
+                          : (estEdge(p) ?? +(p.prob-BREAKEVEN).toFixed(3)); });
   // Stake sugerido (medio-Kelly, % del bankroll) solo cuando hay cuota real y edge positivo
   picks.forEach(p=>{ p.stake = (p.price!=null && p.edge>0) ? stakePct(p.prob,p.price) : 0; });
   // Selección por EDGE (valor), NUNCA por probabilidad: un favorito al 70% sin valor
@@ -3131,7 +3168,9 @@ function renderPicks(games) {
             <div class="pick-body"><div class="pick-cat">${p.cat}</div><div class="pick-main">${p.main}</div><div class="pick-sub">${p.sub||''}</div></div>
             <div class="pick-pct"><div class="pick-prob">${pct(p.prob)}</div>${p.bEdge!=null?`<div class="pick-edge" title="Baseball Edge: modelo puro vs mercado">⚾ ${p.bEdge>=0?'+':''}${(p.bEdge*100).toFixed(1)}%</div>`:''}${hasPrice(p)
               ? `<div class="pick-edge">mkt ${p.edge>=0?'+':''}${(p.edge*100).toFixed(1)}%</div>`
-              : `<div class="pick-edge" style="color:var(--text3)" title="Sin cuota de casa no hay edge que calcular: lo que ves es la probabilidad del modelo, no valor.">sin cuota</div>`}${p.stake>0?`<div class="pick-stake">apostar ${p.stake}%</div>`:''}</div>
+              : (estEdge(p)!=null
+                ? `<div class="pick-edge" style="color:var(--text3)" title="Edge ESTIMADO contra el precio típico de este mercado, no contra una cuota real. Es una suposición: sirve para ordenar, no para apostar a ciegas.">est. ${estEdge(p)>=0?'+':''}${(estEdge(p)*100).toFixed(1)}%</div>`
+                : `<div class="pick-edge" style="color:var(--text3)" title="Sin cuota de casa y sin precio típico de referencia: no hay edge que calcular.">sin cuota</div>`)}${p.stake>0?`<div class="pick-stake">apostar ${p.stake}%</div>`:''}</div>
           </div>`;
         }).join(''):'<div style="padding:10px 12px;font-size:11px;color:var(--text3)">Sin picks de mercado de alta confianza — la lectura de edge de arriba es la señal.</div>'}
       </div>
@@ -3182,7 +3221,7 @@ function copyPicks(){
     const picks=selectGamePicks(g);
     if(!picks.length) return;
     lines.push(`⚾ ${g.away} @ ${g.home}`);
-    picks.forEach(p=>lines.push(`  • ${p.cat}: ${p.main}  (${pct(p.prob)}, ${hasPrice(p)?`edge ${p.edge>=0?'+':''}${(p.edge*100).toFixed(1)}%`:'sin cuota'}${p.stake>0?`, apostar ${p.stake}%`:''})`));
+    picks.forEach(p=>lines.push(`  • ${p.cat}: ${p.main}  (${pct(p.prob)}, ${hasPrice(p)?`edge ${p.edge>=0?'+':''}${(p.edge*100).toFixed(1)}%`:(estEdge(p)!=null?`est. ${estEdge(p)>=0?'+':''}${(estEdge(p)*100).toFixed(1)}%`:'sin cuota')}${p.stake>0?`, apostar ${p.stake}%`:''})`));
   });
   const txt=lines.join('\n')||'Sin picks.';
   navigator.clipboard?.writeText(txt).then(()=>alert('📋 Picks copiados al portapapeles')).catch(()=>alert(txt));
@@ -3263,16 +3302,20 @@ function renderPitchers(games) {
       const edge=modelP-fair, ev=modelP*amDec(price)-1;                       // EV real (cuenta el precio)
       return {line, over, modelP, fair, price, edge, ev, mkt:true, rec:ev>=K_MIN_EV};
     }
-    const over=mOver>=.5, modelP=over?mOver:1-mOver, edge=modelP-BREAKEVEN;    // sin mercado: vs breakeven
-    return {line, over, modelP, fair:BREAKEVEN, price:null, edge, ev:null, mkt:false, rec:edge>=K_MIN_EDGE_NOMKT};
+    // Sin mercado: contra el precio TÍPICO de un O/U de Ks (-115), no contra -110.
+    const over=mOver>=.5, modelP=over?mOver:1-mOver, edge=+(modelP-KS_REF_BE).toFixed(3);
+    return {line, over, modelP, fair:null, refBe:KS_REF_BE, price:null, edge, ev:null, mkt:false, rec:edge>=K_MIN_EDGE_NOMKT};
   };
   // Rankea por VALOR: EV con línea de casa (o edge vs breakeven sin ella). Nunca por probabilidad.
   // Misma regla de 3 niveles: con línea de casa y EV positivo primero (valor medible),
   // después los que no tienen línea por probabilidad, y al final los de EV negativo.
   // Antes competían EV (~±0.05) contra "prob − 0.524" (~±0.15) en la misma lista.
   const kTier = e => (!e||e.short) ? 3 : (e.mkt ? (e.ev>0?0:2) : 1);
+  // Sin línea de casa: edge estimado contra el precio típico de un O/U de Ks (-115),
+  // no contra la probabilidad pelada ni contra un -110 que ese mercado no cobra.
+  const kEst  = e => (e?.modelP??0) - KS_REF_BE;
   const kSort = (a,b) => { const ta=kTier(a.e), tb=kTier(b.e);
-    return (ta-tb) || (ta===1 ? (b.e.modelP??0)-(a.e.modelP??0) : (b.e.ev??-1)-(a.e.ev??-1)); };
+    return (ta-tb) || (ta===1 ? kEst(b.e)-kEst(a.e) : (b.e.ev??-1)-(a.e.ev??-1)); };
   const topPitchers = pitchers.map(p=>({p,e:kEval(p)})).filter(x=>x.e)
     .sort(kSort).slice(0,5);
   propsPitcher=[];   // recolectar picks de Ks a guardar (solo del top mostrado)
@@ -3294,7 +3337,7 @@ function renderPitchers(games) {
       sub=`Proy ${p.kExp}K · Modelo ${pct(e.modelP)} vs Mercado ${pct(e.fair)} · edge ${e.edge>=0?'+':''}${(e.edge*100).toFixed(1)}% · EV ${e.ev>=0?'+':''}${(e.ev*100).toFixed(1)}%${e.rec?` · apostar ${stake}%`:` · <span style="color:var(--rtx)">no apostable (EV bajo / precio caro)</span>`}`;
     } else {
       rec='proy'; recColor='var(--text3)'; badge=`~${p.kExp}K`;
-      sub=`Proyección del modelo: ${p.kExp}K · sin línea de casa`;
+      sub=`Proyección ${p.kExp}K · ${e.over?'OVER':'UNDER'} ${e.line} al ${pct(e.modelP)} · <span title="Estimado contra el precio típico de un O/U de Ks (-115), no contra una cuota real.">est. ${e.edge>=0?'+':''}${(e.edge*100).toFixed(1)}%</span> · sin línea de casa`;
     }
     return `<div class="card">
       <div class="card-hdr">

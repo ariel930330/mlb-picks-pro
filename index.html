@@ -417,12 +417,11 @@ body{background:radial-gradient(1100px 560px at 15% -10%,rgba(178,107,255,.10),t
       <div class="toolbar">
         <input type="date" id="date-pick">
         <button class="btn" id="run-btn" onclick="runAnalysis()"><i class="ti ti-refresh"></i>Analizar partidos</button>
-        <input type="password" id="oddsio-key-mlb" placeholder="odds-api.io key (500/día)" autocomplete="off"
-          style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:7px 10px;font-size:12px;color:var(--text);font-family:inherit;outline:none;min-width:180px"
-          onchange="saveOddsIoKey(this.value)">
-        <input type="password" id="odds-key" placeholder="The Odds API key (fallback)" autocomplete="off"
+        <input type="password" id="odds-key" placeholder="The Odds API key" autocomplete="off"
+          title="Se guarda en tu cuenta (Supabase) si iniciaste sesión, así queda fija en todos tus dispositivos. Nunca se escribe en el código, porque el repo es público."
           style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:7px 10px;font-size:12px;color:var(--text);font-family:inherit;outline:none;min-width:170px"
           onchange="saveOddsKey(this.value)">
+        <span id="odds-key-state" style="font-size:10px;color:var(--text3)"></span>
         <label title="Trae la línea real de ponches por pitcher. Usa 1 petición extra por partido." style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer">
           <input type="checkbox" id="kprops-chk" onchange="saveKProps(this.checked)" style="accent-color:var(--gold)"> Props Ks reales
         </label>
@@ -1790,8 +1789,53 @@ async function getTopBatters(id,yr) {
 
 // ── The Odds API (cuotas reales) ────────────────────────────────────────────
 const ODDS_BASE = 'https://api.the-odds-api.com/v4';
-const getOddsKey = () => localStorage.getItem('odds_api_key') || '';
-const saveOddsKey = v => { v=v.trim(); v?localStorage.setItem('odds_api_key',v):localStorage.removeItem('odds_api_key'); };
+// La key NO va escrita en el código: este repo es público y GitHub Pages sirve el
+// archivo tal cual, así que cualquiera podría leerla y gastar los créditos de la
+// suscripción. Se guarda en Supabase (tabla app_config, RLS por auth.uid) y se jala
+// al iniciar sesión, de modo que queda fija en todos los dispositivos del dueño sin
+// aparecer nunca en el código. localStorage sigue funcionando como caché local.
+let remoteOddsKey = null;   // key traída de Supabase (solo con sesión iniciada)
+const getOddsKey = () => remoteOddsKey || localStorage.getItem('odds_api_key') || '';
+const saveOddsKey = v => { v=v.trim(); v?localStorage.setItem('odds_api_key',v):localStorage.removeItem('odds_api_key');
+  remoteOddsKey = null;   // solo se marca "en tu cuenta" si Supabase confirma la escritura
+  syncOddsKeyToCloud(v).then(ok=>{ if(ok&&v) remoteOddsKey=v; updateKeyState(); }); };
+// Sube la key a Supabase si hay sesión. Devuelve true solo si de verdad se guardó;
+// sin sesión (o si falla) la key se queda únicamente en este navegador.
+async function syncOddsKeyToCloud(v){
+  if(!isOwner()) return false;
+  try{
+    const uid = session.user.id;
+    const {error} = v
+      ? await sb.from('app_config').upsert({user_id:uid, odds_api_key:v}, {onConflict:'user_id'})
+      : await sb.from('app_config').delete().eq('user_id', uid);
+    if(error){ console.warn('sync key:', error.message); return false; }
+    return true;
+  }catch(e){ console.warn('sync key:', e.message); return false; }
+}
+// Trae la key guardada al iniciar sesión y la deja lista para el resto de la app.
+async function loadOddsKeyFromCloud(){
+  if(!isOwner()){ remoteOddsKey=null; return; }
+  try{
+    const {data,error} = await sb.from('app_config').select('odds_api_key').eq('user_id', session.user.id).maybeSingle();
+    if(error) return;
+    if(data?.odds_api_key){
+      remoteOddsKey = data.odds_api_key;
+      localStorage.setItem('odds_api_key', remoteOddsKey);   // caché para no depender de la red
+      const el=document.getElementById('odds-key'); if(el) el.value=remoteOddsKey;
+    } else if(localStorage.getItem('odds_api_key')){
+      await syncOddsKeyToCloud(localStorage.getItem('odds_api_key'));   // primera vez: sube la local
+    }
+  }catch(e){ console.warn('load key:', e.message); }
+}
+// Etiqueta junto al campo: de dónde salió la key que se está usando.
+function updateKeyState(){
+  const el=document.getElementById('odds-key-state'); if(!el) return;
+  const k=getOddsKey();
+  if(!k){ el.textContent='sin key'; el.style.color='var(--rtx)'; return; }
+  if(remoteOddsKey){ el.textContent='✓ guardada en tu cuenta'; el.style.color='var(--gtx)'; }
+  else if(isOwner()){ el.textContent='solo en este navegador'; el.style.color='var(--text3)'; }
+  else { el.textContent='solo local · entra para fijarla'; el.style.color='var(--text3)'; }
+}
 let oddsRemaining = null;  // peticiones restantes del plan (header x-requests-remaining)
 const getKProps = () => localStorage.getItem('kprops_off')!=='1';   // props de Ks activas por defecto
 const saveKProps = on => on?localStorage.removeItem('kprops_off'):localStorage.setItem('kprops_off','1');
@@ -2345,124 +2389,12 @@ async function getSoccerOddsIO(compKeys, dateStr){
   return {matches, unresolved};
 }
 
-// ── MLB vía odds-api.io: devuelve el MISMO shape que getOdds (precios AMERICANOS) ──
-const _devig2 = pairs => avg(pairs.map(p=>{ const ih=1/p.h, ia=1/p.a; return ih/(ih+ia); }));
-function parseMlbEventIO(e, bms){
-  const home=e.home, away=e.away, mlPairs=[], spByLine={}, totByLine={}, f5tByLine={}, f5mlPairs=[];
-  for(const bkName in bms){
-    for(const mk of (bms[bkName]||[])){
-      const nm=(mk.name||'').toLowerCase().replace(/[^a-z0-9]/g,'');
-      if(nm==='ml'||nm==='moneyline'){ const o=(mk.odds||[])[0]; if(o){ const h=+o.home,a=+o.away; if(h>1&&a>1) mlPairs.push({h,a}); } }
-      else if(nm==='spread'||nm==='spreads'||nm==='handicap'||nm==='runline'||nm==='asianhandicap'){
-        for(const o of (mk.odds||[])){ const hp=+(o.hdp??o.line??o.point), h=+o.home, a=+o.away; if(h>1&&a>1&&isFinite(hp)) (spByLine[hp]=spByLine[hp]||[]).push({h,a}); } }
-      else if(nm==='totals'||nm==='total'||nm==='overunder'||nm==='ou'){
-        for(const o of (mk.odds||[])){ const pt=+(o.hdp??o.line??o.point??o.total), ov=+o.over, un=+o.under; if(ov>1&&un>1&&isFinite(pt)) (totByLine[pt]=totByLine[pt]||[]).push({over:ov,under:un}); } }
-      else if(nm==='first5inningstotals'||nm==='firstfiveinningstotals'){
-        for(const o of (mk.odds||[])){ const pt=+(o.hdp??o.line??o.point??o.total), ov=+o.over, un=+o.under; if(ov>1&&un>1&&isFinite(pt)) (f5tByLine[pt]=f5tByLine[pt]||[]).push({over:ov,under:un}); } }
-      else if(nm==='first5inningsml'||nm==='firstfiveinningsml'){
-        const o=(mk.odds||[])[0]; if(o){ const h=+o.home,a=+o.away; if(h>1&&a>1) f5mlPairs.push({h,a}); } }
-    }
-  }
-  if(!mlPairs.length) return null;
-  const o={commence:e.date};
-  const fh=_devig2(mlPairs);
-  o.ml={fairHome:fh, fairAway:1-fh, priceHome:decToAm(bestDec(mlPairs.map(p=>p.h))), priceAway:decToAm(bestDec(mlPairs.map(p=>p.a)))};
-  // Run line: la línea de home cuyo |hdp| esté más cerca de 1.5 (evita alternas ±2.5/±3.5)
-  const spLines=Object.keys(spByLine).map(Number);
-  if(spLines.length){ const t=spLines.reduce((b,x)=>Math.abs(Math.abs(x)-1.5)<Math.abs(Math.abs(b)-1.5)?x:b); const pairs=spByLine[t];
-    const fhc=_devig2(pairs);
-    o.spread={homePoint:t, awayPoint:-t, fairHomeCover:fhc, fairAwayCover:1-fhc, priceHome:decToAm(bestDec(pairs.map(p=>p.h))), priceAway:decToAm(bestDec(pairs.map(p=>p.a)))}; }
-  // Total: la línea con más casas (la principal)
-  const totLines=Object.keys(totByLine).map(Number);
-  if(totLines.length){
-    // línea principal = la más equilibrada (over/under ~ even), no una alterna
-    let line=totLines[0], bal=2;
-    for(const x of totLines){ const p=totByLine[x]; const fo=avg(p.map(q=>{const io=1/q.over,iu=1/q.under;return io/(io+iu);})); const d=Math.abs(fo-0.5); if(d<bal){bal=d;line=x;} }
-    const pairs=totByLine[line];
-    const fo=avg(pairs.map(p=>{ const io=1/p.over, iu=1/p.under; return io/(io+iu); }));
-    o.total={point:line, fairOver:fo, fairUnder:1-fo, priceOver:decToAm(bestDec(pairs.map(p=>p.over))), priceUnder:decToAm(bestDec(pairs.map(p=>p.under)))}; }
-  // F5 Total (primeras 5): línea más equilibrada
-  const f5tLines=Object.keys(f5tByLine).map(Number);
-  if(f5tLines.length){ let line=f5tLines[0],bal=2;
-    for(const x of f5tLines){ const p=f5tByLine[x]; const fo=avg(p.map(q=>{const io=1/q.over,iu=1/q.under;return io/(io+iu);})); const d=Math.abs(fo-0.5); if(d<bal){bal=d;line=x;} }
-    const pairs=f5tByLine[line], fo=avg(pairs.map(p=>{const io=1/p.over,iu=1/p.under;return io/(io+iu);}));
-    o.f5total={point:line, fairOver:fo, fairUnder:1-fo, priceOver:decToAm(bestDec(pairs.map(p=>p.over))), priceUnder:decToAm(bestDec(pairs.map(p=>p.under)))}; }
-  // F5 ML (primeras 5)
-  if(f5mlPairs.length){ const fh=_devig2(f5mlPairs);
-    o.f5ml={fairHome:fh, fairAway:1-fh, priceHome:decToAm(bestDec(f5mlPairs.map(p=>p.h))), priceAway:decToAm(bestDec(f5mlPairs.map(p=>p.a)))}; }
-  return o;
-}
-// Parsea props de jugador (Ks del abridor, hits/HR/RBI del bateador) del mismo response.
-// Acumula en kAcc[normPitcher] y bAcc[normBatter]={hits,hr,rbi}. De-viga con ambos lados.
-function parsePropsIO(bms, kAcc, bAcc){
-  const bucket={};   // 'kind|sub|normPlayer|line' -> {kind,sub,player,line,ov:[],un:[]}
-  for(const bkName in bms){
-    for(const mk of (bms[bkName]||[])){
-      const nm=(mk.name||'').toLowerCase().replace(/[^a-z0-9]/g,'');
-      let kind=null, sub=null;
-      if(nm==='pitcherstrikeoutsou'||nm==='pitcherstrikeouts'){ kind='k'; sub='k'; }
-      else if(nm==='hitsou'){ kind='b'; sub='hits'; }
-      else if(nm==='homerunsou'){ kind='b'; sub='hr'; }
-      else if(nm==='runsbattedinou'){ kind='b'; sub='rbi'; }
-      else continue;
-      for(const o of (mk.odds||[])){
-        const player=o.label; const line=+(o.hdp??o.line??o.point); const ov=+o.over, un=+o.under;
-        if(!player||!isFinite(line)) continue;
-        const key=sub+'|'+normName(player)+'|'+line;
-        const b=bucket[key]=bucket[key]||{kind,sub,player,line,ov:[],un:[]};
-        if(ov>1) b.ov.push(ov); if(un>1) b.un.push(un);
-      }
-    }
-  }
-  // Agrupa por jugador+sub; elige la línea principal (bateo: prefiere 0.5; Ks: más equilibrada).
-  const byPlayer={};
-  for(const key in bucket){ const b=bucket[key]; if(!b.ov.length) continue;   // al menos el over
-    const pk=b.sub+'|'+normName(b.player); (byPlayer[pk]=byPlayer[pk]||[]).push(b); }
-  for(const pk in byPlayer){ const arr=byPlayer[pk];
-    let pick;
-    if(arr[0].sub==='k'){ // Ks: SOLO línea de 2 lados (la principal); evita alternas over-only engañosas
-      const two=arr.filter(b=>b.un.length); if(!two.length) continue;
-      pick=two.reduce((best,b)=>{ const io=avg(b.ov.map(x=>1/x)),iu=avg(b.un.map(x=>1/x)); b._bal=Math.abs(io/(io+iu)-.5); return (!best||b._bal<best._bal)?b:best; },null);
-    } else { // bateo: prefiere 0.5, si no la más chica
-      pick=arr.find(b=>b.line===0.5) || arr.sort((a,b)=>a.line-b.line)[0];
-    }
-    const ioAvg=avg(pick.ov.map(x=>1/x));
-    let mkt;
-    if(pick.un.length){ const iuAvg=avg(pick.un.map(x=>1/x)), fo=ioAvg/(ioAvg+iuAvg);
-      mkt={ line:pick.line, fairOver:fo, fairUnder:1-fo, priceOver:decToAm(bestDec(pick.ov)), priceUnder:decToAm(bestDec(pick.un)) };
-    } else { // over-only: fair = implícita cruda (con vig → edge conservador)
-      mkt={ line:pick.line, fairOver:cl(ioAvg,.02,.98), fairUnder:null, priceOver:decToAm(bestDec(pick.ov)), priceUnder:null, overOnly:true };
-    }
-    const np=normName(pick.player);
-    if(pick.sub==='k'){ kAcc[np]=mkt; }
-    else { (bAcc[np]=bAcc[np]||{})[pick.sub]=mkt; }
-  }
-}
-async function getMlbOddsIO(date){
-  const leagues=await getLeaguesIO('baseball');
-  const slug=resolveSlugIO({slug:'usa-mlb', m:['mlb'], x:['minor','triplea','doublea','college','ncaa','women','kbo','npb','winter']}, leagues) || 'usa-mlb';
-  const from=`${date}T00:00:00Z`, to=`${date}T23:59:59Z`, map={}, kprops={}, bprops={};
-  try{
-    const evs=await ioGet(`/events?sport=baseball&league=${encodeURIComponent(slug)}&from=${from}&to=${to}`);
-    const list=(Array.isArray(evs)?evs:evs?.events||evs?.data||[]).filter(e=>e&&e.id!=null);
-    for(let i=0;i<list.length;i+=10){
-      const batch=list.slice(i,i+10);
-      const od=await ioGet(`/odds/multi?eventIds=${batch.map(e=>e.id).join(',')}&bookmakers=${encodeURIComponent(IO_BOOKS)}`);
-      const oddsMap=normalizeOddsIO(od);
-      for(const e of batch){ const bms=oddsMap[e.id]; if(!bms) continue;
-        const o=parseMlbEventIO(e, bms); if(o){ const k=normName(e.home)+'|'+normName(e.away); (map[k]=map[k]||[]).push(o); }
-        parsePropsIO(bms, kprops, bprops);   // props del MISMO response (sin peticiones extra)
-      }
-    }
-  }catch(e){ console.warn('mlb io:',e.message); }
-  return {map, kprops, bprops};
-}
-// Dispatcher de cuotas MLB: prefiere The Odds API (pago) por su cobertura de props
-// (incl. Total Bases) y F5 completo; si no hay su key, cae a odds-api.io (500/día).
+// Cuotas MLB: SOLO The Odds API. El respaldo de odds-api.io se quitó porque su
+// cobertura era delgada (sin Total Bases, F5 incompleto) y mezclarlas producía
+// jornadas con la mitad de los mercados. odds-api.io sigue vivo para FÚTBOL, que es
+// donde cosecha los resultados históricos que alimentan las fuerzas Dixon-Coles.
 async function getMlbOdds(date){
-  if(getOddsKey())   return getOdds(date);        // The Odds API: juegos + props (TB) + F5
-  if(getOddsIoKey()) return getMlbOddsIO(date);   // odds-api.io (respaldo, cobertura delgada)
-  return {map:{}, kprops:{}, bprops:{}};
+  return getOddsKey() ? getOdds(date) : {map:{}, kprops:{}, bprops:{}};
 }
 
 // ── Fútbol: UI (switch de deporte, análisis, render) ──────────────────────────
@@ -4174,7 +4106,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('date-pick').value=todayLocal(today);
   $('hdr-date').textContent=today.toLocaleDateString('es-MX',{weekday:'short',month:'short',day:'numeric'});
   $('odds-key').value=getOddsKey();
-  const kio=$('oddsio-key-mlb'); if(kio) kio.value=getOddsIoKey();
   $('kprops-chk').checked=getKProps();
   $('bprops-chk').checked=getBProps();
   $('bvp-chk').checked=getBvPOn();
@@ -4183,8 +4114,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Restaurar sesión (si el dueño ya inició sesión antes)
   const {data:sd} = await sb.auth.getSession();
   session = sd?.session || null;
-  sb.auth.onAuthStateChange((_e,s)=>{ session=s; updateAuthUI(); });
+  // Al entrar o salir se vuelve a resolver la key: con sesión manda la de Supabase,
+  // sin sesión solo queda la de este navegador.
+  sb.auth.onAuthStateChange((_e,s)=>{ session=s; updateAuthUI(); loadOddsKeyFromCloud().then(updateKeyState); });
   updateAuthUI();
+  await loadOddsKeyFromCloud();
+  updateKeyState();
 
   // Test Supabase connection
   const {error} = await sb.from('predictions').select('id',{count:'exact',head:true});

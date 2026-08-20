@@ -234,3 +234,37 @@ create policy "soccer_results auth update" on public.soccer_results for update t
 -- Listo. Con esto:
 --   • Visitantes anónimos: solo pueden LEER (ver picks e historial).
 --   • Tú (autenticado): puedes generar, guardar, calificar y borrar.
+
+-- ============================================================================
+--  app_config : la API key de The Odds API, atada a TU usuario
+-- ----------------------------------------------------------------------------
+--  Por que aqui y no en el codigo: este repo es publico y GitHub Pages sirve el
+--  index.html tal cual, asi que una key escrita en el codigo queda visible para
+--  cualquiera (y hay bots que escanean GitHub buscando justo eso). Guardandola
+--  aqui queda fija en todos tus dispositivos sin publicarse nunca.
+--
+--  OJO: esta tabla NO tiene lectura publica, a diferencia de las demas. Cada
+--  usuario solo ve y escribe SU propia fila (auth.uid() = user_id). Un visitante
+--  anonimo no puede leerla.
+-- ============================================================================
+create table if not exists public.app_config (
+  user_id       uuid primary key references auth.users(id) on delete cascade,
+  odds_api_key  text,
+  updated_at    timestamptz default now()
+);
+
+alter table public.app_config enable row level security;
+
+drop policy if exists "app_config owner read"   on public.app_config;
+drop policy if exists "app_config owner insert" on public.app_config;
+drop policy if exists "app_config owner update" on public.app_config;
+drop policy if exists "app_config owner delete" on public.app_config;
+
+create policy "app_config owner read"   on public.app_config
+  for select to authenticated using (auth.uid() = user_id);
+create policy "app_config owner insert" on public.app_config
+  for insert to authenticated with check (auth.uid() = user_id);
+create policy "app_config owner update" on public.app_config
+  for update to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
+create policy "app_config owner delete" on public.app_config
+  for delete to authenticated using (auth.uid() = user_id);

@@ -491,11 +491,11 @@ body{background:radial-gradient(1100px 560px at 15% -10%,rgba(178,107,255,.10),t
         </div>
       </div>
       <div class="stats-bar" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr))">
-        <div class="stat-card"><div class="stat-label">Señales</div><div class="stat-val" id="sg-total">0</div></div>
+        <div class="stat-card" title="Solo Elite + Strong + Lean. Los NO EDGE no se cuentan: el tablero no los señaló."><div class="stat-label">Señales con edge</div><div class="stat-val" id="sg-total">0</div></div>
         <div class="stat-card"><div class="stat-label">Calificadas</div><div class="stat-val" id="sg-graded">0</div></div>
         <div class="stat-card"><div class="stat-label">Acierto</div><div class="stat-val" style="color:var(--green)" id="sg-ml">—</div></div>
         <div class="stat-card"><div class="stat-label">Récord</div><div class="stat-val" style="color:var(--blue)" id="sg-f5">—</div></div>
-        <div class="stat-card"><div class="stat-label">Solo con edge</div><div class="stat-val" style="color:var(--gold)" id="sg-edge">—</div></div>
+        <div class="stat-card" title="Juegos que el tablero NO señaló. Quedan fuera de todos los números de arriba; se muestran solo como referencia."><div class="stat-label">NO EDGE (fuera)</div><div class="stat-val" style="color:var(--text3)" id="sg-edge">—</div></div>
         <div class="stat-card"><div class="stat-label">DQ promedio</div><div class="stat-val" id="sg-dq">—</div></div>
       </div>
       <div class="filterbar" id="sig-daybar"></div>
@@ -3649,15 +3649,20 @@ async function loadSignals(){
   }
   const rows = all||[];
 
-  // ── Cabecera de métricas (acumulado de TODO el histórico) ──
-  const ml=recordOf(rows);
-  const conEdge=rows.filter(r=>(TIER_RANK[r.tier]??0)>=1), mlEdge=sigRate(conEdge,'result');
-  const dqAvg=avgOf(rows,'dq');
-  txt('sg-total', rows.length);
+  // ── Cabecera de métricas: SOLO las señales con edge ──
+  // Los NO EDGE son juegos que el tablero decidió NO señalar. Meterlos en el récord
+  // infla (o ensucia) el número con apuestas que nunca se recomendaron. Todo lo de
+  // abajo se calcula sobre conEdge: Elite + Strong + Lean, que es justo lo que la
+  // pestaña muestra en sus tres secciones.
+  const conEdge = rows.filter(r=>(TIER_RANK[r.tier]??0)>=1);
+  const sinEdge = rows.length - conEdge.length;
+  const ml    = recordOf(conEdge);
+  const dqAvg = avgOf(conEdge,'dq');
+  txt('sg-total', conEdge.length);
   txt('sg-graded', ml.n);
   txt('sg-ml',   ml.pct!=null?Math.round(ml.pct*100)+'%':'—');
   txt('sg-f5',   recTxt(ml));
-  txt('sg-edge', mlEdge.pct!=null?`${Math.round(mlEdge.pct*100)}% (${mlEdge.n})`:'—');
+  txt('sg-edge', sinEdge);
   txt('sg-dq',   dqAvg!=null?Math.round(dqAvg):'—');
 
   if(!rows.length){
@@ -3715,16 +3720,19 @@ async function loadSignals(){
   </div>`;
 
   // ── Acumulado: los tres cortes estadísticos, plegados ──
+  // Los cortes estadísticos van sobre conEdge, igual que la cabecera. La única
+  // excepción es la tabla por tier, que sí muestra NO EDGE aparte: sirve justo para
+  // comprobar que los juegos descartados aciertan MENOS que los señalados.
   const porTier = sigGroupTable('🎯 Rendimiento por tier','acierto del mercado recomendado · si el tablero sirve debe SUBIR de LEAN → STRONG → ELITE','Tier',
-    ['ELITE','STRONG','LEAN','NO EDGE'].map(t=>({label:tierPill(t), rows:rows.filter(r=>r.tier===t)})));
+    ['ELITE','STRONG','LEAN','NO EDGE'].map(t=>({label:tierPill(t)+(t==='NO EDGE'?' <span style="color:var(--text3);font-size:10px">(fuera del récord)</span>':''), rows:rows.filter(r=>r.tier===t)})));
   const porDQ = sigGroupTable('🧪 Rendimiento por Data Quality','DQ alto = alineaciones confirmadas y buena muestra; debería acertar más','Data Quality',
-    [{label:'85–100 (alta)', rows:rows.filter(r=>r.dq>=85)},
-     {label:'70–84 (media)', rows:rows.filter(r=>r.dq>=70&&r.dq<85)},
-     {label:'50–69 (baja)',  rows:rows.filter(r=>r.dq>=50&&r.dq<70)},
-     {label:'&lt;50 (muy baja)', rows:rows.filter(r=>r.dq!=null&&r.dq<50)}]);
+    [{label:'85–100 (alta)', rows:conEdge.filter(r=>r.dq>=85)},
+     {label:'70–84 (media)', rows:conEdge.filter(r=>r.dq>=70&&r.dq<85)},
+     {label:'50–69 (baja)',  rows:conEdge.filter(r=>r.dq>=50&&r.dq<70)},
+     {label:'&lt;50 (muy baja)', rows:conEdge.filter(r=>r.dq!=null&&r.dq<50)}]);
   const porAcuerdo = sigGroupTable('⚖️ Tablero vs modelo','cuando el Edge Read señala al NO favorito del modelo, ¿quién tiene razón?','Acuerdo',
-    [{label:'Coinciden <span style="color:var(--text3)">(señala al favorito del modelo)</span>', rows:rows.filter(r=>r.edge_wp!=null && +r.edge_wp>=.5)},
-     {label:'Contradice <span style="color:var(--text3)">(señala al underdog del modelo)</span>', rows:rows.filter(r=>r.edge_wp!=null && +r.edge_wp<.5)}]);
+    [{label:'Coinciden <span style="color:var(--text3)">(señala al favorito del modelo)</span>', rows:conEdge.filter(r=>r.edge_wp!=null && +r.edge_wp>=.5)},
+     {label:'Contradice <span style="color:var(--text3)">(señala al underdog del modelo)</span>', rows:conEdge.filter(r=>r.edge_wp!=null && +r.edge_wp<.5)}]);
 
   $('signals-area').innerHTML = secciones + noEdgeNota + histCard + `
     <details class="er-more" style="margin-top:12px"><summary>📊 Estadística acumulada (todos los días)</summary>

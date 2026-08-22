@@ -435,6 +435,7 @@ body{background:radial-gradient(1100px 560px at 15% -10%,rgba(178,107,255,.10),t
       <div class="toolbar">
         <input type="date" id="date-pick">
         <button class="btn" id="run-btn" onclick="runAnalysis()"><i class="ti ti-refresh"></i>Analizar partidos</button>
+        <button class="btn-sm" id="sync-btn" onclick="syncCloud()" title="Jala el último análisis de la nube (de cualquier PC) sin volver a analizar ni gastar cuotas">☁ Sincronizar</button>
         <input type="password" id="odds-key" placeholder="The Odds API key" autocomplete="off"
           title="Se guarda en tu cuenta (Supabase) si iniciaste sesión, así queda fija en todos tus dispositivos. Nunca se escribe en el código, porque el repo es público."
           style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:7px 10px;font-size:12px;color:var(--text);font-family:inherit;outline:none;min-width:170px"
@@ -4766,6 +4767,20 @@ async function restoreBest(){
   if(localOk){ applyRestored(local,'(local)'); return; }
   if(cloud){ applyRestored(cloud,'(nube)'); return; }
   restoreToday();   // último recurso: reconstruye desde los picks guardados
+}
+// Jala manualmente el último análisis de la nube (otra PC) sin re-analizar ni gastar cuotas.
+async function syncCloud(){
+  const btn=$('sync-btn'); if(btn) btn.disabled=true;
+  $('run-status').textContent='☁ Sincronizando desde la nube…';
+  try{
+    const {data,error}=await sb.from('analysis_cache').select('payload,updated_at').order('updated_at',{ascending:false}).limit(1);
+    if(error||!data?.length){ $('run-status').textContent='☁ Aún no hay análisis en la nube (analiza logueado en una PC).'; }
+    else{ const c=JSON.parse(data[0].payload);
+      if(c?.games?.length){ applyRestored(c,'(nube · sincronizado)');
+        try{ localStorage.setItem('last_analysis', JSON.stringify({...c, savedAt:Date.parse(data[0].updated_at)||Date.now()})); }catch{}
+      } else $('run-status').textContent='☁ La nube no tiene un análisis válido.'; }
+  }catch(e){ $('run-status').textContent='☁ Error al sincronizar: '+e.message; }
+  if(btn) btn.disabled=false;
 }
 
 async function restoreToday() {

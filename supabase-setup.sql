@@ -268,3 +268,12 @@ create policy "app_config owner update" on public.app_config
   for update to authenticated using (auth.uid() = user_id) with check (auth.uid() = user_id);
 create policy "app_config owner delete" on public.app_config
   for delete to authenticated using (auth.uid() = user_id);
+
+-- ============================================================================
+--  prop_picks : columna edge
+-- ----------------------------------------------------------------------------
+--  El historial de props vive ahora dentro de las pestañas Pitchers K y
+--  Bateadores, y acumula por jornada: solo entra un pick nuevo si su edge supera
+--  al mejor ya guardado de ese dia. Sin esta columna no hay con que comparar.
+-- ============================================================================
+alter table public.prop_picks add column if not exists edge numeric;

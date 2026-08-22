@@ -233,6 +233,12 @@ a{color:var(--blue);text-decoration:none}
 .bt-hand{color:var(--text3);font-size:9px;font-weight:700}
 .bt-ok{color:var(--gtx);font-size:9px;font-weight:800}
 .bt-nc{color:var(--text3);font-size:9px;font-weight:700;border:1px solid var(--border);border-radius:3px;padding:0 3px}
+.ph-hdr{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin:22px 0 10px;padding-top:16px;border-top:1px solid var(--border)}
+.ph-title{font-size:13px;font-weight:700}
+.ph-sub{font-size:11px;color:var(--text2);max-width:620px}
+.ph-day{font-weight:800;font-size:11px;background:var(--bg3);color:var(--text2)}
+.ph-day td{padding:5px 10px;letter-spacing:.4px}
+.ph-new{color:var(--gold);font-size:9px;font-weight:800;margin-left:5px}
 .bt-vs{font-size:9.5px;color:var(--text2);display:flex;align-items:center;gap:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bt-mtag{font-weight:800}
 .bt-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:1px}
@@ -402,12 +408,11 @@ body{background:radial-gradient(1100px 560px at 15% -10%,rgba(178,107,255,.10),t
   <div class="tabs">
     <button class="tab-btn active" onclick="showTab('picks')"><i class="ti ti-chart-bar"></i>Picks del Día</button>
     <button class="tab-btn" onclick="showTab('parlays')"><i class="ti ti-link"></i>Parlays</button>
-    <button class="tab-btn" onclick="showTab('pitchers')"><i class="ti ti-circle-dashed"></i>Pitchers K</button>
-    <button class="tab-btn" onclick="showTab('batters')"><i class="ti ti-run"></i>Bateadores</button>
+    <button class="tab-btn" onclick="showTab('pitchers');loadPropHist('pitcher')"><i class="ti ti-circle-dashed"></i>Pitchers K</button>
+    <button class="tab-btn" onclick="showTab('batters');loadPropHist('batter')"><i class="ti ti-run"></i>Bateadores</button>
     <button class="tab-btn" onclick="showTab('signals');loadSignals()"><i class="ti ti-radar"></i>Señales</button>
     <button class="tab-btn" onclick="showTab('model');loadModelTab()"><i class="ti ti-brain"></i>Modelo IA</button>
     <button class="tab-btn" onclick="showTab('valid');loadValidation()"><i class="ti ti-target"></i>Validación</button>
-    <button class="tab-btn" onclick="showTab('props');loadProps()"><i class="ti ti-list-check"></i>Historial Props</button>
   </div>
 
   <div class="tab-content">
@@ -470,11 +475,35 @@ body{background:radial-gradient(1100px 560px at 15% -10%,rgba(178,107,255,.10),t
     <!-- PITCHERS -->
     <div class="tab-pane" id="tab-pitchers">
       <div id="pitchers-area"><div class="empty">Corre el análisis primero.</div></div>
+      <div class="ph-hdr">
+        <div>
+          <div class="ph-title">📅 Historial · Ponches</div>
+          <div class="ph-sub">Los mejores por edge de cada jornada. Si vuelves a analizar y aparece uno mejor, se agrega; lo ya guardado no se borra.</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn-sm" onclick="loadPropHist('pitcher')">🔄 Recargar</button>
+          <button class="btn-sm owner-only" onclick="autoGradeProps()" title="Califica los props desde el boxscore final de MLB">⚡ Auto-calificar</button>
+          <button class="btn-sm owner-only" style="color:var(--rtx);border-color:var(--red)" onclick="clearPropHist('pitcher')">🗑 Limpiar</button>
+        </div>
+      </div>
+      <div id="pitchers-hist"><div class="empty">Cargando…</div></div>
     </div>
 
     <!-- BATTERS -->
     <div class="tab-pane" id="tab-batters">
       <div id="batters-area"><div class="empty">Corre el análisis primero.</div></div>
+      <div class="ph-hdr">
+        <div>
+          <div class="ph-title">📅 Historial · Bateadores</div>
+          <div class="ph-sub">Los mejores por edge de cada jornada. Si vuelves a analizar y aparece uno mejor, se agrega; lo ya guardado no se borra.</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn-sm" onclick="loadPropHist('batter')">🔄 Recargar</button>
+          <button class="btn-sm owner-only" onclick="autoGradeProps()" title="Califica los props desde el boxscore final de MLB">⚡ Auto-calificar</button>
+          <button class="btn-sm owner-only" style="color:var(--rtx);border-color:var(--red)" onclick="clearPropHist('batter')">🗑 Limpiar</button>
+        </div>
+      </div>
+      <div id="batters-hist"><div class="empty">Cargando…</div></div>
     </div>
 
     <!-- SEÑALES · historial del tablero de convicción -->
@@ -532,22 +561,6 @@ body{background:radial-gradient(1100px 560px at 15% -10%,rgba(178,107,255,.10),t
         </div>
       </div>
       <div id="valid-area"><div class="empty">Cargando…</div></div>
-    </div>
-
-    <!-- HISTORIAL PROPS -->
-    <div class="tab-pane" id="tab-props">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px">
-        <div>
-          <div style="font-size:13px;font-weight:700">Historial de Props</div>
-          <div style="font-size:11px;color:var(--text2)">Pitchers (Ks) y bateadores (Hit/TB/HR/BB/H+R+RBI) · cómo van tus proyecciones</div>
-        </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn-sm" onclick="loadProps()">🔄 Recargar</button>
-          <button class="btn-sm owner-only" onclick="autoGradeProps()" title="Califica los props desde el boxscore final de MLB">⚡ Auto-calificar</button>
-          <button class="btn-sm owner-only" style="color:var(--rtx);border-color:var(--red)" onclick="clearProps()">🗑 Limpiar</button>
-        </div>
-      </div>
-      <div id="props-area"><div class="empty">Cargando…</div></div>
     </div>
 
     <!-- FÚTBOL (5 grandes ligas) -->
@@ -2975,6 +2988,7 @@ async function runAnalysis() {
     const best5Games = [...results].map(g=>({g,bp:bestEdgePick(g)})).filter(x=>x.bp)
       .sort((x,y)=>byValue(x.bp,y.bp)).slice(0,5).map(x=>x.g);
     Promise.all([ savePredictions(date, best5Games), saveSignals(date, results), savePropPicks(date) ])
+      .then(() => { loadPropHist('pitcher'); loadPropHist('batter'); })   // refresca los historiales ya guardados
       .catch(e => { console.warn('guardado:', e.message);
         $('run-status').textContent += ' · ⚠ no se pudo guardar en Supabase'; });
 
@@ -2988,23 +3002,53 @@ async function runAnalysis() {
 
 // ── Supabase save ─────────────────────────────────────────────────────────────
 // Guarda los picks de props (pitchers Ks + bateadores) recolectados al renderizar
+// ── Historial de props: ACUMULA por jornada, nunca borra ──────────────────────
+// Regla pedida: cada análisis propone los 3 de mayor edge. Si más tarde vuelves a
+// analizar y aparece uno MEJOR que todo lo ya guardado de ese día, se agrega. Si
+// los nuevos son peores, no pasa nada: lo del día no se toca.
+//
+//   mañana   →  guarda  8.2% · 6.1% · 5.4%
+//   tarde    →  el mejor nuevo es 7.0%  → no llega a 8.2%, no se agrega nada
+//   noche    →  aparece uno de 9.5%     → se agrega, el día queda con 4
+//
+// Solo entran picks CON edge de mercado: sin cuota no hay pick, aquí tampoco.
+// Si el MISMO pick (jugador+mercado+línea) reaparece con mejor edge, se actualiza
+// en su lugar en vez de duplicarse — y nunca se toca uno ya calificado.
+const PROP_TOP_N = 3;
 async function savePropPicks(date){
   if(!isOwner()) return;
-  // Solo los 5 MEJORES por VALOR de cada categoría (misma regla de 3 niveles del sistema)
-  const top5=arr=>[...arr].filter(p=>p.player_id&&p.gamePk).sort(byPropValue).slice(0,5);
-  const picks=[...top5(propsPitcher).map(p=>({...p,kind:'pitcher'})),...top5(propsBatter).map(p=>({...p,kind:'batter'}))];
-  if(!picks.length) return;
+  const conEdge = arr => arr.filter(p=>p.player_id&&p.gamePk&&p.edge!=null&&p.edge>0)
+                            .sort((a,b)=>b.edge-a.edge).slice(0,PROP_TOP_N);
+  const cand = [...conEdge(propsPitcher).map(p=>({...p,kind:'pitcher'})),
+                ...conEdge(propsBatter ).map(p=>({...p,kind:'batter' }))];
+  if(!cand.length) return;
   try{
-    const {data:existing}=await sb.from('prop_picks').select('id,player_id,market,result').eq('game_date',date);
-    const map={}; (existing||[]).forEach(e=>map[e.player_id+'|'+e.market]=e);
-    const toInsert=[];
-    for(const r of picks){
-      const row={game_date:date,game_pk:r.gamePk,kind:r.kind,player_id:r.player_id,player_name:r.player_name,team:r.team,market:r.market,target:r.target,side:r.side,prob:r.prob,proj:r.proj};
-      const ex=map[r.player_id+'|'+r.market];
-      if(ex){ if(!ex.result) await sb.from('prop_picks').update(row).eq('id',ex.id); }
-      else toInsert.push(row);
+    const {data:existing} = await sb.from('prop_picks')
+      .select('id,kind,player_id,market,target,edge,result').eq('game_date',date);
+    const prev = existing||[];
+    // Mejor edge ya guardado de cada tipo ese día: la vara que hay que superar.
+    // Ojo: las filas guardadas antes de existir la columna traen edge null, y +null
+    // es 0 — eso bajaría la vara a 0 y dejaría entrar cualquier cosa. Se ignoran.
+    const vara = {};
+    prev.forEach(e=>{ if(e.edge==null) return; const v=+e.edge;
+      if(isFinite(v)) vara[e.kind]=Math.max(vara[e.kind]??-Infinity, v); });
+    const mismo = {};   // jugador|mercado|línea -> fila existente
+    prev.forEach(e=>{ mismo[`${e.player_id}|${e.market}|${e.target}`]=e; });
+
+    const nuevos=[];
+    for(const r of cand){
+      const row={game_date:date,game_pk:r.gamePk,kind:r.kind,player_id:r.player_id,player_name:r.player_name,
+                 team:r.team,market:r.market,target:r.target,side:r.side,prob:r.prob,proj:r.proj,edge:r.edge};
+      const ex = mismo[`${r.player_id}|${r.market}|${r.target}`];
+      if(ex){
+        // Ya está: solo se refresca si mejoró el edge y todavía no se calificó.
+        if(!ex.result && (ex.edge==null || r.edge > +ex.edge)) await sb.from('prop_picks').update(row).eq('id',ex.id);
+        continue;
+      }
+      // Pick nuevo: entra solo si supera lo mejor que ya había ese día.
+      if((vara[r.kind] ?? -Infinity) < r.edge) nuevos.push(row);
     }
-    if(toInsert.length) await sb.from('prop_picks').insert(toInsert);
+    if(nuevos.length) await sb.from('prop_picks').insert(nuevos);
   }catch(e){ console.warn('savePropPicks:',e.message); }
 }
 
@@ -3993,48 +4037,75 @@ async function autoGradeSignals(){
 }
 
 // ── Historial de Props ──────────────────────────────────────────────────────
-async function loadProps(){
-  $('props-area').innerHTML='<div class="loading"><div class="spin"></div>Cargando…</div>';
-  const {data:rows,error}=await sb.from('prop_picks').select('*').order('game_date',{ascending:false}).limit(1500);
-  if(error){ $('props-area').innerHTML=`<div class="error-box">${error.message}</div>`; return; }
-  if(!rows?.length){ $('props-area').innerHTML='<div class="empty">Sin props aún.<br>Analiza una fecha (con sesión iniciada) para empezar a registrarlos.</div>'; return; }
-  const section=(title,list)=>{
-    const graded=list.filter(r=>r.result), wins=graded.filter(r=>r.result==='win');
-    const acc=graded.length?Math.round(wins.length/graded.length*100)+'%':'—';
-    const body=list.slice(0,400).map(r=>`<tr>
-      <td>${r.game_date}</td>
-      <td><div style="display:flex;align-items:center;gap:6px"><img class="headshot-sm" style="width:24px;height:24px" src="${playerImg(r.player_id)}" onerror="${IMG_FALLBACK}"><strong>${r.player_name||'?'}</strong></div></td>
-      <td><span style="font-size:10px;padding:1px 6px;border-radius:3px;background:var(--bg3);font-weight:700">${r.team||''}</span></td>
-      <td style="font-weight:700">${r.market}</td>
+// ── Historial de props por pestaña, agrupado por jornada ──────────────────────
+// Cada pestaña (Pitchers K / Bateadores) tiene el suyo. Se agrupa por fecha, la más
+// reciente arriba, y dentro de cada día van ordenados por edge de mayor a menor.
+async function loadPropHist(kind){
+  const el = $(kind==='pitcher' ? 'pitchers-hist' : 'batters-hist');
+  if(!el) return;
+  el.innerHTML='<div class="loading"><div class="spin"></div>Cargando…</div>';
+  const {data:rows,error} = await sb.from('prop_picks').select('*')
+    .eq('kind',kind).order('game_date',{ascending:false}).limit(1500);
+  if(error){
+    const falta=/column .*edge|schema cache/i.test(error.message||'');
+    el.innerHTML=`<div class="error-box">${esc(error.message)}${falta?'<br><br><b>Falta la columna <code>edge</code></b> — corre el SQL de <code>supabase-setup.sql</code> en Supabase.':''}</div>`;
+    return;
+  }
+  if(!rows?.length){
+    el.innerHTML='<div class="empty">Sin registros todavía.<br>Analiza una fecha con sesión iniciada y aquí se van guardando los de mayor edge.</div>';
+    return;
+  }
+  const pctTxt = e => e==null ? '—' : `<b style="color:${+e>0?'var(--gtx)':'var(--text3)'}">${+e>=0?'+':''}${(+e*100).toFixed(1)}%</b>`;
+  const resTxt = r => r.result==='win'  ? '<span style="color:var(--gtx);font-weight:800">✓</span>'
+                    : r.result==='loss' ? '<span style="color:var(--rtx);font-weight:800">✗</span>'
+                    : '<span style="color:var(--text3)">pend.</span>';
+  // Agrupado por fecha
+  const byDay={};
+  rows.forEach(r=>{ (byDay[r.game_date]=byDay[r.game_date]||[]).push(r); });
+  const days = Object.keys(byDay).sort().reverse();
+
+  const cuerpo = days.map(d=>{
+    const arr = byDay[d].slice().sort((a,b)=>(+b.edge||-9)-(+a.edge||-9));
+    const g   = arr.filter(r=>r.result==='win'||r.result==='loss');
+    const w   = g.filter(r=>r.result==='win').length;
+    const dayHd = `<tr class="ph-day"><td colspan="7">${esc(d)} · ${arr.length} pick${arr.length===1?'':'s'}`+
+      (g.length?` · <span style="color:${w/g.length>=.5?'var(--gtx)':'var(--rtx)'}">${w}-${g.length-w}</span>`:' · sin calificar')+`</td></tr>`;
+    const filas = arr.map(r=>`<tr>
+      <td><div style="display:flex;align-items:center;gap:6px"><img class="headshot-sm" style="width:24px;height:24px" src="${playerImg(r.player_id)}" onerror="${IMG_FALLBACK}"><strong>${esc(r.player_name||'?')}</strong></div></td>
+      <td><span style="font-size:10px;padding:1px 6px;border-radius:3px;background:var(--bg3);font-weight:700">${esc(r.team||'')}</span></td>
+      <td style="font-weight:700">${esc(r.market||'')}</td>
       <td style="white-space:nowrap"><b style="color:${r.side==='over'?'var(--gtx)':'var(--rtx)'}">${r.side==='over'?'Over':'Under'}</b> ${r.target}${r.market==='Ks'?'K':''}</td>
-      <td>${r.prob!=null?Math.round(r.prob*100)+'%':(r.proj!=null?r.proj:'—')}</td>
-      <td style="font-weight:700">${r.actual!=null?r.actual:'—'}</td>
-      <td>${r.result?(r.result==='win'?'<span style="color:var(--gtx);font-weight:700">✓</span>':'<span style="color:var(--rtx);font-weight:700">✗</span>'):'<span style="color:var(--text3)">pend.</span>'}</td>
+      <td class="num">${pctTxt(r.edge)}</td>
+      <td class="num">${r.actual!=null?`<b>${r.actual}</b>`:'—'}</td>
+      <td class="c">${resTxt(r)}</td>
     </tr>`).join('');
-    return `<div class="card" style="margin-bottom:12px">
-      <div class="card-hdr"><span class="card-hdr-title">${title}</span><span style="font-size:11px;color:var(--text2)">${graded.length}/${list.length} calificados · acierto <b style="color:var(--gtx)">${acc}</b></span></div>
-      <div style="overflow-x:auto"><table class="htable"><thead><tr><th>Fecha</th><th>Jugador</th><th>Eq</th><th>Mercado</th><th>Pick</th><th>Prob/Proy</th><th>Real</th><th>✓/✗</th></tr></thead><tbody>${body}</tbody></table></div></div>`;
-  };
-  // Solo los picks que el sistema realmente recomendó (no todos los jugadores).
-  // Para cada día+mercado, deja los N de mayor probabilidad (o proyección) — igual
-  // que las pestañas: top-2 por categoría en bateadores, top-3 Ks en pitchers.
-  const topPerMarket=(list,n)=>{
-    const grp={};
-    list.forEach(r=>{ const k=(r.game_date||'')+'|'+(r.market||''); (grp[k]=grp[k]||[]).push(r); });
-    const out=[];
-    Object.values(grp).forEach(arr=>{ arr.sort(byPropValue); out.push(...arr.slice(0,n)); });
-    return out.sort((a,b)=> (a.game_date<b.game_date?1:a.game_date>b.game_date?-1:0));
-  };
-  const pit = topPerMarket(rows.filter(r=>r.kind==='pitcher'), 3);
-  const bat = topPerMarket(rows.filter(r=>r.kind==='batter'), 2);
-  $('props-area').innerHTML=section('⚾ Pitchers · Ponches (Ks)',pit)+section('🏏 Bateadores',bat);
+    return dayHd+filas;
+  }).join('');
+
+  const g = rows.filter(r=>r.result==='win'||r.result==='loss');
+  const w = g.filter(r=>r.result==='win').length;
+  const acc = g.length ? Math.round(w/g.length*100)+'%' : '—';
+  el.innerHTML = `<div class="card">
+    <div class="card-hdr">
+      <span class="card-hdr-title">${days.length} jornada${days.length===1?'':'s'} · ${rows.length} picks</span>
+      <span style="font-size:11px;color:var(--text2)">${g.length} calificados · récord <b style="color:var(--blue)">${w}-${g.length-w}</b> · acierto <b style="color:var(--gtx)">${acc}</b></span>
+    </div>
+    <div style="overflow-x:auto"><table class="htable">
+      <thead><tr><th>Jugador</th><th>Eq</th><th>Mercado</th><th>Pick</th><th class="num">Edge</th><th class="num">Real</th><th class="c">✓/✗</th></tr></thead>
+      <tbody>${cuerpo}</tbody></table></div>
+    <div style="padding:8px 12px;font-size:10px;color:var(--text3)">
+      Se guardan los <b>${PROP_TOP_N} de mayor edge</b> de cada análisis. Al reanalizar el mismo día solo se agrega
+      lo que supere al mejor ya registrado; nada se borra. Los picks sin cuota de casa no entran.
+    </div>
+  </div>`;
 }
-async function clearProps(){
+async function clearPropHist(kind){
   if(!requireAuth()) return;
-  if(!confirm('¿Borrar TODO el historial de props?')) return;
-  const {error}=await sb.from('prop_picks').delete().gte('id',0);
+  const nom = kind==='pitcher' ? 'ponches' : 'bateadores';
+  if(!confirm(`¿Borrar TODO el historial de ${nom}?`)) return;
+  const {error}=await sb.from('prop_picks').delete().eq('kind',kind);
   if(error){ alert('Error: '+error.message); return; }
-  loadProps();
+  loadPropHist(kind);
 }
 // Lee el boxscore final y devuelve stats por jugador
 async function boxscorePlayers(gamePk){
@@ -4062,7 +4133,10 @@ function gradeProp(p, players){
 }
 async function autoGradeProps(){
   if(!requireAuth()) return;
-  $('props-area').insertAdjacentHTML('afterbegin','<div class="loading" id="pg-msg"><div class="spin"></div>Calificando props desde boxscores…</div>');
+  // El botón vive en las dos pestañas (Ponches y Bateadores) y califica ambas de una:
+  // el aviso se pone donde el usuario está parado.
+  const donde = document.querySelector('#tab-batters.active') ? 'batters-hist' : 'pitchers-hist';
+  $(donde)?.insertAdjacentHTML('afterbegin','<div class="loading" id="pg-msg"><div class="spin"></div>Calificando props desde boxscores…</div>');
   const {data:rows}=await sb.from('prop_picks').select('*').is('result',null);
   if(!rows?.length){ $('pg-msg')?.remove(); alert('No hay props sin calificar.'); return; }
   // Solo juegos FINALES
@@ -4078,7 +4152,7 @@ async function autoGradeProps(){
   }
   $('pg-msg')?.remove();
   alert(`✅ ${graded} props calificados`+(rows.length-graded?` · ${rows.length-graded} aún sin marcador final o sin datos`:''));
-  loadProps();
+  loadPropHist('pitcher'); loadPropHist('batter');
 }
 
 // ── Model tab ─────────────────────────────────────────────────────────────────

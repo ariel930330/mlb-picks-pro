@@ -168,6 +168,12 @@ a{color:var(--blue);text-decoration:none}
 .day-btn:hover:not(.active){background:var(--bg4)}
 .dayrow{cursor:pointer}
 .dayrow.active td{background:var(--bg3);font-weight:700}
+.day-sel{background:var(--bg2);color:var(--text);border:1px solid var(--border);padding:6px 10px;border-radius:8px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;outline:none;font-variant-numeric:tabular-nums;max-width:100%}
+.day-sel:focus{border-color:var(--purple)}
+.day-sel option{background:var(--bg2);color:var(--text)}
+.day-nav{background:var(--bg2);color:var(--text2);border:1px solid var(--border);width:26px;height:26px;border-radius:7px;font-size:15px;line-height:1;cursor:pointer;font-family:inherit}
+.day-nav:hover:not(:disabled){background:var(--bg4);color:var(--text)}
+.day-nav:disabled{opacity:.3;cursor:default}
 @media(max-width:560px){
   .board-row{grid-template-columns:88px 1fr 52px;gap:8px}
   .board-tier,.board-dq{display:none}
@@ -4111,12 +4117,20 @@ function renderPropHist(kind){
                     : r.result==='loss' ? '<span style="color:var(--rtx);font-weight:800">✗</span>'
                     : '<span style="color:var(--text3)">pend.</span>';
 
-  // ── Barra de días ──
-  const daybar = `<div class="filterbar">`+
-    `<span style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase">Día:</span>`+
-    days.slice(0,14).map(d=>`<button class="day-btn${d===day?' active':''}" onclick="setPropDay('${kind}','${esc(d)}')">${esc(d)}</button>`).join('')+
-    (days.length>14?`<span style="font-size:10px;color:var(--text3)">+${days.length-14} más (abajo)</span>`:'')+
-    `</div>`;
+  // ── Selector de jornada ──
+  // Desplegable y no botones: con una fila de botones, a las dos semanas ya no cabe
+  // y a los dos meses es una pared. Cada opción lleva su récord para poder escanear
+  // la lista sin ir abriendo día por día. Las flechas saltan al día anterior/siguiente.
+  const i = days.indexOf(day);
+  const opt = d => { const r=rec(byDay[d]);
+    return `<option value="${esc(d)}"${d===day?' selected':''}>${esc(d)} · ${byDay[d].length} pick${byDay[d].length===1?'':'s'}${r.n?` · ${r.w}-${r.l}`:' · sin calificar'}</option>`; };
+  const daybar = `<div class="filterbar">
+    <span style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase">Jornada:</span>
+    <button class="day-nav" onclick="setPropDay('${kind}','${esc(days[i+1]||day)}')"${i>=days.length-1?' disabled':''} title="Día anterior">‹</button>
+    <select class="day-sel" onchange="setPropDay('${kind}', this.value)">${days.map(opt).join('')}</select>
+    <button class="day-nav" onclick="setPropDay('${kind}','${esc(days[i-1]||day)}')"${i<=0?' disabled':''} title="Día siguiente">›</button>
+    <span style="font-size:10px;color:var(--text3)">${days.length} jornada${days.length===1?'':'s'} guardada${days.length===1?'':'s'}</span>
+  </div>`;
 
   // ── Jornada elegida ──
   const arr = (byDay[day]||[]).slice().sort((a,b)=>(b.edge==null?-9:+b.edge)-(a.edge==null?-9:+a.edge));
@@ -4142,7 +4156,11 @@ function renderPropHist(kind){
   </div>`;
 
   // ── Resumen día por día ──
-  const histFilas = days.map(d=>{
+  // Acotado a 30 jornadas por el mismo motivo que el selector: la tabla crece sin
+  // techo. El renglón TOTAL de abajo sí cuenta TODO, no solo lo que se ve.
+  const HIST_DIAS = 30;
+  const visibles = days.slice(0, HIST_DIAS);
+  const histFilas = visibles.map(d=>{
     const a=byDay[d], r=rec(a), pend=a.filter(x=>!x.result).length;
     const mejor = a.reduce((m,x)=> (x.edge!=null && (m==null || +x.edge>+m.edge)) ? x : m, null);
     return `<tr class="dayrow${d===day?' active':''}" onclick="setPropDay('${kind}','${esc(d)}')">
@@ -4159,7 +4177,7 @@ function renderPropHist(kind){
   const cardHist = `<div class="card" style="margin-top:10px">
     <div class="card-hdr">
       <span class="card-hdr-title">📅 Resumen por jornada</span>
-      <span style="font-size:10px;color:var(--text3)">${days.length} día${days.length===1?'':'s'} · clic en una fecha para verla arriba</span>
+      <span style="font-size:10px;color:var(--text3)">${days.length>HIST_DIAS?`últimas ${HIST_DIAS} de ${days.length} · usa el selector de arriba para las anteriores`:`${days.length} día${days.length===1?'':'s'}`} · clic en una fecha para verla arriba</span>
     </div>
     <div style="overflow-x:auto"><table class="htable">
       <thead><tr><th>Fecha</th><th class="num">Picks</th><th class="num">Récord</th><th class="num">%</th><th class="num">Mejor edge</th><th class="num">Pend.</th></tr></thead>

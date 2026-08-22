@@ -3015,16 +3015,32 @@ async function runAnalysis() {
 // Si el MISMO pick (jugador+mercado+línea) reaparece con mejor edge, se actualiza
 // en su lugar en vez de duplicarse — y nunca se toca uno ya calificado.
 const PROP_TOP_N = 3;
+// Por qué esta variable: supabase-js NO lanza excepción cuando la base rechaza algo,
+// devuelve {error}. Antes ni se miraba, así que si faltaba una columna el guardado
+// fallaba sin dejar rastro: analizabas, el historial seguía vacío y nada te lo decía.
+// Aquí se guarda el motivo y loadPropHist lo muestra arriba de la tabla.
+let propSaveMsg = null;
+const FALTA_EDGE = 'Falta la columna <code>edge</code> en la tabla <code>prop_picks</code>. '+
+  'Corre esto en Supabase → SQL Editor:<br><code>alter table public.prop_picks add column if not exists edge numeric;</code>';
+const propErr = e => { if(!e) return false;
+  propSaveMsg = /column .*edge|edge.* does not exist/i.test(e.message||'') ? FALTA_EDGE : esc(e.message||'error al guardar');
+  console.warn('savePropPicks:', e.message); return true; };
+
 async function savePropPicks(date){
-  if(!isOwner()) return;
+  propSaveMsg = null;
+  if(!isOwner()){ propSaveMsg='Inicia sesión para que los props se guarden en el historial.'; return; }
   const conEdge = arr => arr.filter(p=>p.player_id&&p.gamePk&&p.edge!=null&&p.edge>0)
                             .sort((a,b)=>b.edge-a.edge).slice(0,PROP_TOP_N);
   const cand = [...conEdge(propsPitcher).map(p=>({...p,kind:'pitcher'})),
                 ...conEdge(propsBatter ).map(p=>({...p,kind:'batter' }))];
-  if(!cand.length) return;
+  if(!cand.length){
+    propSaveMsg = 'Este análisis no dejó ningún prop con edge de mercado positivo, así que no se guardó nada.';
+    return;
+  }
   try{
-    const {data:existing} = await sb.from('prop_picks')
+    const {data:existing, error:eSel} = await sb.from('prop_picks')
       .select('id,kind,player_id,market,target,edge,result').eq('game_date',date);
+    if(propErr(eSel)) return;
     const prev = existing||[];
     // Mejor edge ya guardado de cada tipo ese día: la vara que hay que superar.
     // Ojo: las filas guardadas antes de existir la columna traen edge null, y +null
@@ -3042,14 +3058,20 @@ async function savePropPicks(date){
       const ex = mismo[`${r.player_id}|${r.market}|${r.target}`];
       if(ex){
         // Ya está: solo se refresca si mejoró el edge y todavía no se calificó.
-        if(!ex.result && (ex.edge==null || r.edge > +ex.edge)) await sb.from('prop_picks').update(row).eq('id',ex.id);
+        if(!ex.result && (ex.edge==null || r.edge > +ex.edge)){
+          const {error} = await sb.from('prop_picks').update(row).eq('id',ex.id);
+          if(propErr(error)) return;
+        }
         continue;
       }
       // Pick nuevo: entra solo si supera lo mejor que ya había ese día.
       if((vara[r.kind] ?? -Infinity) < r.edge) nuevos.push(row);
     }
-    if(nuevos.length) await sb.from('prop_picks').insert(nuevos);
-  }catch(e){ console.warn('savePropPicks:',e.message); }
+    if(nuevos.length){
+      const {error} = await sb.from('prop_picks').insert(nuevos);
+      if(propErr(error)) return;
+    }
+  }catch(e){ propErr(e); }
 }
 
 // El pick de MAYOR edge del juego (busca en TODOS los mercados, no solo el top-3 por probabilidad)
@@ -4048,11 +4070,15 @@ async function loadPropHist(kind){
     .eq('kind',kind).order('game_date',{ascending:false}).limit(1500);
   if(error){
     const falta=/column .*edge|schema cache/i.test(error.message||'');
-    el.innerHTML=`<div class="error-box">${esc(error.message)}${falta?'<br><br><b>Falta la columna <code>edge</code></b> — corre el SQL de <code>supabase-setup.sql</code> en Supabase.':''}</div>`;
+    el.innerHTML=`<div class="error-box">${esc(error.message)}${falta?'<br><br>'+FALTA_EDGE:''}</div>`;
     return;
   }
+  // Si el último guardado falló, se dice aquí en vez de dejar la tabla vacía sin motivo.
+  const aviso = propSaveMsg
+    ? `<div class="error-box" style="margin-bottom:10px"><b>⚠ El último análisis no se pudo guardar</b><br>${propSaveMsg}</div>`
+    : '';
   if(!rows?.length){
-    el.innerHTML='<div class="empty">Sin registros todavía.<br>Analiza una fecha con sesión iniciada y aquí se van guardando los de mayor edge.</div>';
+    el.innerHTML=aviso+'<div class="empty">Sin registros todavía.<br>Analiza una fecha con sesión iniciada y aquí se van guardando los de mayor edge.</div>';
     return;
   }
   const pctTxt = e => e==null ? '—' : `<b style="color:${+e>0?'var(--gtx)':'var(--text3)'}">${+e>=0?'+':''}${(+e*100).toFixed(1)}%</b>`;
@@ -4085,7 +4111,7 @@ async function loadPropHist(kind){
   const g = rows.filter(r=>r.result==='win'||r.result==='loss');
   const w = g.filter(r=>r.result==='win').length;
   const acc = g.length ? Math.round(w/g.length*100)+'%' : '—';
-  el.innerHTML = `<div class="card">
+  el.innerHTML = aviso+`<div class="card">
     <div class="card-hdr">
       <span class="card-hdr-title">${days.length} jornada${days.length===1?'':'s'} · ${rows.length} picks</span>
       <span style="font-size:11px;color:var(--text2)">${g.length} calificados · récord <b style="color:var(--blue)">${w}-${g.length-w}</b> · acierto <b style="color:var(--gtx)">${acc}</b></span>
@@ -4145,13 +4171,16 @@ async function autoGradeProps(){
     try{ const sc=await mlb(`/schedule?sportId=1&date=${d}`); (sc.dates||[]).flatMap(x=>x.games||[]).forEach(g=>{ if(g.status?.abstractGameState==='Final') finals.add(g.gamePk); }); }catch{}
   }
   const byGame={}; rows.forEach(r=>{ if(finals.has(r.game_pk)) (byGame[r.game_pk]=byGame[r.game_pk]||[]).push(r); });
-  let graded=0;
+  let graded=0, fallos=0;
   for(const pk of Object.keys(byGame)){
     const players=await boxscorePlayers(pk); if(!players) continue;
-    for(const p of byGame[pk]){ const g=gradeProp(p,players); if(g){ await sb.from('prop_picks').update({actual:g.actual,result:g.result}).eq('id',p.id); graded++; } }
+    for(const p of byGame[pk]){ const g=gradeProp(p,players); if(!g) continue;
+      const {error}=await sb.from('prop_picks').update({actual:g.actual,result:g.result}).eq('id',p.id);
+      if(error){ fallos++; console.warn('gradeProp:',error.message); } else graded++; }
   }
   $('pg-msg')?.remove();
-  alert(`✅ ${graded} props calificados`+(rows.length-graded?` · ${rows.length-graded} aún sin marcador final o sin datos`:''));
+  alert(`✅ ${graded} props calificados`+(fallos?`\n⚠ ${fallos} no se pudieron guardar (revisa permisos/RLS)`:'')
+        +(rows.length-graded-fallos?` · ${rows.length-graded-fallos} aún sin marcador final o sin datos`:''));
   loadPropHist('pitcher'); loadPropHist('batter');
 }
 

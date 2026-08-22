@@ -249,7 +249,7 @@ a{color:var(--blue);text-decoration:none}
 .bt-chip.blue{color:var(--blue)}
 .bt-chip.gold{color:var(--gold)}
 .bt-chip.warn{color:var(--rtx)}
-.bt-proj{display:flex;flex-direction:column;align-items:flex-end;gap:2px;text-align:right;min-width:54px}
+.bt-proj{display:flex;flex-direction:column;align-items:flex-end;gap:2px;text-align:right;min-width:92px}
 .bt-val{font-size:18px;font-weight:800;color:var(--green);line-height:1;font-variant-numeric:tabular-nums}
 .bt-casa{font-size:9px;font-weight:700;white-space:nowrap}
 
@@ -3382,11 +3382,11 @@ function renderPitchers(games) {
       rec='—'; recColor='var(--text3)'; badge=`casa ${line}K`;
       sub=`Línea de casa ${line}K · Mercado: Over ${pct(mkt.fairOver)} / Under ${pct(mkt.fairUnder)} · ⚠ salida corta (proyección del modelo no aplica)`;
     } else if(mkt){
-      const stake=e.rec?stakePct(e.modelP,e.price):0;
       rec=e.over?'OVER':'UNDER';
       recColor=e.rec?(e.over?'var(--green)':'var(--red)'):'var(--text3)';   // sin valor apostable => neutro
       badge=`${rec} ${line}K ${amFmt(e.price)}`;
-      sub=`Proy ${p.kExp}K · Modelo ${pct(e.modelP)} vs Mercado ${pct(e.fair)} · edge ${e.edge>=0?'+':''}${(e.edge*100).toFixed(1)}% · EV ${e.ev>=0?'+':''}${(e.ev*100).toFixed(1)}%${e.rec?` · apostar ${stake}%`:` · <span style="color:var(--rtx)">no apostable (EV bajo / precio caro)</span>`}`;
+      // El edge y el EV ya salen arriba en tarjetas; aquí queda el porqué del número.
+      sub=`Proyección del modelo: <b>${p.kExp}K</b> en ${line} · ${e.rec?`<b style="color:var(--gtx)">apostable</b> (EV sobre el mínimo de ${(K_MIN_EV*100).toFixed(0)}%)`:`<b style="color:var(--rtx)">no apostable</b> — el precio no paga el riesgo`}`;
     } else {
       rec='proy'; recColor='var(--text3)'; badge=`~${p.kExp}K`;
       sub=`Proyección ${p.kExp}K · ${e.over?'OVER':'UNDER'} ${e.line} al ${pct(e.modelP)} · <span title="Estimado contra el precio típico de un O/U de Ks (-115), no contra una cuota real.">est. ${e.edge>=0?'+':''}${(e.edge*100).toFixed(1)}%</span> · sin línea de casa`;
@@ -3399,11 +3399,24 @@ function renderPitchers(games) {
         </span>
         <span style="font-size:13px;font-weight:700;color:${recColor}">${badge}</span>
       </div>
-      <div style="display:flex;gap:8px;padding:10px 12px;flex-wrap:wrap">
-        ${[['ERA',p.era],['FIP',p.fip],['xFIP',p.xfip],['xERA',p.xera??'—'],['Whiff%',p.whiff!=null?p.whiff:'—'],['Chase%',p.chase!=null?p.chase:'—'],['Velo',p.shape?.fbVelo??'—'],['iVB',p.shape?.fbIVB??'—'],['Sep',p.shape?.veloSep??'—'],['K/9',p.k9],['Ks Exp.',p.kExp],[`Línea (${lineSrc})`,line]].map(([l,v])=>`
-          <div style="background:var(--bg3);border-radius:var(--rs);padding:6px 12px;text-align:center;min-width:60px">
+      ${e.short?'':`<div style="display:flex;gap:8px;padding:10px 12px 0;flex-wrap:wrap">
+        ${[['EV', e.ev!=null?`${e.ev>=0?'+':''}${(e.ev*100).toFixed(1)}%`:'—', e.ev!=null&&e.ev>0?'var(--gtx)':'var(--rtx)'],
+           ['Edge', `${e.edge>=0?'+':''}${(e.edge*100).toFixed(1)}%`, e.edge>0?'var(--gtx)':'var(--rtx)'],
+           ['Modelo', pct(e.modelP), 'var(--text)'],
+           ['Mercado', e.fair!=null?pct(e.fair):'—', 'var(--text2)'],
+           ['Precio', e.price!=null?amFmt(e.price):'—', 'var(--text2)'],
+           ['Stake', e.rec?`${stakePct(e.modelP,e.price)}%`:'—', e.rec?'var(--gold)':'var(--text3)'],
+          ].map(([l,v,c])=>`
+          <div style="background:var(--bg3);border:1px solid ${c==='var(--gtx)'?'rgba(0,214,143,.28)':'transparent'};border-radius:var(--rs);padding:6px 12px;text-align:center;min-width:64px">
             <div style="font-size:9px;color:var(--text3)">${l}</div>
-            <div style="font-size:14px;font-weight:700;color:${['K/9','Ks Exp.'].includes(l)?'var(--green)':'var(--text)'}">${v}</div>
+            <div style="font-size:15px;font-weight:800;color:${c}">${v}</div>
+          </div>`).join('')}
+      </div>`}
+      <div style="display:flex;gap:6px;padding:8px 12px;flex-wrap:wrap">
+        ${[['ERA',p.era],['FIP',p.fip],['xFIP',p.xfip],['xERA',p.xera??'—'],['Whiff%',p.whiff!=null?p.whiff:'—'],['Chase%',p.chase!=null?p.chase:'—'],['Velo',p.shape?.fbVelo??'—'],['iVB',p.shape?.fbIVB??'—'],['Sep',p.shape?.veloSep??'—'],['K/9',p.k9],['Ks Exp.',p.kExp],[`Línea (${lineSrc})`,line]].map(([l,v])=>`
+          <div style="background:var(--bg3);border-radius:var(--rs);padding:4px 9px;text-align:center;min-width:52px">
+            <div style="font-size:9px;color:var(--text3)">${l}</div>
+            <div style="font-size:12px;font-weight:700;color:${['K/9','Ks Exp.'].includes(l)?'var(--green)':'var(--text)'}">${v}</div>
           </div>`).join('')}
       </div>
       ${p.kMatch!=null&&Math.abs(p.kMatch-1)>=.01?`<div style="padding:0 12px 4px;font-size:10px;color:var(--text2)">🎯 <b>K% ${p.opp} vs tu arsenal:</b> <span style="color:${p.kMatch>=1.02?'var(--gtx)':p.kMatch<=.98?'var(--rtx)':'var(--text2)'};font-weight:700">${p.kMatch>=1?'+':''}${((p.kMatch-1)*100).toFixed(0)}% Ks</span>${p.kMatchK!=null?` · K% ${p.kMatchK>=1?'+':''}${((p.kMatchK-1)*100).toFixed(0)}%`:''}${p.kMatchWh!=null?` · whiff ${p.kMatchWh>=1?'+':''}${((p.kMatchWh-1)*100).toFixed(0)}%`:''} <span style="color:var(--text3)">(uso del arsenal × K% de la alineación por pitch)</span></div>`:''}
@@ -3482,7 +3495,6 @@ function renderBatters(batData) {
   const pool = rows.filter(anyLine);
   if(!pool.length){$('batters-area').innerHTML='<div class="empty">Ningún bateador tiene línea real de casa en esta jornada.<br>Sin cuota no hay pick: no se puede saber si el precio paga bien.</div>';return;}
 
-  const propTag=ev=>ev?`<span class="bt-casa" style="color:${ev.edge>0?'var(--gtx)':'var(--text3)'}">casa ${ev.over?'O':'U'}${ev.line} ${ev.edge>=0?'+':''}${(ev.edge*100).toFixed(0)}%${ev.stake>0?` · ${ev.stake}%`:''}</span>`:'';
   // Cada categoría: los 2 de MAYOR EDGE contra la línea real de casa. mkt/target/prob para el historial.
   const cats=[
     {title:'⚾ Probabilidad de Hit', mkt:'Hit', target:.5, prob:r=>r.hitP,               metric:r=>r.hitP,  fmt:r=>Math.round(r.hitP*100)+'%', tag:r=>r.evHits},
@@ -3509,11 +3521,18 @@ function renderBatters(batData) {
         <div class="bt-vs"><img class="logo-xs" src="${teamLogo(ABBR2ID[r.team])}" onerror="${IMG_FALLBACK}">${r.team} · vs ${(r.pitcher||'').split(' ').slice(-1)[0]||'—'}${r.oppHand?` (${r.oppHand})`:''} · <span class="bt-mtag" style="color:${r.tag.c}">${r.tag.t}</span></div>
         ${chips.length?`<div class="bt-chips">${chips.join('')}</div>`:''}
       </div>
-      <div class="bt-proj"><span class="bt-val">${cat.fmt(r)}</span>${cat.tag&&cat.tag(r)?propTag(cat.tag(r)):''}</div>
+      <div class="bt-proj">${(ev=>ev
+        // El número grande es el EDGE, que es lo que decide el pick. La proyección y
+        // la probabilidad pasan a la línea de abajo: son el insumo, no la conclusión.
+        ? `<span class="bt-val" style="color:${ev.edge>0?'var(--gtx)':'var(--rtx)'}">${ev.edge>=0?'+':''}${(ev.edge*100).toFixed(1)}%</span>
+           <span class="bt-casa" style="color:var(--text2)">${ev.over?'O':'U'}${ev.line} ${amFmt(ev.price)}</span>
+           <span class="bt-casa" style="color:var(--text3);font-weight:400">proy ${cat.fmt(r)} · mkt ${pct(ev.fair)}</span>
+           ${ev.stake>0?`<span class="bt-casa" style="color:var(--gold)">apostar ${ev.stake}%</span>`:''}`
+        : `<span class="bt-val">${cat.fmt(r)}</span>`)(cat.tag?cat.tag(r):null)}</div>
     </div>`;
   };
   $('batters-area').innerHTML=`
-    <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los 2 de <b>mayor edge (valor)</b> por categoría, siempre contra la <b>línea real de casa</b> · <b>sin cuota no hay pick</b>: las categorías sin mercado (H+R+RBI, BB) no se muestran · ajustado por pitcher rival, mano, estadio y clima${rows.some(r=>r.conf)?' · <b style="color:var(--gtx)">✓</b> = titular confirmado':''}${rows.some(r=>!r.conf)?' · <b>sin confirmar</b> = activo y sin lesión, pero la alineación no se publica todavía':''} · <b>se excluyen lesionados y jugadores fuera del roster activo</b>.</div>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los 2 de <b>mayor edge (valor)</b> por categoría · el número grande es el <b>edge contra la línea real de casa</b>; la proyección va debajo, como insumo · <b>sin cuota no hay pick</b>: las categorías sin mercado (H+R+RBI, BB) no se muestran · ajustado por pitcher rival, mano, estadio y clima${rows.some(r=>r.conf)?' · <b style="color:var(--gtx)">✓</b> = titular confirmado':''}${rows.some(r=>!r.conf)?' · <b>sin confirmar</b> = activo y sin lesión, pero la alineación no se publica todavía':''} · <b>se excluyen lesionados y jugadores fuera del roster activo</b>.</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px">
       ${cats.map(cat=>{
         // SIN CUOTA NO HAY PICK: solo entran los que tienen línea real de casa en ESTA

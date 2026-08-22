@@ -4719,8 +4719,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   try{ const c=JSON.parse(localStorage.getItem('cal_ab')||'null'); if(c?.a) CAL=c; }catch{}
   try{ const {data:cd}=await sb.from('model_weights').select('weights_json').eq('id',2); if(cd?.length){ const c=JSON.parse(cd[0].weights_json); if(c?.a) CAL=c; } }catch{}
 
-  // Restaurar el último análisis COMPLETO: local (instantáneo) -> nube (otra PC) -> picks de Supabase.
-  if(!restoreCache()){ if(!await restoreCloud()) restoreToday(); }
+  // Restaurar el análisis MÁS RECIENTE entre esta PC y la nube (compartido entre dispositivos).
+  await restoreBest();
 });
 
 // Aplica un análisis restaurado a todas las pestañas
@@ -4742,7 +4742,7 @@ function applyRestored(c, src){
 
 // Guarda el análisis completo: en localStorage (esta PC) y en Supabase (cualquier PC)
 function cacheAnalysis(date){
-  const payload={date, games:allGames, batters:allBatters, parlays:allParlays, bprops:allBProps};
+  const payload={date, games:allGames, batters:allBatters, parlays:allParlays, bprops:allBProps, savedAt:Date.now()};
   try{ localStorage.setItem('last_analysis', JSON.stringify(payload)); }catch(e){ console.warn('cache:',e.message); }
   saveAnalysisCloud(date, payload);
 }
@@ -4750,19 +4750,22 @@ async function saveAnalysisCloud(date, payload){
   if(!isOwner()) return;   // escritura solo del dueño (RLS)
   try{ await sb.from('analysis_cache').upsert({game_date:date, payload:JSON.stringify(payload), updated_at:new Date().toISOString()},{onConflict:'game_date'}); }catch(e){ console.warn('cloud cache:',e.message); }
 }
-function restoreCache(){
-  let c; try{ c=JSON.parse(localStorage.getItem('last_analysis')||'null'); }catch{ return false; }
-  if(!c||!Array.isArray(c.games)||!c.games.length) return false;
-  applyRestored(c,'(local)'); return true;
-}
-async function restoreCloud(){
+// Restaura el análisis MÁS RECIENTE: compara el caché local (esta PC) con el de la NUBE
+// (compartido entre PCs) y usa el más nuevo. Así, tras analizar en cualquier PC, todas ven
+// lo mismo. Antes ganaba siempre el local → cada PC mostraba su propia copia vieja.
+async function restoreBest(){
+  let local=null; try{ local=JSON.parse(localStorage.getItem('last_analysis')||'null'); }catch{}
+  const localOk = local && Array.isArray(local.games) && local.games.length;
+  const localTs = localOk ? (local.savedAt || (local.date?Date.parse(local.date+'T23:59:59Z'):0) || 0) : 0;
+  let cloud=null, cloudTs=0;
   try{
-    const {data,error}=await sb.from('analysis_cache').select('payload').order('updated_at',{ascending:false}).limit(1);
-    if(error||!data?.length) return false;
-    const c=JSON.parse(data[0].payload);
-    if(!c?.games?.length) return false;
-    applyRestored(c,'(nube)'); return true;
-  }catch{ return false; }
+    const {data,error}=await sb.from('analysis_cache').select('payload,updated_at').order('updated_at',{ascending:false}).limit(1);
+    if(!error && data?.length){ const c=JSON.parse(data[0].payload); if(c?.games?.length){ cloud=c; cloudTs=Date.parse(data[0].updated_at)||0; } }
+  }catch(e){ console.warn('restoreCloud:',e.message); }
+  if(cloud && cloudTs>=localTs){ applyRestored(cloud,'(nube · más reciente)'); return; }   // la nube es más nueva → gana
+  if(localOk){ applyRestored(local,'(local)'); return; }
+  if(cloud){ applyRestored(cloud,'(nube)'); return; }
+  restoreToday();   // último recurso: reconstruye desde los picks guardados
 }
 
 async function restoreToday() {

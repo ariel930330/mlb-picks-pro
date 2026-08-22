@@ -236,9 +236,6 @@ a{color:var(--blue);text-decoration:none}
 .ph-hdr{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin:22px 0 10px;padding-top:16px;border-top:1px solid var(--border)}
 .ph-title{font-size:13px;font-weight:700}
 .ph-sub{font-size:11px;color:var(--text2);max-width:620px}
-.ph-day{font-weight:800;font-size:11px;background:var(--bg3);color:var(--text2)}
-.ph-day td{padding:5px 10px;letter-spacing:.4px}
-.ph-new{color:var(--gold);font-size:9px;font-weight:800;margin-left:5px}
 .bt-vs{font-size:9.5px;color:var(--text2);display:flex;align-items:center;gap:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .bt-mtag{font-weight:800}
 .bt-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:1px}
@@ -4062,6 +4059,12 @@ async function autoGradeSignals(){
 // ── Historial de props por pestaña, agrupado por jornada ──────────────────────
 // Cada pestaña (Pitchers K / Bateadores) tiene el suyo. Se agrupa por fecha, la más
 // reciente arriba, y dentro de cada día van ordenados por edge de mayor a menor.
+// Estado y caché por pestaña: la consulta se hace una vez y cambiar de día
+// solo vuelve a pintar, sin ir de nuevo a Supabase.
+let propDay  = {pitcher:null, batter:null};   // null = el día más reciente
+let propRows = {pitcher:[],   batter:[]};
+function setPropDay(kind, d){ propDay[kind]=d; renderPropHist(kind); }
+
 async function loadPropHist(kind){
   const el = $(kind==='pitcher' ? 'pitchers-hist' : 'batters-hist');
   if(!el) return;
@@ -4073,57 +4076,108 @@ async function loadPropHist(kind){
     el.innerHTML=`<div class="error-box">${esc(error.message)}${falta?'<br><br>'+FALTA_EDGE:''}</div>`;
     return;
   }
+  propRows[kind] = rows||[];
+  renderPropHist(kind);
+}
+
+// Un día a la vez, como en Señales: la tabla de arriba muestra SOLO la jornada
+// elegida y abajo va el resumen día por día. Con la tabla corrida se volvía
+// interminable a las pocas semanas.
+function renderPropHist(kind){
+  const el = $(kind==='pitcher' ? 'pitchers-hist' : 'batters-hist');
+  if(!el) return;
+  const rows = propRows[kind]||[];
+
   // Si el último guardado falló, se dice aquí en vez de dejar la tabla vacía sin motivo.
   const aviso = propSaveMsg
     ? `<div class="error-box" style="margin-bottom:10px"><b>⚠ El último análisis no se pudo guardar</b><br>${propSaveMsg}</div>`
     : '';
-  if(!rows?.length){
+  if(!rows.length){
     el.innerHTML=aviso+'<div class="empty">Sin registros todavía.<br>Analiza una fecha con sesión iniciada y aquí se van guardando los de mayor edge.</div>';
     return;
   }
-  const pctTxt = e => e==null ? '—' : `<b style="color:${+e>0?'var(--gtx)':'var(--text3)'}">${+e>=0?'+':''}${(+e*100).toFixed(1)}%</b>`;
-  const resTxt = r => r.result==='win'  ? '<span style="color:var(--gtx);font-weight:800">✓</span>'
-                    : r.result==='loss' ? '<span style="color:var(--rtx);font-weight:800">✗</span>'
-                    : '<span style="color:var(--text3)">pend.</span>';
-  // Agrupado por fecha
+
   const byDay={};
   rows.forEach(r=>{ (byDay[r.game_date]=byDay[r.game_date]||[]).push(r); });
   const days = Object.keys(byDay).sort().reverse();
+  const day  = (propDay[kind] && byDay[propDay[kind]]) ? propDay[kind] : days[0];
 
-  const cuerpo = days.map(d=>{
-    const arr = byDay[d].slice().sort((a,b)=>(+b.edge||-9)-(+a.edge||-9));
-    const g   = arr.filter(r=>r.result==='win'||r.result==='loss');
-    const w   = g.filter(r=>r.result==='win').length;
-    const dayHd = `<tr class="ph-day"><td colspan="7">${esc(d)} · ${arr.length} pick${arr.length===1?'':'s'}`+
-      (g.length?` · <span style="color:${w/g.length>=.5?'var(--gtx)':'var(--rtx)'}">${w}-${g.length-w}</span>`:' · sin calificar')+`</td></tr>`;
-    const filas = arr.map(r=>`<tr>
-      <td><div style="display:flex;align-items:center;gap:6px"><img class="headshot-sm" style="width:24px;height:24px" src="${playerImg(r.player_id)}" onerror="${IMG_FALLBACK}"><strong>${esc(r.player_name||'?')}</strong></div></td>
-      <td><span style="font-size:10px;padding:1px 6px;border-radius:3px;background:var(--bg3);font-weight:700">${esc(r.team||'')}</span></td>
-      <td style="font-weight:700">${esc(r.market||'')}</td>
-      <td style="white-space:nowrap"><b style="color:${r.side==='over'?'var(--gtx)':'var(--rtx)'}">${r.side==='over'?'Over':'Under'}</b> ${r.target}${r.market==='Ks'?'K':''}</td>
-      <td class="num">${pctTxt(r.edge)}</td>
-      <td class="num">${r.actual!=null?`<b>${r.actual}</b>`:'—'}</td>
-      <td class="c">${resTxt(r)}</td>
-    </tr>`).join('');
-    return dayHd+filas;
-  }).join('');
+  const rec = arr => { const g=arr.filter(r=>r.result==='win'||r.result==='loss');
+    const w=g.filter(r=>r.result==='win').length; return {n:g.length, w, l:g.length-w, pct:g.length?w/g.length:null}; };
+  const recCol = r => r.pct==null ? 'var(--text3)' : r.pct>=.6 ? 'var(--gtx)' : r.pct>=.5 ? 'var(--atx)' : 'var(--rtx)';
+  const pctTxt = e => e==null ? '<span style="color:var(--text3)">—</span>'
+    : `<b style="color:${+e>0?'var(--gtx)':'var(--text3)'}">${+e>=0?'+':''}${(+e*100).toFixed(1)}%</b>`;
+  const resTxt = r => r.result==='win'  ? '<span style="color:var(--gtx);font-weight:800">✓</span>'
+                    : r.result==='loss' ? '<span style="color:var(--rtx);font-weight:800">✗</span>'
+                    : '<span style="color:var(--text3)">pend.</span>';
 
-  const g = rows.filter(r=>r.result==='win'||r.result==='loss');
-  const w = g.filter(r=>r.result==='win').length;
-  const acc = g.length ? Math.round(w/g.length*100)+'%' : '—';
-  el.innerHTML = aviso+`<div class="card">
+  // ── Barra de días ──
+  const daybar = `<div class="filterbar">`+
+    `<span style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase">Día:</span>`+
+    days.slice(0,14).map(d=>`<button class="day-btn${d===day?' active':''}" onclick="setPropDay('${kind}','${esc(d)}')">${esc(d)}</button>`).join('')+
+    (days.length>14?`<span style="font-size:10px;color:var(--text3)">+${days.length-14} más (abajo)</span>`:'')+
+    `</div>`;
+
+  // ── Jornada elegida ──
+  const arr = (byDay[day]||[]).slice().sort((a,b)=>(b.edge==null?-9:+b.edge)-(a.edge==null?-9:+a.edge));
+  const rd  = rec(arr);
+  const filas = arr.map(r=>`<tr>
+    <td><div style="display:flex;align-items:center;gap:6px"><img class="headshot-sm" style="width:24px;height:24px" src="${playerImg(r.player_id)}" onerror="${IMG_FALLBACK}"><strong>${esc(r.player_name||'?')}</strong></div></td>
+    <td><span style="font-size:10px;padding:1px 6px;border-radius:3px;background:var(--bg3);font-weight:700">${esc(r.team||'')}</span></td>
+    <td style="font-weight:700">${esc(r.market||'')}</td>
+    <td style="white-space:nowrap"><b style="color:${r.side==='over'?'var(--gtx)':'var(--rtx)'}">${r.side==='over'?'Over':'Under'}</b> ${r.target}${r.market==='Ks'?'K':''}</td>
+    <td class="num">${pctTxt(r.edge)}</td>
+    <td class="num">${r.actual!=null?`<b>${r.actual}</b>`:'—'}</td>
+    <td class="c">${resTxt(r)}</td>
+  </tr>`).join('');
+
+  const cardDia = `<div class="card">
     <div class="card-hdr">
-      <span class="card-hdr-title">${days.length} jornada${days.length===1?'':'s'} · ${rows.length} picks</span>
-      <span style="font-size:11px;color:var(--text2)">${g.length} calificados · récord <b style="color:var(--blue)">${w}-${g.length-w}</b> · acierto <b style="color:var(--gtx)">${acc}</b></span>
+      <span class="card-hdr-title">${esc(day)} · ${arr.length} pick${arr.length===1?'':'s'}</span>
+      <span style="font-size:11px;color:var(--text2)">${rd.n?`récord <b style="color:${recCol(rd)}">${rd.w}-${rd.l}</b>`:'sin calificar'}</span>
     </div>
     <div style="overflow-x:auto"><table class="htable">
       <thead><tr><th>Jugador</th><th>Eq</th><th>Mercado</th><th>Pick</th><th class="num">Edge</th><th class="num">Real</th><th class="c">✓/✗</th></tr></thead>
-      <tbody>${cuerpo}</tbody></table></div>
+      <tbody>${filas}</tbody></table></div>
+  </div>`;
+
+  // ── Resumen día por día ──
+  const histFilas = days.map(d=>{
+    const a=byDay[d], r=rec(a), pend=a.filter(x=>!x.result).length;
+    const mejor = a.reduce((m,x)=> (x.edge!=null && (m==null || +x.edge>+m.edge)) ? x : m, null);
+    return `<tr class="dayrow${d===day?' active':''}" onclick="setPropDay('${kind}','${esc(d)}')">
+      <td style="white-space:nowrap;font-weight:700">${esc(d)}</td>
+      <td class="num">${a.length}</td>
+      <td class="num" style="font-weight:700;color:${recCol(r)}">${r.n?`${r.w}-${r.l}`:'—'}</td>
+      <td class="num" style="font-weight:700;color:${recCol(r)}">${r.pct!=null?Math.round(r.pct*100)+'%':'—'}</td>
+      <td class="num">${mejor?pctTxt(mejor.edge):'—'}</td>
+      <td class="num" style="font-size:10px;color:var(--text3)">${pend||''}</td>
+    </tr>`;
+  }).join('');
+
+  const tot = rec(rows);
+  const cardHist = `<div class="card" style="margin-top:10px">
+    <div class="card-hdr">
+      <span class="card-hdr-title">📅 Resumen por jornada</span>
+      <span style="font-size:10px;color:var(--text3)">${days.length} día${days.length===1?'':'s'} · clic en una fecha para verla arriba</span>
+    </div>
+    <div style="overflow-x:auto"><table class="htable">
+      <thead><tr><th>Fecha</th><th class="num">Picks</th><th class="num">Récord</th><th class="num">%</th><th class="num">Mejor edge</th><th class="num">Pend.</th></tr></thead>
+      <tbody>${histFilas}</tbody>
+      <tfoot><tr style="border-top:2px solid var(--border)">
+        <td style="font-weight:800">TOTAL</td>
+        <td class="num" style="font-weight:800">${rows.length}</td>
+        <td class="num" style="font-weight:800;color:${recCol(tot)}">${tot.n?`${tot.w}-${tot.l}`:'—'}</td>
+        <td class="num" style="font-weight:800;color:${recCol(tot)}">${tot.pct!=null?Math.round(tot.pct*100)+'%':'—'}</td>
+        <td class="num"></td><td class="num"></td>
+      </tr></tfoot></table></div>
     <div style="padding:8px 12px;font-size:10px;color:var(--text3)">
       Se guardan los <b>${PROP_TOP_N} de mayor edge</b> de cada análisis. Al reanalizar el mismo día solo se agrega
       lo que supere al mejor ya registrado; nada se borra. Los picks sin cuota de casa no entran.
     </div>
   </div>`;
+
+  el.innerHTML = aviso + daybar + cardDia + cardHist;
 }
 async function clearPropHist(kind){
   if(!requireAuth()) return;

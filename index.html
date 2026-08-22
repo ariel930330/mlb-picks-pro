@@ -820,7 +820,9 @@ const REF_BE = {
   'Run Line -1.5'    : 0.412,   // ~ +143
   'Total del partido': 0.524,   // -110
   'Total de equipo'  : 0.535,   // -115
-  '1er inning'       : 0.556,   // ~ -125 (NRFI/YRFI)
+  '1er inning'       : 0.535,   // -115. Antes 0.556 (-125), pero medido sobre 1,429
+                                // juegos el NRFI real es 48.3%: es casi un volado, y
+                                // un mercado parejo no se cobra a -125 de los dos lados.
   'F5 Total'         : 0.535,   // -115
   'Spread F5'        : 0.535,   // -115
 };
@@ -1262,8 +1264,34 @@ function computePicks(data) {
 
   // ── Mercados extra (proyección del modelo, lado más probable) ──
   const addP=(cat,main,sub,prob)=>picks.push({cat,main,sub,prob,edge:+(prob-BREAKEVEN).toFixed(3)});
-  // NRFI / YRFI (¿se anota en el 1er inning?)
-  const lam1=(hExp+aExp)/9*1.1, nrfi=cl(Math.exp(-lam1)*1.45,.35,.68);
+  // ── NRFI / YRFI (¿se anota en el 1er inning?) ──────────────────────────────
+  // Las carreras por media entrada NO siguen una Poisson: son a rachas (la mayoría
+  // de las entradas van en blanco y de vez en cuando cae un racimo). Medido sobre
+  // 1,429 juegos de 2026: varianza/media = 2.08, y Poisson subestima el cero feo
+  // (predice P(0)=0.572 cuando el real es 0.696).
+  //
+  // El código anterior tapaba ese hueco con `Math.exp(-lam1)*1.45`. Ese 1.45 no era
+  // arbitrario — es exactamente (0.696/0.572)² = 1.48 — pero multiplicar una
+  // PROBABILIDAD por una constante no es una operación válida: puede pasarse de 1,
+  // y por eso hacía falta un clamp que terminaba cargando el resultado.
+  //
+  // Se cambia por la binomial negativa, que sí modela ese exceso de dispersión:
+  //     P(0 carreras) = (1 + μ/k)^(-k)
+  // k calibrado contra los mismos datos: 0.446 da P(0)=0.6962 (real 0.6961) y un
+  // NRFI global de 48.5% (real 48.3%). Para recalibrarlo: medir P(0) por media
+  // entrada sobre una temporada y despejar k de esa fórmula.
+  //
+  // NRFI_F1: la 1ª entrada anota más que el promedio porque siempre le toca al tope
+  // del orden. Medido: 0.559 vs 0.512 carreras por media entrada = 1.091 (el código
+  // usaba 1.10 a ojo, y resultó estar bien).
+  //
+  // Se calcula por equipo y se multiplica, no se suman las medias: la suma de dos
+  // binomiales negativas no es binomial negativa, así que hay que tratarlas aparte.
+  const NRFI_K = 0.446, NRFI_F1 = 1.091;
+  const p0Inn = mu => Math.pow(1 + Math.max(mu,0.01)/NRFI_K, -NRFI_K);
+  // El clamp queda solo como riel de seguridad: con totales reales (7 a 12 carreras)
+  // esto ya cae solo entre 42% y 55%, así que no toca los bordes.
+  const nrfi = cl(p0Inn(hExp/9*NRFI_F1) * p0Inn(aExp/9*NRFI_F1), .30, .70);
   addP('1er inning', nrfi>=.5?'NRFI (sin carrera 1er inn)':'YRFI (carrera 1er inn)', 'Proyección del 1er inning', nrfi>=.5?nrfi:1-nrfi);
   // Team totals (carreras de cada equipo)
   const ttP=(team,exp)=>{ const ln=Math.floor(exp)+.5, ov=poissonOver(exp,ln); addP('Total de equipo', `${team} ${ov>=.5?'OVER':'UNDER'} ${ln}`, `Proy ${exp.toFixed(1)} carreras`, ov>=.5?ov:1-ov); };

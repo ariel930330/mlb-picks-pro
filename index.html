@@ -205,7 +205,17 @@ a{color:var(--blue);text-decoration:none}
 .s1x2-ev{font-size:11px;font-weight:800;margin-top:1px;font-variant-numeric:tabular-nums}
 .s-ou{font-size:10px;color:var(--text2);padding:0 12px 6px}
 .s-best{margin:0 12px 11px;padding:8px 11px;background:var(--bg3);border-radius:var(--rs);font-size:11px}
-@media(max-width:560px){.sboard-row{grid-template-columns:minmax(0,1fr) 52px 48px;gap:8px}.sb-pick{display:none}}
+.sboard-row.wlg{grid-template-columns:62px minmax(0,1fr) 108px 58px 52px 42px}
+.sb-lg{font-size:11px;font-weight:800;color:var(--text2);white-space:nowrap}
+.sb-n{font-size:10px;color:var(--text3);text-align:right;font-variant-numeric:tabular-nums}
+.lg-block{border:1px solid var(--border);border-radius:var(--r);background:var(--bg2);margin-bottom:10px;overflow:hidden}
+.lg-sum{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;cursor:pointer;font-size:12px;background:var(--bg3);list-style:none;user-select:none}
+.lg-sum::-webkit-details-marker{display:none}
+.lg-sum:hover{background:var(--bg4)}
+.lg-block[open] .lg-sum{border-bottom:1px solid var(--border)}
+.lg-hd{font-size:11px;font-weight:800;letter-spacing:.5px;color:var(--gold);margin:20px 0 8px;padding-top:12px;border-top:1px solid var(--border)}
+@media(max-width:560px){.sboard-row{grid-template-columns:minmax(0,1fr) 52px 48px;gap:8px}.sb-pick{display:none}
+  .sboard-row.wlg{grid-template-columns:52px minmax(0,1fr) 52px 48px}.sb-n{display:none}}
 .bp-head{display:flex;justify-content:space-between;align-items:center;font-size:11px;font-weight:800;color:var(--text2);margin-bottom:6px}
 .bp-model{font-size:10.5px;margin-bottom:10px;padding:6px 10px;background:var(--bg3);border-radius:var(--rs);line-height:1.4}
 .bp-card{background:var(--bg2);border:2px solid;border-radius:var(--r);padding:13px 15px;margin-bottom:12px;box-shadow:var(--shadow)}
@@ -582,6 +592,18 @@ body{background:radial-gradient(1100px 560px at 15% -10%,rgba(178,107,255,.10),t
       </div>
       <div style="font-size:10px;color:var(--text3);margin-bottom:10px"><b>Cuotas</b> (odds-api.io, Bet365+1xbet): consenso de-vig vs. mejor precio. <b>Modelo</b>: cada análisis guarda los resultados finales en Supabase y, al juntar ≥30 partidos de la temporada por liga, se enciende el <b>Dixon-Coles</b> (fuerzas ataque/defensa → <b>edge de modelo</b> del spec). Hasta entonces, solo valor de línea.</div>
       <div id="soccer-area"><div class="empty">Elige las ligas y dale a <b>Analizar jornada</b>.</div></div>
+      <div class="ph-hdr">
+        <div>
+          <div class="ph-title">📅 Historial de fútbol</div>
+          <div class="ph-sub">La mejor jugada de cada partido que calificó, separada por liga. El auto-calificar trae los marcadores de The Odds API, que solo alcanza <b>3 días hacia atrás</b>.</div>
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn-sm" onclick="loadSoccerHist()">🔄 Recargar</button>
+          <button class="btn-sm owner-only" onclick="autoGradeSoccer()" title="Califica los picks contra el marcador final (2 créditos por liga)">⚡ Auto-calificar</button>
+          <button class="btn-sm owner-only" style="color:var(--rtx);border-color:var(--red)" onclick="clearSoccerHist()">🗑 Limpiar</button>
+        </div>
+      </div>
+      <div id="soccer-hist"><div class="empty">Cargando…</div></div>
     </div>
 
   </div>
@@ -2364,7 +2386,9 @@ function computeSoccerMatch(ev, lg){
       }
     }
   }
-  return finalizeSoccerMatch(home, away, ev.commence_time, lg, h2hBooks, ouBooks);
+  const out = finalizeSoccerMatch(home, away, ev.commence_time, lg, h2hBooks, ouBooks);
+  if(out) out.eventId = ev.id;   // hace falta para cruzar el pick con el marcador al calificar
+  return out;
 }
 
 // ── Proveedor odds-api.io (v3, 500 req/día) ──────────────────────────────────
@@ -2489,6 +2513,7 @@ function setSport(s){
     document.querySelector('.hdr-title').textContent='Fútbol Picks Pro';
     document.querySelector('.hdr-sub').textContent="Motor Baker's Picks · 11 competiciones · valor + disciplina";
     setupSoccerLeagues();
+    loadSoccerHist();   // el historial se carga al entrar, sin esperar a un análisis
   } else {
     mlbTabs.style.display='';
     soccer.classList.remove('active');
@@ -2523,6 +2548,8 @@ async function analyzeSoccer(){
     soccerMatches=matches;
     const rem=document.getElementById('soccer-remaining'); if(rem&&oddsRemaining!=null) rem.textContent=`${oddsRemaining} peticiones restantes${useIO?'/día':''}`;
     renderSoccer(matches, res.unresolved, dateStr);
+    // Guardar e historial van después de pintar, para no hacer esperar la pantalla.
+    saveSoccerPicks(matches).then(loadSoccerHist);
   }catch(e){ area.innerHTML=`<div class="empty">Error: ${e.message}</div>`; }
   if(btn) btn.disabled=false;
 }
@@ -2536,6 +2563,221 @@ function buildSlate(matches){
   const qual=all.filter(x=>scQualifies(x.c.tier)&&x.c.ev>0).sort((a,b)=>b.c.rank-a.c.rank||b.c.ev-a.c.ev);
   const near=all.filter(x=>!qual.includes(x)).sort((a,b)=>b.c.ev-a.c.ev).slice(0,3);
   return { best:qual[0]||null, alts:qual.slice(1,4), near, hasModel:matches.some(m=>m.hasModel) };
+}
+// ── Historial de fútbol: guardar, calificar y mostrar ─────────────────────────
+// Se guarda la MEJOR jugada de cada partido que califique (tier distinto de NO BET).
+// Igual que en props: si el mismo pick reaparece con mejor EV se actualiza en su
+// lugar, y nunca se toca uno ya calificado.
+let scSaveMsg = null;
+const SC_FALTA = 'Falta la tabla <code>soccer_picks</code>. Corre el bloque correspondiente de '+
+  '<code>supabase-setup.sql</code> en Supabase → SQL Editor.';
+const scErr = e => { if(!e) return false;
+  scSaveMsg = /soccer_picks|schema cache|does not exist|relation/i.test(e.message||'') ? SC_FALTA : esc(e.message||'error');
+  console.warn('soccer picks:', e.message); return true; };
+
+async function saveSoccerPicks(matches){
+  scSaveMsg = null;
+  if(!isOwner()){ scSaveMsg='Inicia sesión para que los picks de fútbol se guarden.'; return; }
+  const filas = matches.filter(m=>m.eventId && m.bestBet && scQualifies(m.bestBet.tier) && m.bestBet.ev>0)
+    .map(m=>{ const c=m.bestBet;
+      return { event_id:String(m.eventId), match_date:(m.commence||'').slice(0,10),
+        league:m.league.name, league_short:m.league.short, home:m.home, away:m.away, commence:m.commence,
+        mkt:c.mkt, label:c.label, line:(c.mkt==='O'||c.mkt==='U')?(m.ou?m.ou.line:null):null,
+        price:c.best, ev:c.ev, edge_pp:c.edgePP, dq:c.dq, tier:c.tier,
+        rank:c.rank, units:c.units, has_model:!!c.hasModel }; });
+  if(!filas.length){
+    // Si vienen partidos pero ninguno trae eventId, es que el análisis salió por
+    // odds-api.io: sus IDs no cruzan con /scores de The Odds API, así que esos picks
+    // nunca se podrían calificar. Se dice, en vez de guardar basura sin calificar.
+    const sinId = matches.length && !matches.some(m=>m.eventId);
+    scSaveMsg = sinId
+      ? 'El análisis salió por <b>odds-api.io</b>, cuyos IDs no cruzan con los marcadores de The Odds API. '+
+        'Para que el historial se pueda calificar, quita la key de odds-api.io de esta pestaña y usa solo The Odds API.'
+      : 'Ninguna jugada calificó en este análisis, así que no se guardó nada.';
+    return;
+  }
+  try{
+    // upsert por (event_id, mkt, line): el índice único de la tabla evita duplicados
+    // cuando reanalizas el mismo partido más tarde.
+    const {error} = await sb.from('soccer_picks').upsert(filas, {onConflict:'event_id,mkt,line', ignoreDuplicates:false});
+    if(scErr(error)) return;
+  }catch(e){ scErr(e); }
+}
+
+// Califica contra /scores de The Odds API. OJO: ese endpoint solo alcanza 3 días
+// hacia atrás, así que hay que correrlo seguido o los partidos viejos se quedan sin
+// calificar para siempre.
+async function autoGradeSoccer(){
+  if(!requireAuth()) return;
+  const key=getOddsKey();
+  if(!key){ alert('Necesitas la API key de The Odds API para traer los marcadores.'); return; }
+  const el=document.getElementById('soccer-hist');
+  el?.insertAdjacentHTML('afterbegin','<div class="loading" id="sg-msg"><div class="spin"></div>Trayendo marcadores…</div>');
+  const {data:pend,error} = await sb.from('soccer_picks').select('*').is('result',null);
+  if(error){ document.getElementById('sg-msg')?.remove(); alert('Error: '+error.message); return; }
+  if(!pend?.length){ document.getElementById('sg-msg')?.remove(); alert('No hay picks de fútbol sin calificar.'); return; }
+
+  // Un /scores por liga presente entre los pendientes (2 créditos cada uno)
+  const ligas=[...new Set(pend.map(p=>p.league_short))];
+  const porKey={}; SOCCER_LEAGUES.forEach(l=>porKey[l.short]=l.key);
+  const marcador={};   // event_id -> {h,a}
+  for(const short of ligas){
+    const lk=porKey[short]; if(!lk) continue;
+    try{
+      const r=await fetch(`${ODDS_BASE}/sports/${lk}/scores/?apiKey=${key}&daysFrom=3`);
+      if(!r.ok) continue;
+      oddsRemaining=r.headers.get('x-requests-remaining');
+      for(const e of await r.json()){
+        if(!e.completed || !e.scores) continue;
+        const h=e.scores.find(s=>s.name===e.home_team), a=e.scores.find(s=>s.name===e.away_team);
+        if(h&&a) marcador[String(e.id)]={h:+h.score, a:+a.score};
+      }
+    }catch(err){ console.warn('scores '+short+':',err.message); }
+  }
+
+  let ok=0, sin=0, fallo=0;
+  for(const p of pend){
+    const s=marcador[String(p.event_id)];
+    if(!s){ sin++; continue; }
+    const res=gradeSoccerPick(p, s.h, s.a);
+    if(!res){ sin++; continue; }
+    const {error:e2}=await sb.from('soccer_picks')
+      .update({home_goals:s.h, away_goals:s.a, result:res}).eq('id',p.id);
+    if(e2){ fallo++; console.warn('grade soccer:',e2.message); } else ok++;
+  }
+  document.getElementById('sg-msg')?.remove();
+  alert(`✅ ${ok} picks de fútbol calificados`
+    + (sin?`\n⏳ ${sin} sin marcador todavía (o con más de 3 días: /scores no llega más atrás)`:'')
+    + (fallo?`\n⚠ ${fallo} no se pudieron guardar`:''));
+  loadSoccerHist();
+}
+
+// 1 = gana local · X = empate · 2 = gana visita · O/U = total de goles vs la línea
+function gradeSoccerPick(p, hg, ag){
+  if(hg==null||ag==null) return null;
+  if(p.mkt==='1') return hg>ag ? 'win' : 'loss';
+  if(p.mkt==='2') return ag>hg ? 'win' : 'loss';
+  if(p.mkt==='X') return hg===ag ? 'win' : 'loss';
+  if(p.mkt==='O'||p.mkt==='U'){
+    if(p.line==null) return null;
+    const tot=hg+ag, ln=+p.line;
+    if(tot===ln) return 'push';                       // línea entera clavada: devuelve
+    return (p.mkt==='O' ? tot>ln : tot<ln) ? 'win' : 'loss';
+  }
+  return null;
+}
+
+// Historial por jornada, con desglose POR LIGA (que es lo que pediste ver separado)
+let scHistDay=null, scHistRows=[];
+function setScHistDay(d){ scHistDay=d; renderSoccerHist(); }
+async function loadSoccerHist(){
+  const el=document.getElementById('soccer-hist'); if(!el) return;
+  el.innerHTML='<div class="loading"><div class="spin"></div>Cargando…</div>';
+  const {data:rows,error}=await sb.from('soccer_picks').select('*').order('match_date',{ascending:false}).limit(2000);
+  if(error){
+    const falta=/soccer_picks|schema cache|does not exist|relation/i.test(error.message||'');
+    el.innerHTML=`<div class="error-box">${esc(error.message)}${falta?'<br><br>'+SC_FALTA:''}</div>`; return;
+  }
+  scHistRows=rows||[]; renderSoccerHist();
+}
+function renderSoccerHist(){
+  const el=document.getElementById('soccer-hist'); if(!el) return;
+  const rows=scHistRows;
+  const aviso = scSaveMsg
+    ? `<div class="error-box" style="margin-bottom:10px"><b>⚠ El último análisis no se guardó</b><br>${scSaveMsg}</div>` : '';
+  if(!rows.length){ el.innerHTML=aviso+'<div class="empty">Sin picks guardados todavía.<br>Analiza una jornada con sesión iniciada.</div>'; return; }
+
+  const rec = a => { const g=a.filter(r=>r.result==='win'||r.result==='loss');
+    const w=g.filter(r=>r.result==='win').length; return {n:g.length,w,l:g.length-w,pct:g.length?w/g.length:null}; };
+  const col = r => r.pct==null?'var(--text3)':r.pct>=.6?'var(--gtx)':r.pct>=.5?'var(--atx)':'var(--rtx)';
+  const evTxt = v => v==null?'—':`<b style="color:${+v>0?'var(--gtx)':'var(--text3)'}">${+v>=0?'+':''}${(+v*100).toFixed(1)}%</b>`;
+  const resTxt = r => r.result==='win'?'<span style="color:var(--gtx);font-weight:800">✓</span>'
+                    : r.result==='loss'?'<span style="color:var(--rtx);font-weight:800">✗</span>'
+                    : r.result==='push'?'<span style="color:var(--text3)">=</span>'
+                    : '<span style="color:var(--text3)">pend.</span>';
+
+  const byDay={}; rows.forEach(r=>{ (byDay[r.match_date]=byDay[r.match_date]||[]).push(r); });
+  const days=Object.keys(byDay).sort().reverse();
+  const day=(scHistDay&&byDay[scHistDay])?scHistDay:days[0];
+  const i=days.indexOf(day);
+  const opt=d=>{ const r=rec(byDay[d]);
+    return `<option value="${esc(d)}"${d===day?' selected':''}>${esc(d)} · ${byDay[d].length} pick${byDay[d].length===1?'':'s'}${r.n?` · ${r.w}-${r.l}`:' · sin calificar'}</option>`; };
+  const daybar=`<div class="filterbar">
+    <span style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase">Jornada:</span>
+    <button class="day-nav" onclick="setScHistDay('${esc(days[i+1]||day)}')"${i>=days.length-1?' disabled':''}>‹</button>
+    <select class="day-sel" onchange="setScHistDay(this.value)">${days.map(opt).join('')}</select>
+    <button class="day-nav" onclick="setScHistDay('${esc(days[i-1]||day)}')"${i<=0?' disabled':''}>›</button>
+    <span style="font-size:10px;color:var(--text3)">${days.length} jornada${days.length===1?'':'s'}</span>
+  </div>`;
+
+  // La jornada elegida, partida POR LIGA
+  const dRows=byDay[day]||[];
+  const porLiga={}; dRows.forEach(r=>{ (porLiga[r.league_short]=porLiga[r.league_short]||[]).push(r); });
+  const bloques=Object.keys(porLiga).sort().map(ls=>{
+    const arr=porLiga[ls].slice().sort((a,b)=>(+b.ev||-9)-(+a.ev||-9));
+    const r=rec(arr);
+    const filas=arr.map(x=>`<tr>
+      <td style="white-space:nowrap"><b>${esc(x.home)}</b> <span style="color:var(--text3)">v</span> ${esc(x.away)}</td>
+      <td style="font-weight:700">${esc(x.label||'')}${x.line!=null?` ${x.line}`:''}</td>
+      <td class="num">@${(+x.price).toFixed(2)}</td>
+      <td class="num">${evTxt(x.ev)}</td>
+      <td class="num">${x.dq??'—'}</td>
+      <td class="num">${x.home_goals!=null?`<b>${x.home_goals}-${x.away_goals}</b>`:'—'}</td>
+      <td class="c">${resTxt(x)}</td>
+    </tr>`).join('');
+    return `<div class="card" style="margin-bottom:10px">
+      <div class="card-hdr">
+        <span class="card-hdr-title">${esc(ls)} · ${arr.length} pick${arr.length===1?'':'s'}</span>
+        <span style="font-size:11px;color:var(--text2)">${r.n?`récord <b style="color:${col(r)}">${r.w}-${r.l}</b>`:'sin calificar'}</span>
+      </div>
+      <div style="overflow-x:auto"><table class="htable">
+        <thead><tr><th>Partido</th><th>Pick</th><th class="num">Cuota</th><th class="num">EV</th><th class="num">DQ</th><th class="num">Final</th><th class="c">✓/✗</th></tr></thead>
+        <tbody>${filas}</tbody></table></div></div>`;
+  }).join('');
+
+  // Acumulado por liga (todas las jornadas)
+  const acum={}; rows.forEach(r=>{ (acum[r.league_short]=acum[r.league_short]||[]).push(r); });
+  const totFilas=Object.keys(acum).sort((a,b)=>rec(acum[b]).n-rec(acum[a]).n).map(ls=>{
+    const a=acum[ls], r=rec(a), pend=a.filter(x=>!x.result).length;
+    const evm=a.length?a.reduce((s,x)=>s+(+x.ev||0),0)/a.length:null;
+    return `<tr>
+      <td style="font-weight:700">${esc(ls)}</td>
+      <td class="num">${a.length}</td>
+      <td class="num" style="font-weight:700;color:${col(r)}">${r.n?`${r.w}-${r.l}`:'—'}</td>
+      <td class="num" style="font-weight:700;color:${col(r)}">${r.pct!=null?Math.round(r.pct*100)+'%':'—'}</td>
+      <td class="num">${evTxt(evm)}</td>
+      <td class="num" style="font-size:10px;color:var(--text3)">${pend||''}</td>
+    </tr>`;
+  }).join('');
+  const tot=rec(rows);
+  const acumCard=`<div class="card" style="margin-top:10px">
+    <div class="card-hdr"><span class="card-hdr-title">📊 Acumulado por liga</span>
+      <span style="font-size:10px;color:var(--text3)">${days.length} jornada${days.length===1?'':'s'} · ${rows.length} picks</span></div>
+    <div style="overflow-x:auto"><table class="htable">
+      <thead><tr><th>Liga</th><th class="num">Picks</th><th class="num">Récord</th><th class="num">%</th><th class="num">EV medio</th><th class="num">Pend.</th></tr></thead>
+      <tbody>${totFilas}</tbody>
+      <tfoot><tr style="border-top:2px solid var(--border)">
+        <td style="font-weight:800">TOTAL</td>
+        <td class="num" style="font-weight:800">${rows.length}</td>
+        <td class="num" style="font-weight:800;color:${col(tot)}">${tot.n?`${tot.w}-${tot.l}`:'—'}</td>
+        <td class="num" style="font-weight:800;color:${col(tot)}">${tot.pct!=null?Math.round(tot.pct*100)+'%':'—'}</td>
+        <td class="num"></td><td class="num"></td>
+      </tr></tfoot></table></div>
+    <div style="padding:8px 12px;font-size:10px;color:var(--text3)">
+      Se guarda la mejor jugada de cada partido que califica. El auto-calificar usa
+      <b>/scores de The Odds API</b>, que solo alcanza <b>3 días hacia atrás</b>: córrelo seguido
+      o los partidos viejos se quedan sin marcador. Cuesta 2 créditos por liga.
+    </div>
+  </div>`;
+
+  el.innerHTML = aviso + daybar + bloques + acumCard;
+}
+async function clearSoccerHist(){
+  if(!requireAuth()) return;
+  if(!confirm('¿Borrar TODO el historial de picks de fútbol?')) return;
+  const {error}=await sb.from('soccer_picks').delete().gte('id',0);
+  if(error){ alert('Error: '+error.message); return; }
+  loadSoccerHist();
 }
 function renderSoccer(matches, unresolved, dateStr){
   const area=document.getElementById('soccer-area');
@@ -2608,17 +2850,54 @@ function renderSoccer(matches, unresolved, dateStr){
       <span class="sb-pick" style="color:${tierColor(c.tier)}">${c.tier}</span>
       <span class="sb-ev" style="color:${evColor(c.ev)}">${fmtEv(c.ev)}</span>
       <span class="sb-price">@${d2(c.best)}</span></a>`;}).join('')}</div>` : '';
-  // Tablero de valor (ordenado por ranking)
-  const board=[...matches].map((m,i)=>({m,i})).sort((a,b)=>b.m.bestBet.rank-a.m.bestBet.rank);
-  const boardHtml=`<div class="board"><div class="board-hd"><span class="t">⚽ TABLERO DE VALOR</span><span class="s">${matches.length} partidos · mejor cuota vs consenso · por ranking</span></div>${
-    board.map(({m,i})=>`<a class="sboard-row" href="#sm-${i}">
-      <span class="sb-mu">${m.league.flag} <b>${m.home}</b> <span style="color:var(--text3)">v</span> <b>${m.away}</b></span>
-      <span class="sb-pick">${m.bestBet.label}</span>
-      <span class="sb-ev" style="color:${evColor(m.bestBet.ev)}">${fmtEv(m.bestBet.ev)}</span>
-      <span class="sb-price">@${d2(m.bestBet.price)}</span>
-    </a>`).join('')}</div>`;
-  // Cards por partido (en orden de horario)
-  const cards=matches.map((m,i)=>{
+  // ── Agrupado POR LIGA ─────────────────────────────────────────────────────
+  // Con 11 competiciones, un tablero corrido de 80 partidos no se lee. Se parte en
+  // un bloque por liga, ordenado por el mejor ranking que tenga cada una, y arriba
+  // un resumen con LO MEJOR DE CADA LIGA para poder decidir sin bajar.
+  const porLiga = new Map();
+  matches.forEach((m,i)=>{ const k=m.league.key;
+    if(!porLiga.has(k)) porLiga.set(k,{lg:m.league, items:[]});
+    porLiga.get(k).items.push({m,i}); });
+  const ligas = [...porLiga.values()].map(L=>{
+    L.items.sort((a,b)=>b.m.bestBet.rank-a.m.bestBet.rank);
+    L.top = L.items[0];                                   // mejor jugada de esa liga
+    L.conValor = L.items.filter(x=>scQualifies(x.m.bestBet.tier)&&x.m.bestBet.ev>0).length;
+    return L;
+  }).sort((a,b)=> b.top.m.bestBet.rank - a.top.m.bestBet.rank);
+
+  // Resumen: una fila por liga con su mejor jugada
+  const resumen = `<div class="board"><div class="board-hd">
+      <span class="t">🥇 LO MEJOR DE CADA LIGA</span>
+      <span class="s">${ligas.length} competiciones · clic para ir al partido</span></div>${
+    ligas.map(L=>{ const c=L.top.m.bestBet, m=L.top.m;
+      return `<a class="sboard-row wlg" href="#sm-${L.top.i}">
+        <span class="sb-lg">${L.lg.flag} ${L.lg.short}</span>
+        <span class="sb-mu">${m.home.split(' ').slice(-1)} <span style="color:var(--text3)">v</span> ${m.away.split(' ').slice(-1)}</span>
+        <span class="sb-pick" style="color:${tierColor(c.tier)}">${c.label}</span>
+        <span class="sb-ev" style="color:${evColor(c.ev)}">${fmtEv(c.ev)}</span>
+        <span class="sb-price">@${d2(c.price)}</span>
+        <span class="sb-n">${L.conValor}/${L.items.length}</span>
+      </a>`; }).join('')}
+    <div style="padding:6px 12px;font-size:10px;color:var(--text3)">La última columna es <b>cuántos partidos con valor</b> tiene la liga sobre el total.</div></div>`;
+
+  // Un tablero por liga, plegable. La de mejor ranking abierta; el resto cerradas.
+  const boardHtml = resumen + ligas.map((L,li)=>`
+    <details class="lg-block"${li===0?' open':''}>
+      <summary class="lg-sum">
+        <span>${L.lg.flag} <b>${L.lg.name}</b> <span style="color:var(--text3);font-weight:400">${L.items.length} partido${L.items.length===1?'':'s'}</span></span>
+        <span style="font-size:11px;color:${L.conValor?'var(--gtx)':'var(--text3)'}">${L.conValor?`${L.conValor} con valor`:'sin valor'}</span>
+      </summary>
+      ${L.items.map(({m,i})=>`<a class="sboard-row" href="#sm-${i}">
+        <span class="sb-mu"><b>${m.home}</b> <span style="color:var(--text3)">v</span> <b>${m.away}</b></span>
+        <span class="sb-pick" style="color:${tierColor(m.bestBet.tier)}">${m.bestBet.label}</span>
+        <span class="sb-ev" style="color:${evColor(m.bestBet.ev)}">${fmtEv(m.bestBet.ev)}</span>
+        <span class="sb-price">@${d2(m.bestBet.price)}</span>
+      </a>`).join('')}
+    </details>`).join('');
+
+  // Cards por partido, también agrupadas por liga (mismo orden que los tableros)
+  const cards=ligas.map(L=>`<div class="lg-hd">${L.lg.flag} ${L.lg.name}</div>`+
+    L.items.map(({m,i})=>{
     const col=(lbl,fair,price,ev)=>`<div class="s1x2-col"><div class="s1x2-lbl">${lbl}</div><div class="s1x2-fair">${p1(fair)}</div><div class="s1x2-price">@${d2(price)}</div><div class="s1x2-ev" style="color:${evColor(ev)}">${fmtEv(ev)}</div></div>`;
     const ou=m.ou?`<div class="s-ou">O/U ${m.ou.line} · <b>Over</b> ${p1(m.ou.fairOver)} @${d2(m.ou.bestOver)} <span style="color:${evColor(m.ou.evOver)}">${fmtEv(m.ou.evOver)}</span> · <b>Under</b> ${p1(m.ou.fairUnder)} @${d2(m.ou.bestUnder)} <span style="color:${evColor(m.ou.evUnder)}">${fmtEv(m.ou.evUnder)}</span></div>`:'';
     const bb=m.bestBet;
@@ -2628,7 +2907,7 @@ function renderSoccer(matches, unresolved, dateStr){
       ${ou?`<div class="game-footer" style="border-top:none">${ou}</div>`:''}
       <div class="s-best" style="border-left:3px solid ${evColor(bb.ev)}">⭐ <b>Mejor valor:</b> ${bb.label} @${d2(bb.price)} · <span style="color:${evColor(bb.ev)};font-weight:800">${fmtEv(bb.ev)} EV</span>${bb.ev<=0?' <span style="color:var(--text3)">(sin valor claro — el mercado está eficiente)</span>':''}</div>
     </div>`;
-  }).join('');
+  }).join('')).join('');
   const scopeLbl = dateStr ? `📅 ${dLabel}` : `próximos días`;
   const head=`<div class="bp-head"><span>🍞 Baker's Picks · ${scopeLbl} · ${matches.length} partidos</span><span>${stamp}</span></div>
     <div class="bp-model">${modelNote}</div>`;

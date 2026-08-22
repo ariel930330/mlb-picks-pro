@@ -3647,8 +3647,14 @@ const recordOf = rows => { const r=sigRate(rows,'result'); return {...r, l:r.n-r
 const recTxt   = r => r.n ? `${r.w}-${r.l}` : '0-0';
 
 // Tabla de rendimiento por grupo (tier, DQ, acuerdo con el modelo…)
-function sigGroupTable(title, note, hd, groups){
-  const body = groups.filter(g=>g.rows.length).map(g=>{
+// showEmpty: en las tablas por rango un tramo vacío SÍ dice algo — significa que el
+// tablero nunca emite señales ahí. Ocultarlo haría creer que el rango no existe.
+function sigGroupTable(title, note, hd, groups, showEmpty){
+  const body = groups.filter(g=>showEmpty||g.rows.length).map(g=>{
+    if(!g.rows.length) return `<tr style="opacity:.45">
+      <td>${g.label}</td><td class="num">0</td>
+      <td class="num" colspan="3" style="text-align:center;font-size:10px;color:var(--text3)">sin señales en este rango</td>
+    </tr>`;
     const m=sigRate(g.rows,'result');
     const c=avgOf(g.rows,'conv_eff'), d=avgOf(g.rows,'dq');
     return `<tr>
@@ -3813,20 +3819,38 @@ async function loadSignals(){
   // comprobar que los juegos descartados aciertan MENOS que los señalados.
   const porTier = sigGroupTable('🎯 Rendimiento por tier','acierto del mercado recomendado · si el tablero sirve debe SUBIR de LEAN → STRONG → ELITE','Tier',
     ['ELITE','STRONG','LEAN','NO EDGE'].map(t=>({label:tierPill(t)+(t==='NO EDGE'?' <span style="color:var(--text3);font-size:10px">(fuera del récord)</span>':''), rows:rows.filter(r=>r.tier===t)})));
-  const porDQ = sigGroupTable('🧪 Rendimiento por Data Quality','DQ alto = alineaciones confirmadas y buena muestra; debería acertar más','Data Quality',
-    [{label:'85–100 (alta)', rows:conEdge.filter(r=>r.dq>=85)},
-     {label:'70–84 (media)', rows:conEdge.filter(r=>r.dq>=70&&r.dq<85)},
-     {label:'50–69 (baja)',  rows:conEdge.filter(r=>r.dq>=50&&r.dq<70)},
-     {label:'&lt;50 (muy baja)', rows:conEdge.filter(r=>r.dq!=null&&r.dq<50)}]);
+  // ── Acierto por RANGO ─────────────────────────────────────────────────────
+  // La pregunta que responden: ¿el número que el tablero le pone a cada partido
+  // predice algo? Si sirve, el acierto tiene que SUBIR de un tramo al siguiente.
+  // Si sale plano (o al revés), el número es decorativo.
+  // Los cortes están aquí y en un solo lugar, para poder moverlos sin buscar.
+  const RANGOS = [{lo:0,hi:35,label:'0 – 35'},{lo:35,hi:70,label:'35 – 70'},{lo:70,hi:101,label:'70 – 100'}];
+  const enRango = (arr,campo,r) => arr.filter(x=>{ const v=+x[campo]; return isFinite(v)&&v>=r.lo&&v<r.hi; });
+  const rangoTabla = (titulo,nota,hd,campo) => sigGroupTable(titulo,nota,hd,
+    RANGOS.map(r=>({label:`<b>${r.label}</b>`, rows:enRango(conEdge,campo,r)})), true);
+
+  const porConv = rangoTabla('📈 Acierto por Edge+ (convicción)',
+    'si el número sirve, el acierto debe SUBIR de tramo en tramo','Edge+','conv_eff');
+  const porDQ = rangoTabla('🧪 Acierto por Data Quality',
+    'DQ alto = alineación confirmada y buena muestra; debería acertar más','Data Quality','dq');
   const porAcuerdo = sigGroupTable('⚖️ Tablero vs modelo','cuando el Edge Read señala al NO favorito del modelo, ¿quién tiene razón?','Acuerdo',
     [{label:'Coinciden <span style="color:var(--text3)">(señala al favorito del modelo)</span>', rows:conEdge.filter(r=>r.edge_wp!=null && +r.edge_wp>=.5)},
      {label:'Contradice <span style="color:var(--text3)">(señala al underdog del modelo)</span>', rows:conEdge.filter(r=>r.edge_wp!=null && +r.edge_wp<.5)}]);
 
-  $('signals-area').innerHTML = secciones + noEdgeNota + histCard + `
-    <details class="er-more" style="margin-top:12px"><summary>📊 Estadística acumulada (todos los días)</summary>
-      <div style="padding-top:12px">${porTier}${porDQ}${porAcuerdo}
+  // Las dos tablas por rango van a la vista, no dentro del acordeón: son las que
+  // responden si el número que el tablero le pone a cada partido vale algo.
+  const nSig = conEdge.filter(r=>r.result==='win'||r.result==='loss').length;
+  const rangoNota = `<div style="font-size:10px;color:var(--text3);margin:2px 2px 12px">
+    Ambas leen <b>solo señales con edge</b> (Elite + Strong + Lean) ya calificadas.
+    Un tramo en <b>0</b> significa que el tablero nunca puntúa ahí, no que falte información.
+    ${nSig<60?`<b style="color:var(--atx)">Llevas ${nSig} calificadas: con menos de ~60 por tramo las diferencias todavía son ruido.</b>`:''}
+  </div>`;
+
+  $('signals-area').innerHTML = secciones + noEdgeNota + histCard + porConv + porDQ + rangoNota + `
+    <details class="er-more" style="margin-top:12px"><summary>📊 Más cortes acumulados (todos los días)</summary>
+      <div style="padding-top:12px">${porTier}${porAcuerdo}
         <div style="font-size:10px;color:var(--text3);padding:0 2px 4px">
-          Es <b>% de acierto, no ROI</b>: el tablero señala un lado, no un precio. Con menos de ~100 señales calificadas por tier, las diferencias todavía son ruido.
+          Es <b>% de acierto, no ROI</b>: el tablero señala un lado, no un precio.
         </div>
       </div>
     </details>`;

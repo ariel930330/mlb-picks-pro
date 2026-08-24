@@ -882,6 +882,29 @@ const amFmt    = a => (a>0?'+':'')+a;
 const bestAm   = arr => arr.reduce((b,x)=> amPayout(x)>amPayout(b)?x:b);  // mejor línea (line shopping)
 const avg      = arr => arr.reduce((s,x)=>s+x,0)/arr.length;
 const median   = arr => { const s=[...arr].sort((a,b)=>a-b); return s[Math.floor(s.length/2)]; };
+// Consolida las cuotas de varias casas SOBRE LA MISMA LÍNEA.
+// Las casas no siempre cuelgan el mismo número (una pone Over 4.5 K y otra 5.5).
+// Antes se tomaba la línea MEDIANA y por separado el MEJOR precio de cualquier casa,
+// así que salían picks fantasma: "Over 4.5 a +125" donde ese +125 era, en realidad,
+// el precio del Over 5.5. Ninguna casa ofrecía esa combinación.
+// Ahora se elige la línea que MÁS casas cotizan (empate → la más cercana a la mediana)
+// y tanto el fair como el mejor precio salen SOLO de esas casas.
+const consensus = (arr, pt, a, b) => {
+  if(!arr || !arr.length) return null;
+  const groups = new Map();
+  arr.forEach(v => { const k = pt(v); if(k==null) return;
+    if(!groups.has(k)) groups.set(k, []); groups.get(k).push(v); });
+  if(!groups.size) return null;
+  const pts = [...groups.keys()].sort((x,y)=>x-y);
+  const med = pts[Math.floor(pts.length/2)];
+  let best = null;
+  groups.forEach((g,k) => { if(!best || g.length>best.g.length ||
+    (g.length===best.g.length && Math.abs(k-med)<Math.abs(best.k-med))) best={k,g}; });
+  const g = best.g;
+  const fa = avg(g.map(v => { const ia=amProb(a(v)), ib=amProb(b(v)); return ia/(ia+ib); }));
+  return { point:best.k, fairA:fa, fairB:1-fa, priceA:bestAm(g.map(a)), priceB:bestAm(g.map(b)),
+           books:g.length, total:arr.length, rows:g };
+};
 // Normaliza acentos a ASCII y deja solo letras: "Cristopher Sánchez"→"cristophersanchez"
 const normName = s => (s||'').normalize('NFD').replace(/[̀-ͯ]/g,'').toLowerCase().replace(/[^a-z]/g,'');
 const amDec    = a => a>0 ? 1+a/100 : 1+100/(-a);                          // americana → decimal
@@ -2040,9 +2063,9 @@ async function getPitcherProps(key, events) {
       }));
       Object.entries(agg).forEach(([k, arr]) => {
         const i = k.indexOf('|'), slot = k.slice(0,i), n = k.slice(i+1);
-        const fo = avg(arr.map(v => { const io = amProb(v.over), iu = amProb(v.under); return io / (io + iu); }));
-        out[slot][normName(n)] = { name: n, line: median(arr.map(v => v.point)), fairOver: fo, fairUnder: 1 - fo,
-          priceOver: bestAm(arr.map(v => v.over)), priceUnder: bestAm(arr.map(v => v.under)) };
+        const c = consensus(arr, v=>v.point, v=>v.over, v=>v.under); if(!c) return;
+        out[slot][normName(n)] = { name: n, line: c.point, fairOver: c.fairA, fairUnder: c.fairB,
+          priceOver: c.priceA, priceUnder: c.priceB, books: c.books, allBooks: c.total };
       });
     } catch {}
   });
@@ -2073,8 +2096,8 @@ async function getBatterProps(key, events) {
       }));
       Object.entries(agg).forEach(([k, arr]) => {
         const [nn, slot] = k.split('|');
-        const fo = avg(arr.map(v => { const io = amProb(v.over), iu = amProb(v.under); return io / (io + iu); }));
-        (byBatter[nn] = byBatter[nn] || {})[slot] = { line: median(arr.map(v => v.point)), fairOver: fo, fairUnder: 1 - fo, priceOver: bestAm(arr.map(v => v.over)), priceUnder: bestAm(arr.map(v => v.under)) };
+        const c = consensus(arr, v=>v.point, v=>v.over, v=>v.under); if(!c) return;
+        (byBatter[nn] = byBatter[nn] || {})[slot] = { line: c.point, fairOver: c.fairA, fairUnder: c.fairB, priceOver: c.priceA, priceUnder: c.priceB, books: c.books, allBooks: c.total };
       });
     } catch {}
   });
@@ -2098,8 +2121,10 @@ async function getF5Odds(key, events) {
       }));
       const o = {};
       if (mlP.length) { const fh = avg(mlP.map(p => { const ih = amProb(p.h), ia = amProb(p.a); return ih / (ih + ia); })); o.f5ml = { fairHome: fh, fairAway: 1 - fh, priceHome: bestAm(mlP.map(p => p.h)), priceAway: bestAm(mlP.map(p => p.a)) }; }
-      if (totP.length) { const fo = avg(totP.map(p => { const io = amProb(p.over), iu = amProb(p.under); return io / (io + iu); })); o.f5total = { point: median(totP.map(p => p.point)), fairOver: fo, fairUnder: 1 - fo, priceOver: bestAm(totP.map(p => p.over)), priceUnder: bestAm(totP.map(p => p.under)) }; }
-      if (spP.length) { const fhc = avg(spP.map(p => { const ih = amProb(p.hpr), ia = amProb(p.apr); return ih / (ih + ia); })); o.f5spread = { homePoint: median(spP.map(p => p.hp)), awayPoint: median(spP.map(p => p.ap)), fairHomeCover: fhc, fairAwayCover: 1 - fhc, priceHome: bestAm(spP.map(p => p.hpr)), priceAway: bestAm(spP.map(p => p.apr)) }; }
+      { const c = consensus(totP, p=>p.point, p=>p.over, p=>p.under);
+        if (c) o.f5total = { point: c.point, fairOver: c.fairA, fairUnder: c.fairB, priceOver: c.priceA, priceUnder: c.priceB, books: c.books, allBooks: c.total }; }
+      { const c = consensus(spP, p=>p.hp, p=>p.hpr, p=>p.apr);
+        if (c) o.f5spread = { homePoint: c.point, awayPoint: c.rows[0].ap, fairHomeCover: c.fairA, fairAwayCover: c.fairB, priceHome: c.priceA, priceAway: c.priceB, books: c.books, allBooks: c.total }; }
       if (Object.keys(o).length) byGame[normName(home) + '|' + normName(away)] = o;
     } catch {}
   });
@@ -2140,14 +2165,10 @@ async function getOdds(date) {
         const fh = avg(mlPairs.map(p => { const ih = amProb(p.h), ia = amProb(p.a); return ih / (ih + ia); }));
         o.ml = { fairHome: fh, fairAway: 1 - fh, priceHome: bestAm(mlPairs.map(p => p.h)), priceAway: bestAm(mlPairs.map(p => p.a)) };
       }
-      if (totPairs.length) {
-        const fo = avg(totPairs.map(p => { const io = amProb(p.over), iu = amProb(p.under); return io / (io + iu); }));
-        o.total = { point: median(totPairs.map(p => p.point)), fairOver: fo, fairUnder: 1 - fo, priceOver: bestAm(totPairs.map(p => p.over)), priceUnder: bestAm(totPairs.map(p => p.under)) };
-      }
-      if (spPairs.length) {
-        const fhc = avg(spPairs.map(p => { const ih = amProb(p.hpr), ia = amProb(p.apr); return ih / (ih + ia); }));
-        o.spread = { homePoint: median(spPairs.map(p => p.hp)), awayPoint: median(spPairs.map(p => p.ap)), fairHomeCover: fhc, fairAwayCover: 1 - fhc, priceHome: bestAm(spPairs.map(p => p.hpr)), priceAway: bestAm(spPairs.map(p => p.apr)) };
-      }
+      { const c = consensus(totPairs, p=>p.point, p=>p.over, p=>p.under);
+        if (c) o.total = { point: c.point, fairOver: c.fairA, fairUnder: c.fairB, priceOver: c.priceA, priceUnder: c.priceB, books: c.books, allBooks: c.total }; }
+      { const c = consensus(spPairs, p=>p.hp, p=>p.hpr, p=>p.apr);
+        if (c) o.spread = { homePoint: c.point, awayPoint: c.rows[0].ap, fairHomeCover: c.fairA, fairAwayCover: c.fairB, priceHome: c.priceA, priceAway: c.priceB, books: c.books, allBooks: c.total }; }
       const key = normName(home) + '|' + normName(away);
       (map[key] = map[key] || []).push(o);   // array: soporta doubleheaders (mismo matchup 2 veces)
     }
@@ -3692,7 +3713,7 @@ function pmEval(p, M){
   // que la línea es de otra cosa (opener, salida corta, lesión, línea vieja).
   const gap = Math.abs(mOver-mkt.fairOver);
   return {tag:M.tag, nombre:M.nombre, unidad:M.unidad, mu, line, over, prob, fair, price, edge, ev,
-          mRaw:mOver, gap, sospecha:gap>=.25,
+          mRaw:mOver, gap, sospecha:gap>=.25, books:mkt.books, allBooks:mkt.allBooks,
           mkt:true, rec:ev>=PM_MIN_EV && gap<.25, stake: (ev>=PM_MIN_EV&&gap<.25)?stakePct(prob,price):0};
 }
 
@@ -3754,7 +3775,7 @@ function renderPitchers(games) {
         <td>${e.nombre}${e.sospecha?` <span style="color:var(--rtx)" title="El modelo proyecta ${(e.mRaw*100).toFixed(0)}% y el mercado ${(e.fair*100).toFixed(0)}%. Una diferencia así casi nunca es dinero gratis: suele ser que la línea es de otra cosa (opener, salida corta, lesión o línea vieja). No se marca apostable.">⚠</span>`:''}</td>
         <td class="num">${e.mu.toFixed(2)}</td>
         <td class="num">${e.line}</td>
-        <td class="c" style="font-weight:700;color:${e.over?'var(--gtx)':'var(--rtx)'}">${e.over?'OVER':'UNDER'} ${amFmt(e.price)}</td>
+        <td class="c" style="font-weight:700;color:${e.over?'var(--gtx)':'var(--rtx)'}" title="${e.books?`Mejor precio entre las ${e.books} casa(s) que cuelgan la línea ${e.line}${e.allBooks>e.books?` (otras ${e.allBooks-e.books} cotizan una línea distinta y se descartan)`:''}.`:''}">${e.over?'OVER':'UNDER'} ${amFmt(e.price)}${e.books?`<span style="font-size:9px;color:var(--text3);font-weight:400"> ·${e.books}</span>`:''}</td>
         <td class="num" style="color:${evCol(e.edge)}">${pctTxt(e.edge)}</td>
         <td class="num" style="font-weight:800;color:${evCol(e.ev)}">${pctTxt(e.ev)}</td>
         <td class="num" style="color:${e.stake>0?'var(--gold)':'var(--text3)'};font-weight:700">${e.stake>0?e.stake+'%':'—'}</td>

@@ -264,7 +264,7 @@ a{color:var(--blue);text-decoration:none}
 .bt-casa{font-size:9px;font-weight:700;white-space:nowrap}
 
 /* ── Stats bar ── */
-.stats-bar{display:grid;grid-template-columns:repeat(5,1fr);gap:8px;margin-bottom:12px}
+.stats-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
 .stat-card{background:var(--bg2);border-radius:var(--rs);padding:10px 12px;border:1px solid var(--border)}
 .stat-label{font-size:9px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px}
 .stat-val{font-size:22px;font-weight:700}
@@ -356,12 +356,12 @@ body{background:radial-gradient(1100px 560px at 15% -10%,rgba(178,107,255,.10),t
 
 /* ── Layout: aprovechar todo el ancho en PC (2 columnas de tarjetas) ── */
 @media(min-width:1080px){
-  #picks-area,#pitchers-area,#parlays-area{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
-  #picks-area>.card,#pitchers-area>.card,#parlays-area>.card{margin-bottom:0}
-  #picks-area>.empty,#pitchers-area>.empty,#parlays-area>.empty{grid-column:1/-1}
+  #picks-area,#pitchers-area{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
+  #picks-area>.card,#pitchers-area>.card{margin-bottom:0}
+  #picks-area>.empty,#pitchers-area>.empty{grid-column:1/-1}
 }
 @media(min-width:1500px){
-  #picks-area,#pitchers-area,#parlays-area{grid-template-columns:1fr 1fr 1fr}
+  #picks-area,#pitchers-area{grid-template-columns:1fr 1fr 1fr}
 }
 
 /* ── Responsive móvil ── */
@@ -420,7 +420,6 @@ body{background:radial-gradient(1100px 560px at 15% -10%,rgba(178,107,255,.10),t
   <!-- Tabs -->
   <div class="tabs">
     <button class="tab-btn active" onclick="showTab('picks')"><i class="ti ti-chart-bar"></i>Picks del Día</button>
-    <button class="tab-btn" onclick="showTab('parlays')"><i class="ti ti-link"></i>Parlays</button>
     <button class="tab-btn" onclick="showTab('pitchers');loadPropHist('pitcher')"><i class="ti ti-circle-dashed"></i>Pitchers K</button>
     <button class="tab-btn" onclick="showTab('batters');loadPropHist('batter')"><i class="ti ti-run"></i>Bateadores</button>
     <button class="tab-btn" onclick="showTab('signals');loadSignals()"><i class="ti ti-radar"></i>Señales</button>
@@ -468,7 +467,6 @@ body{background:radial-gradient(1100px 560px at 15% -10%,rgba(178,107,255,.10),t
         <div class="stat-card"><div class="stat-label">🟢 Alta conf.</div><div class="stat-val" style="color:var(--green)" id="s-high">0</div></div>
         <div class="stat-card"><div class="stat-label">🟡 Media conf.</div><div class="stat-val" style="color:var(--amber)" id="s-med">0</div></div>
         <div class="stat-card"><div class="stat-label">Overs</div><div class="stat-val" style="color:var(--blue)" id="s-overs">0</div></div>
-        <div class="stat-card"><div class="stat-label">Parlays</div><div class="stat-val" style="color:var(--gold)" id="s-parlays">0</div></div>
       </div>
       <div class="filterbar" id="filterbar" style="display:none">
         <span style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase">Filtrar:</span>
@@ -479,11 +477,6 @@ body{background:radial-gradient(1100px 560px at 15% -10%,rgba(178,107,255,.10),t
         <button class="btn-sm" onclick="copyPicks()"><i class="ti ti-copy"></i> Copiar</button>
       </div>
       <div id="picks-area"><div class="empty"><i class="ti ti-trophy" style="font-size:40px;opacity:.15;display:block;margin:0 auto 12px"></i>Selecciona fecha y presiona Analizar partidos</div></div>
-    </div>
-
-    <!-- PARLAYS -->
-    <div class="tab-pane" id="tab-parlays">
-      <div id="parlays-area"><div class="empty">Corre el análisis primero.</div></div>
     </div>
 
     <!-- PITCHERS -->
@@ -2961,7 +2954,7 @@ function lineMovement(open, cur){
 }
 
 // ── State ─────────────────────────────────────────────────────────────────────
-let allGames=[], allBatters=[], allParlays=[], allBProps={};
+let allGames=[], allBatters=[], allBProps={};
 let propsPitcher=[], propsBatter=[];   // picks de props recolectados al renderizar (para guardar)
 
 // ── Main analysis ─────────────────────────────────────────────────────────────
@@ -3274,12 +3267,10 @@ async function runAnalysis() {
     saveOpen(date, OPEN);   // persiste las líneas de apertura vistas hoy
     allGames = results;
     allBatters = batchBatters;
-    allParlays = buildParlays(results);
 
     // PINTAR PRIMERO. Guardar en Supabase no cambia nada de lo que se ve, y hacerlo
     // antes obligaba a esperar ~20 viajes a la base con la pantalla en blanco.
     renderPicks(results);
-    renderParlays(allParlays);
     renderPitchers(results);
     renderBatters(batchBatters);
 
@@ -3288,7 +3279,7 @@ async function runAnalysis() {
     const overs=results.filter(g=>g.total>g.totalLine).length;
     $('stats-bar').style.display='grid';
     txt('s-games',results.length); txt('s-high',high); txt('s-med',med);
-    txt('s-overs',overs); txt('s-parlays',allParlays.length);
+    txt('s-overs',overs);
     $('run-status').textContent=`✅ ${results.length} partidos analizados`+(started?` · ${started} ya empezaron (excluidos)`:'')+
       (getOddsKey()?(oddsCount?` · 📈 cuotas reales (${oddsCount} partidos)`+(oddsRemaining!=null?` · ${oddsRemaining} req restantes`:''):` · ⚠ sin cuotas (revisa API key o fecha)`):` · sin cuotas (edge vs -110)`);
     cacheAnalysis(date);   // guarda el análisis completo para restaurarlo al refrescar
@@ -3594,59 +3585,6 @@ function copyPicks(){
   });
   const txt=lines.join('\n')||'Sin picks.';
   navigator.clipboard?.writeText(txt).then(()=>alert('📋 Picks copiados al portapapeles')).catch(()=>alert(txt));
-}
-
-// ── Parlays ───────────────────────────────────────────────────────────────────
-// Reglas: 1 pata por partido (sin correlación), 3 y 4 patas, cuota real si existe,
-// ordenados por VALOR (edge combinado = prob. del modelo − prob. implícita del pago).
-function buildParlays(games) {
-  // Pata del juego: la de mayor VALOR, y SOLO con cuota real. Sin precio no se puede
-  // calcular el pago combinado ni el edge del parlay: antes se inventaba dec = 1/prob,
-  // lo que daba edge 0 en todos y los ordenaba por probabilidad combinada.
-  const cand=[];
-  games.forEach(g=>{
-    const elig=(g.allPicks||[]).filter(hasPrice);
-    if(!elig.length) return;
-    const best=elig.sort(byValue)[0];
-    cand.push({...best, matchup:`${g.away} @ ${g.home}`, dec: amDec(best.price)});
-  });
-  cand.sort(byValue);
-  const pool=cand.slice(0,8);   // top 8 por valor, para limitar combinaciones
-  const out=[];
-  const combos=(k)=>{ const res=[],rec=(s,acc)=>{ if(acc.length===k){res.push(acc.slice());return;} for(let i=s;i<pool.length;i++){acc.push(pool[i]);rec(i+1,acc);acc.pop();} }; rec(0,[]); return res; };
-  [3,4].forEach(k=>{ if(pool.length>=k) combos(k).forEach(legs=>{
-    const cp=legs.reduce((p,l)=>p*l.prob,1);          // prob. combinada (patas independientes)
-    const dec=legs.reduce((p,l)=>p*l.dec,1);           // cuota decimal combinada (real donde hay)
-    const realOdds=legs.every(l=>l.price!=null);       // ¿todas tienen cuota de casa?
-    out.push({legs,cp,dec,edge:cp-1/dec,realOdds,type:`${k} patas`});
-  });});
-  // Todas las patas traen cuota real, así que el edge combinado es medible: orden directo.
-  return out.sort((a,b)=>b.edge-a.edge||b.cp-a.cp).slice(0,6);
-}
-
-function renderParlays(parlays) {
-  if(!parlays.length){$('parlays-area').innerHTML='<div class="empty">No hay suficientes patas con cuota real (se necesitan ≥3 partidos con precio de casa).<br>Sin cuota no hay pick, y sin pick no hay parlay.</div>';return;}
-  $('parlays-area').innerHTML=`<div style="font-size:10px;color:var(--text3);margin-bottom:10px">1 pata por partido (sin correlación) · ordenados por <b>valor</b> (edge) · pago con cuota real cuando existe.</div>`+parlays.map((p,i)=>{
-    const dec=p.dec, odds=dec>=2?`+${Math.round((dec-1)*100)}`:String(Math.round(-100/(dec-1))), pay=Math.round((dec-1)*100);
-    const eC=p.edge>0?'var(--gtx)':'var(--text3)';
-    return `<div class="card">
-      <div class="card-hdr" style="background:var(--gbg)">
-        <span style="color:var(--gtx);font-weight:700">🔗 Parlay ${i+1} · ${p.type}${p.realOdds?'':' · cuota estimada'}</span>
-        <span style="color:var(--gtx);font-size:16px;font-weight:700">${odds}</span>
-      </div>
-      <div style="padding:8px 12px">
-        ${p.legs.map((leg,li)=>`<div style="display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px solid var(--border)">
-          <span style="min-width:20px;height:20px;border-radius:50%;background:var(--gbg);color:var(--gtx);font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center">${li+1}</span>
-          <div style="flex:1"><div style="font-weight:700;font-size:12px">${leg.main}</div><div style="font-size:10px;color:var(--text2)">${leg.matchup} · ${leg.cat}</div></div>
-          <span style="color:var(--green);font-weight:700;font-size:11px">${pct(leg.prob)}</span>
-        </div>`).join('')}
-      </div>
-      <div style="padding:6px 12px;background:var(--bg3);display:flex;justify-content:space-between;font-size:11px">
-        <span style="color:var(--text2)">Prob: ${pct(p.cp)} · ${dec.toFixed(2)}x · <span style="color:${eC};font-weight:700">edge ${p.edge>=0?'+':''}${(p.edge*100).toFixed(1)}%</span></span>
-        <span style="color:var(--gtx);font-weight:700">$100 → $${pay+100}</span>
-      </div>
-    </div>`;
-  }).join('');
 }
 
 // ── Pitchers ──────────────────────────────────────────────────────────────────
@@ -4726,24 +4664,25 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 // Aplica un análisis restaurado a todas las pestañas
 function applyRestored(c, src){
-  allGames=c.games||[]; allBatters=c.batters||[]; allParlays=c.parlays||[]; allBProps=c.bprops||{};
+  allGames=c.games||[]; allBatters=c.batters||[]; allBProps=c.bprops||{};
   // Solo alinear el selector con el caché si ese análisis es de HOY; si es viejo,
   // deja la fecha en el día actual para invitar a un análisis fresco.
   if(c.date && c.date===todayLocal()) $('date-pick').value=c.date;
   else $('date-pick').value=todayLocal();
-  renderPicks(allGames); renderParlays(allParlays); renderPitchers(allGames); renderBatters(allBatters);
+  renderPicks(allGames); renderPitchers(allGames); renderBatters(allBatters);
   const high=allGames.flatMap(g=>g.picks||[]).filter(p=>p.conf==='High').length;
   const med =allGames.flatMap(g=>g.picks||[]).filter(p=>p.conf==='Medium').length;
   const overs=allGames.filter(g=>g.total>g.totalLine).length;
   $('stats-bar').style.display='grid';
   txt('s-games',allGames.length); txt('s-high',high); txt('s-med',med);
-  txt('s-overs',overs); txt('s-parlays',allParlays.length);
+  txt('s-overs',overs);
   $('run-status').textContent=`📂 ${allGames.length} partidos restaurados ${src} (${c.date||''}) · presiona Analizar para actualizar`;
 }
 
 // Guarda el análisis completo: en localStorage (esta PC) y en Supabase (cualquier PC)
 function cacheAnalysis(date){
-  const payload={date, games:allGames, batters:allBatters, parlays:allParlays, bprops:allBProps, savedAt:Date.now()};
+  // savedAt viene del sync entre PCs (restoreBest compara este sello con el de la nube).
+  const payload={date, games:allGames, batters:allBatters, bprops:allBProps, savedAt:Date.now()};
   try{ localStorage.setItem('last_analysis', JSON.stringify(payload)); }catch(e){ console.warn('cache:',e.message); }
   saveAnalysisCloud(date, payload);
 }
@@ -4816,7 +4755,7 @@ async function restoreToday() {
   const med =games.flatMap(g=>g.picks).filter(p=>p.conf==='Medium').length;
   $('stats-bar').style.display='grid';
   txt('s-games',games.length); txt('s-high',high); txt('s-med',med);
-  txt('s-overs','—'); txt('s-parlays','—');
+  txt('s-overs','—');
   $('run-status').textContent=`📂 ${games.length} partidos del ${today} cargados desde Supabase`;
 }
 </script>

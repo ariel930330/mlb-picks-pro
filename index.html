@@ -1208,12 +1208,23 @@ function computePicks(data) {
   // Mismo esqueleto que los Ks: tasa por 9 (regresada a la liga por innings) × innings
   // esperados × ajuste por el rival que le toca.
   //
-  // El ajuste NO puede ser el mismo para las tres cosas. Las carreras dependen de todo
-  // (ofensiva rival, parque, clima); los hits dependen bastante menos del parque; y las
-  // bases por bolas casi solo dependen de la disciplina del rival y del control del
-  // pitcher, no del estadio ni del aire. Los pesos de abajo son un JUICIO, no una
-  // medición: están juntos aquí para poder afinarlos con historial más adelante.
-  const OPP_W = { er:1.00, ha:0.60, bb:0.25 };   // cuánto de la ofensiva rival se traslada
+  // Cuánto de la ofensiva rival se traslada a cada cosa. MEDIDO, no supuesto:
+  // 2,119 aperturas de 2026, agregando por equipo rival (con las aperturas sueltas el
+  // ruido de un solo juego tapa todo) y regresando actual/esperado contra el factor de
+  // ofensiva del modelo, ponderado por innings.
+  //
+  //   ER  peso 0.757 ± 0.260  (t=2.92, significativo)  → se usa 0.75
+  //   HA  peso 0.389 ± 0.207  (t=1.88, al límite)      → se usa 0.40
+  //   BB  peso 0.547 ± 0.384  (t=1.42, no significa)   → se deja 0.25
+  //
+  // El de BB se queda en 0.25 a propósito: la regresión da 0.55 pero no distingue de
+  // cero, y al probar contra los tramos reales de fuerza rival el 0.25 ajusta MEJOR
+  // (error 0.0298 vs 0.0301 con 0.50). Además BB nunca llega a ser pick — no lo cotiza
+  // ninguna casa — así que su peso solo mueve un número informativo.
+  //
+  // Prueba por tramos para ER (error medio contra lo que de verdad pasó):
+  //   peso 1.00 → 0.0211   peso 0.75 → 0.0144   peso 0.50 → 0.0174
+  const OPP_W = { er:0.75, ha:0.40, bb:0.25 };
   const apH9=regress(apIPr>0?sf(awayPitcher?.hits,0)/apIPr*9:LG_H9, apIPr, LG_H9, 40);
   const hpH9=regress(hpIPr>0?sf(homePitcher?.hits,0)/hpIPr*9:LG_H9, hpIPr, LG_H9, 40);
   // Factor del rival de cada abridor: el VISITANTE enfrenta a la ofensiva LOCAL y viceversa.

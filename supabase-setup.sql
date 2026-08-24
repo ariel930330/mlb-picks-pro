@@ -324,3 +324,23 @@ create policy "soccer_picks public read" on public.soccer_picks for select using
 create policy "soccer_picks auth write"  on public.soccer_picks for insert to authenticated with check (true);
 create policy "soccer_picks auth update" on public.soccer_picks for update to authenticated using (true) with check (true);
 create policy "soccer_picks auth delete" on public.soccer_picks for delete to authenticated using (true);
+
+-- ============================================================================
+--  prop_picks : columnas de auditoria del precio
+-- ----------------------------------------------------------------------------
+--  Un pick guardado solo con prob/edge no se puede volver a comprobar. Sin el
+--  precio ni el fair no habia forma de notar que el numero que se mostraba era
+--  el de OTRA linea: 16 de los primeros 43 picks lo estaban. Desde ahora se
+--  guarda de donde salio cada cosa.
+--
+--    model_prob  probabilidad CRUDA del modelo, antes de mezclar con el mercado
+--    fair        probabilidad del mercado sin vig, EN LA LINEA del pick
+--    price       mejor precio americano entre las casas que colgaban esa linea
+--    ev          valor esperado a 1 unidad con ese precio
+--    books       cuantas casas colgaban esa linea (si son pocas, desconfia)
+-- ============================================================================
+alter table public.prop_picks add column if not exists fair       numeric;
+alter table public.prop_picks add column if not exists price      integer;
+alter table public.prop_picks add column if not exists ev         numeric;
+alter table public.prop_picks add column if not exists books      integer;
+alter table public.prop_picks add column if not exists model_prob numeric;

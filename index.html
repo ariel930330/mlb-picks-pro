@@ -3439,25 +3439,31 @@ const propErr = e => { if(!e) return false;
 async function savePropPicks(date){
   propSaveMsg = null;
   if(!isOwner()){ propSaveMsg='Inicia sesión para que los props se guarden en el historial.'; return; }
-  const conEdge = arr => arr.filter(p=>p.player_id&&p.gamePk&&p.edge!=null&&p.edge>0)
-                            .sort((a,b)=>b.edge-a.edge).slice(0,PROP_TOP_N);
-  const cand = [...conEdge(propsPitcher).map(p=>({...p,kind:'pitcher'})),
-                ...conEdge(propsBatter ).map(p=>({...p,kind:'batter' }))];
+  // TODO SE ELIGE POR EDGE, arriba y abajo. El historial tiene que ser el espejo de
+  // las tarjetas: si arriba se recomienda un pick, ese mismo es el que queda guardado.
+  //   Abridores: entran TODAS las tarjetas, una fila por abridor (su mejor mercado por
+  //   edge). No se cortan a tres — la tabla de abajo debe cuadrar con la de arriba.
+  //   Bateadores: siguen limitados a los PROP_TOP_N de mayor edge de la jornada.
+  const porEdge = arr => arr.filter(p=>p.player_id&&p.gamePk&&p.edge!=null&&p.edge>0)
+                            .sort((a,b)=>b.edge-a.edge);
+  const cand = [...porEdge(propsPitcher).map(p=>({...p,kind:'pitcher'})),
+                ...porEdge(propsBatter ).slice(0,PROP_TOP_N).map(p=>({...p,kind:'batter' }))];
   if(!cand.length){
-    propSaveMsg = 'Este análisis no dejó ningún prop con edge de mercado positivo, así que no se guardó nada.';
+    propSaveMsg = 'Este análisis no dejó ningún prop apostable, así que no se guardó nada.';
     return;
   }
   try{
     const {data:existing, error:eSel} = await sb.from('prop_picks')
-      .select('id,kind,player_id,market,target,edge,result').eq('game_date',date);
+      .select('id,kind,player_id,market,target,edge,ev,result').eq('game_date',date);
     if(propErr(eSel)) return;
     const prev = existing||[];
-    // Mejor edge ya guardado de cada tipo ese día: la vara que hay que superar.
-    // Ojo: las filas guardadas antes de existir la columna traen edge null, y +null
-    // es 0 — eso bajaría la vara a 0 y dejaría entrar cualquier cosa. Se ignoran.
-    const vara = {};
-    prev.forEach(e=>{ if(e.edge==null) return; const v=+e.edge;
-      if(isFinite(v)) vara[e.kind]=Math.max(vara[e.kind]??-Infinity, v); });
+    // Mejor edge ya guardado de bateadores ese día: la vara que hay que superar para
+    // que entre uno nuevo. Los ABRIDORES no tienen vara — entran todas las tarjetas.
+    // Ojo: las filas viejas traen edge null, y +null es 0 — eso bajaría la vara a 0 y
+    // dejaría entrar cualquier cosa. Se ignoran.
+    let varaBat = -Infinity;
+    prev.forEach(e=>{ if(e.kind!=='batter' || e.edge==null) return; const v=+e.edge;
+      if(isFinite(v)) varaBat=Math.max(varaBat, v); });
     const mismo = {};   // jugador|mercado|línea -> fila existente
     prev.forEach(e=>{ mismo[`${e.player_id}|${e.market}|${e.target}`]=e; });
 
@@ -3479,8 +3485,9 @@ async function savePropPicks(date){
         }
         continue;
       }
-      // Pick nuevo: entra solo si supera lo mejor que ya había ese día.
-      if((vara[r.kind] ?? -Infinity) < r.edge) nuevos.push(row);
+      // Abridor nuevo: entra siempre, porque el historial refleja TODAS las tarjetas.
+      // Bateador nuevo: solo si supera al mejor que ya había ese día.
+      if(r.kind==='pitcher' || varaBat < r.edge) nuevos.push(row);
     }
     if(nuevos.length){
       const {error} = await sb.from('prop_picks').insert(nuevos);
@@ -3755,20 +3762,22 @@ function renderPitchers(games) {
 
   // Cada abridor se evalúa en los cuatro mercados; su "mejor jugada" es el de mayor EV
   // entre los que SÍ tienen línea de casa. Sin ninguna línea, el abridor no entra.
-  // OJO: un mercado marcado ⚠ (sospecha) NO puede ser la jugada principal. El EV de un
-  // mercado sospechoso es justo el que más infla, así que ordenar solo por EV los subía
-  // arriba de todo: el sistema los declaraba no apostables y acto seguido los pregonaba
-  // como el mejor pick del abridor. Van al final, detrás de cualquier mercado limpio.
+  // El pick de cada abridor se elige por EDGE, que es el mismo criterio con el que se
+  // guarda en el historial: la tabla de abajo tiene que ser el espejo de estas tarjetas.
+  // OJO: un mercado marcado ⚠ (sospecha) NO puede ser la jugada principal. Es justo el
+  // que más infla, así que ordenar sin más lo subía arriba de todo: el sistema lo
+  // declaraba no apostable y acto seguido lo pregonaba como el mejor pick del abridor.
+  // Van al final, detrás de cualquier mercado limpio.
   const filas = pitchers.map(p=>{
     const evs = PM_MKTS.map(M=>pmEval(p,M)).filter(Boolean);
-    const apostables = evs.filter(e=>e.mkt && !e.short && e.ev!=null);
+    const apostables = evs.filter(e=>e.mkt && !e.short && e.edge!=null);
     const best = apostables.slice()
-      .sort((a,b)=>((a.sospecha?1:0)-(b.sospecha?1:0)) || (b.ev-a.ev))[0] || null;
+      .sort((a,b)=>((a.sospecha?1:0)-(b.sospecha?1:0)) || (b.edge-a.edge))[0] || null;
     return {p, evs, best};
   }).filter(x=>x.best);
 
-  // Orden de las tarjetas: primero las apostables de verdad (EV suficiente y sin sospecha).
-  filas.sort((a,b)=>((a.best.rec?0:1)-(b.best.rec?0:1)) || (b.best.ev-a.best.ev));
+  // Orden de las tarjetas: primero las apostables de verdad, luego por edge.
+  filas.sort((a,b)=>((a.best.rec?0:1)-(b.best.rec?0:1)) || (b.best.edge-a.best.edge));
   const top = filas.slice(0,8);
   propsPitcher=[];
 
@@ -3783,17 +3792,19 @@ function renderPitchers(games) {
   const evCol  = v => v==null?'var(--text3)':v>0?'var(--gtx)':'var(--rtx)';
 
   $('pitchers-area').innerHTML=
-    `<div class="area-note" style="font-size:10px;color:var(--text3);margin-bottom:10px">Los <b>8 abridores con mayor valor (EV)</b> · cada uno evaluado en <b>ponches, hits permitidos y carreras limpias</b> contra la línea real de casa · <b>sin cuota no hay pick</b> · las <b>bases por bolas</b> se proyectan pero no se cotizan en EE.UU., así que van solo como referencia.</div>`
+    `<div class="area-note" style="font-size:10px;color:var(--text3);margin-bottom:10px">Los <b>8 abridores con mayor edge</b> · cada uno evaluado en <b>ponches, hits permitidos y carreras limpias</b> contra la línea real de casa · el <b>★</b> marca la jugada del abridor, y es la que queda en el historial de abajo · <b>sin cuota no hay pick</b> · las <b>bases por bolas</b> se proyectan pero no se cotizan en EE.UU., así que van solo como referencia.</div>`
     + top.map(({p,evs,best})=>{
-    // Guarda para el historial SOLO lo que el sistema considera apostable de verdad:
-    // con línea de casa, EV suficiente y sin sospecha. Antes bastaba con EV>0, así que
-    // los mercados ⚠ —los de EV más inflado— entraban al historial y ensuciaban el récord.
-    evs.filter(e=>e.rec).forEach(e=>propsPitcher.push({
-      gamePk:p.gamePk, player_id:p.id, player_name:p.name, team:p.team, market:e.tag,
-      target:e.line, side:e.over?'over':'under', prob:+e.prob.toFixed(3),
-      proj:+e.mu.toFixed(2), edge:+e.edge.toFixed(3),
-      model_prob:+(e.over?e.mRaw:1-e.mRaw).toFixed(3), fair:+e.fair.toFixed(3),
-      price:e.price, ev:+e.ev.toFixed(3), books:e.books??null}));
+    // Al historial va UNA sola jugada por abridor: exactamente la que la tarjeta enseña
+    // arriba en el badge (best), que es la de mayor EV entre los mercados limpios.
+    // Antes se guardaban TODOS los mercados apostables del abridor y luego se cortaba
+    // por edge, así que el historial podía terminar con un mercado distinto del que la
+    // pantalla recomendaba. Ahora registra lo mismo que ves.
+    if(best.rec) propsPitcher.push({
+      gamePk:p.gamePk, player_id:p.id, player_name:p.name, team:p.team, market:best.tag,
+      target:best.line, side:best.over?'over':'under', prob:+best.prob.toFixed(3),
+      proj:+best.mu.toFixed(2), edge:+best.edge.toFixed(3),
+      model_prob:+(best.over?best.mRaw:1-best.mRaw).toFixed(3), fair:+best.fair.toFixed(3),
+      price:best.price, ev:+best.ev.toFixed(3), books:best.books??null});
 
     const badge = `${best.over?'OVER':'UNDER'} ${best.line}${best.unidad} ${amFmt(best.price)}`;
     const badgeCol = best.rec ? (best.over?'var(--green)':'var(--red)') : 'var(--text3)';
@@ -4607,14 +4618,20 @@ function renderPropHist(kind){
   </div>`;
 
   // ── Jornada elegida ──
-  const arr = (byDay[day]||[]).slice().sort((a,b)=>(b.edge==null?-9:+b.edge)-(a.edge==null?-9:+a.edge));
+  // Se ordena por EDGE, el mismo criterio con el que las tarjetas eligen su pick,
+  // para que esta tabla se lea igual que la de arriba.
+  const crit = 'edge';
+  const val  = r => r[crit]==null ? -9 : +r[crit];
+  const arr = (byDay[day]||[]).slice().sort((a,b)=>val(b)-val(a));
   const rd  = rec(arr);
   const filas = arr.map(r=>`<tr>
     <td><div style="display:flex;align-items:center;gap:6px"><img class="headshot-sm" style="width:24px;height:24px" src="${playerImg(r.player_id)}" onerror="${IMG_FALLBACK}"><strong>${esc(r.player_name||'?')}</strong></div></td>
     <td><span style="font-size:10px;padding:1px 6px;border-radius:3px;background:var(--bg3);font-weight:700">${esc(r.team||'')}</span></td>
     <td style="font-weight:700">${esc(r.market||'')}</td>
     <td style="white-space:nowrap"><b style="color:${r.side==='over'?'var(--gtx)':'var(--rtx)'}">${r.side==='over'?'Over':'Under'}</b> ${r.target}${r.market==='Ks'?'K':''}</td>
+    <td class="num" style="font-weight:700"${r.books?` title="Mejor precio entre las ${r.books} casa(s) que colgaban esa línea."`:''}>${r.price!=null?amFmt(+r.price):'<span style="color:var(--text3)">—</span>'}</td>
     <td class="num">${pctTxt(r.edge)}</td>
+    <td class="num">${pctTxt(r.ev)}</td>
     <td class="num">${r.actual!=null?`<b>${r.actual}</b>`:'—'}</td>
     <td class="c">${resTxt(r)}</td>
   </tr>`).join('');
@@ -4625,7 +4642,7 @@ function renderPropHist(kind){
       <span style="font-size:11px;color:var(--text2)">${rd.n?`récord <b style="color:${recCol(rd)}">${rd.w}-${rd.l}</b>`:'sin calificar'}</span>
     </div>
     <div style="overflow-x:auto"><table class="htable">
-      <thead><tr><th>Jugador</th><th>Eq</th><th>Mercado</th><th>Pick</th><th class="num">Edge</th><th class="num">Real</th><th class="c">✓/✗</th></tr></thead>
+      <thead><tr><th>Jugador</th><th>Eq</th><th>Mercado</th><th>Pick</th><th class="num" title="Mejor precio entre las casas que colgaban esa misma línea.">Cuota</th><th class="num" title="Cuánto mejor es nuestra probabilidad que la del mercado sin vig.">Edge</th><th class="num" title="Valor esperado a 1 unidad con esa cuota. Es lo que decide el pick del abridor.">EV</th><th class="num">Real</th><th class="c">✓/✗</th></tr></thead>
       <tbody>${filas}</tbody></table></div>
   </div>`;
 
@@ -4636,7 +4653,7 @@ function renderPropHist(kind){
   const visibles = days.slice(0, HIST_DIAS);
   const histFilas = visibles.map(d=>{
     const a=byDay[d], r=rec(a), pend=a.filter(x=>!x.result).length;
-    const mejor = a.reduce((m,x)=> (x.edge!=null && (m==null || +x.edge>+m.edge)) ? x : m, null);
+    const mejor = a.reduce((m,x)=> (x[crit]!=null && (m==null || +x[crit]>+m[crit])) ? x : m, null);
     return `<tr class="dayrow${d===day?' active':''}" onclick="setPropDay('${kind}','${esc(d)}')">
       <td style="white-space:nowrap;font-weight:700">${esc(d)}</td>
       <td class="num">${a.length}</td>

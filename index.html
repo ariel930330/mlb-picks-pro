@@ -811,15 +811,18 @@ const nbOver = (mu,k,line) => {
   for(let x=1;x<top;x++){ p*=((k+x-1)/x)*q; cdf+=p; }      // recursión: no hace falta gamma
   return cl(1-cdf,.02,.98);
 };
-// P(X > line) con X ~ Binomial(n bateadores enfrentados, p). Para hits permitidos y BB
+// P(X > line) con X ~ Binomial(n bateadores enfrentados, p). Para ponches, hits y BB
 // la Poisson NO sirve, aunque la varianza cruda casi coincida: cada bateador enfrentado
-// conecta o no, así que la cola real es MÁS CORTA que la de Poisson (var = n·p·(1−p)).
-// Medido sobre 2,119 aperturas de 2026, predicho vs lo que de verdad pasó:
-//   Over 6.5 H   real 24.9%   Poisson 26.4%   Binomial 25.3%
+// se poncha o no, conecta o no, así que la cola real es MÁS CORTA que la de Poisson
+// (var = n·p·(1−p), siempre menor que n·p).
+// Medido sobre 2,133 aperturas de 2026, predicho vs lo que de verdad pasó:
+//   Over 7.5 K   real 17.4%   Poisson 19.8%   Binomial 18.4%
+//   Over 8.5 K   real 11.3%   Poisson 12.6%   Binomial 10.9%
 //   Over 7.5 H   real 12.8%   Poisson 16.5%   Binomial 14.7%
 //   Over 8.5 H   real  6.0%   Poisson  9.7%   Binomial  7.8%
-//   error medio en hits  Poisson 0.0303  ->  Binomial 0.0148  (la mitad)
-//   error medio en BB    Poisson 0.0263  ->  Binomial 0.0211
+//   error medio  Ks  Poisson 0.0187 -> Binomial 0.0058   (3 veces mejor)
+//                HA  Poisson 0.0303 -> Binomial 0.0148
+//                BB  Poisson 0.0263 -> Binomial 0.0211
 // El sesgo iba SIEMPRE hacia el over: la Poisson regalaba edges falsos en líneas altas.
 // Los bateadores enfrentados salen de la propia proyección: outs + hits + BB.
 const binomOver = (n,p,line) => {
@@ -3721,13 +3724,55 @@ function copyPicks(){
 // pero nunca puede ser un pick, porque sin precio no hay con qué medir el valor.
 const PM_MIN_EV = 0.01;
 const PM_MKTS = [
-  {k:'ks', tag:'Ks', nombre:'Ponches',          unidad:'K',  exp:p=>p.kExp,  mkt:p=>p.kMkt,  prob:(mu,ln,p)=>poissonOver(mu,ln)},
+  {k:'ks', tag:'Ks', nombre:'Ponches',          unidad:'K',  exp:p=>p.kExp,  mkt:p=>p.kMkt,  prob:(mu,ln,p)=>binomOverMu(mu,p.bfExp,ln)},
   {k:'ha', tag:'HA', nombre:'Hits permitidos',  unidad:'H',  exp:p=>p.haExp, mkt:p=>p.haMkt, prob:(mu,ln,p)=>binomOverMu(mu,p.bfExp,ln)},
   {k:'er', tag:'ER', nombre:'Carreras limpias', unidad:'ER', exp:p=>p.erExp, mkt:p=>p.erMkt, prob:(mu,ln,p)=>nbOver(mu,ER_K,ln)},
   {k:'bb', tag:'BB', nombre:'Bases por bolas',  unidad:'BB', exp:p=>p.bbExp, mkt:()=>null,   prob:(mu,ln,p)=>binomOverMu(mu,p.bfExp,ln)},
 ];
 
 // Evalúa un mercado del abridor. Devuelve null si no hay proyección.
+// ── CONFIANZA EN LA PROYECCIÓN ──────────────────────────────────────────────
+// Pregunta que responde: si la proyección se equivoca LO QUE SUELE EQUIVOCARSE,
+// ¿qué tan seguido seguimos cayendo del lado correcto del mercado?
+//
+// El error propio de la proyección se puede separar del azar del juego, porque
+//     Var(resultado real) = Var(azar | proyección) + Var(error de la proyección)
+// y el primer término se conoce: es la varianza de la distribución que usa cada
+// mercado. Despejando sobre 2,133 aperturas de 2026 sale el error de la proyección:
+//
+//   mercado   mu medio   Var(real)   Var(azar)   Var(proy)   CV
+//   Ks          5.26       4.284       4.022       0.262     9.7 %
+//   HA          5.06       6.877       3.956       2.921    33.8 %
+//   BB          1.79       1.968       1.642       0.326    32.0 %
+//   ER          2.37       4.879       4.011       0.868    39.3 %
+//
+// Los ponches son con MUCHA diferencia lo más fiable que proyecta el modelo: la
+// tasa de K es la habilidad más estable de un abridor. Las carreras limpias son lo
+// menos fiable, que es justo lo que se sabe de la ERA. Un 60% aquí no significa
+// "gano 6 de cada 10": significa que en 6 de cada 10 escenarios de error razonable
+// el pick sigue teniendo valor.
+const PM_CV = { ks:0.097, ha:0.338, bb:0.320, er:0.393 };
+// Malla fina (25 puntos, ±3 desviaciones): con pocos puntos el porcentaje salta a
+// trozos (39%, 61%, 80%) y parece más preciso de lo que es en unos sitios y más
+// tosco en otros. Cuesta nada: son 25 evaluaciones por mercado.
+const CONF_Z = Array.from({length:25}, (_,i)=>-3+i*0.25);
+function pmConf(M, p, mkt, over){
+  const cv = PM_CV[M.k], mu = M.exp(p);
+  if(cv==null || mu==null || !isFinite(mu) || !mkt) return null;
+  let sw=0, sok=0;
+  for(const z of CONF_Z){
+    const w  = Math.exp(-z*z/2);
+    // lognormal: nunca da una proyección negativa y conserva la media
+    const mz = mu*Math.exp(cv*z - cv*cv/2);
+    const pv = M.prob(mz, mkt.line, p);
+    // El blend no cambia el SIGNO del edge (es 0.30·(modelo−mercado)), así que basta
+    // con mirar de qué lado del mercado cae la proyección.
+    const ok = over ? pv > mkt.fairOver : (1-pv) > mkt.fairUnder;
+    sw += w; if(ok) sok += w;
+  }
+  return sok/sw;
+}
+
 function pmEval(p, M){
   const mu = M.exp(p);
   if(mu==null || !isFinite(mu)) return null;
@@ -3751,6 +3796,7 @@ function pmEval(p, M){
   const gap = Math.abs(mOver-mkt.fairOver);
   return {tag:M.tag, nombre:M.nombre, unidad:M.unidad, mu, line, over, prob, fair, price, edge, ev,
           mRaw:mOver, gap, sospecha:gap>=.25, books:mkt.books, allBooks:mkt.allBooks,
+          conf:pmConf(M, p, mkt, over), cv:PM_CV[M.k],
           mkt:true, rec:ev>=PM_MIN_EV && gap<.25, stake: (ev>=PM_MIN_EV&&gap<.25)?stakePct(prob,price):0};
 }
 
@@ -3790,6 +3836,8 @@ function renderPitchers(games) {
 
   const pctTxt = v => v==null?'—':`${v>=0?'+':''}${(v*100).toFixed(1)}%`;
   const evCol  = v => v==null?'var(--text3)':v>0?'var(--gtx)':'var(--rtx)';
+  // 50% = moneda al aire: la proyección cae de un lado u otro del mercado por puro azar.
+  const confCol = v => v==null?'var(--text3)':v>=.75?'var(--gtx)':v>=.60?'var(--atx)':'var(--rtx)';
 
   $('pitchers-area').innerHTML=
     `<div class="area-note" style="font-size:10px;color:var(--text3);margin-bottom:10px">Los <b>8 abridores con mayor edge</b> · cada uno evaluado en <b>ponches, hits permitidos y carreras limpias</b> contra la línea real de casa · el <b>★</b> marca la jugada del abridor, y es la que queda en el historial de abajo · <b>sin cuota no hay pick</b> · las <b>bases por bolas</b> se proyectan pero no se cotizan en EE.UU., así que van solo como referencia.</div>`
@@ -3814,11 +3862,11 @@ function renderPitchers(games) {
       if(!e.mkt) return `<tr style="opacity:.6">
         <td style="font-weight:700">${e.tag}</td><td>${e.nombre}</td>
         <td class="num">${e.mu.toFixed(2)}</td>
-        <td class="c" colspan="5" style="font-size:10px;color:var(--text3)">sin mercado en EE.UU. — solo proyección</td></tr>`;
+        <td class="c" colspan="6" style="font-size:10px;color:var(--text3)">sin mercado en EE.UU. — solo proyección</td></tr>`;
       if(e.short) return `<tr style="opacity:.6">
         <td style="font-weight:700">${e.tag}</td><td>${e.nombre}</td>
         <td class="num">${e.mu.toFixed(2)}</td><td class="num">${e.line}</td>
-        <td class="c" colspan="4" style="font-size:10px;color:var(--rtx)">⚠ salida corta (opener): la proyección no aplica</td></tr>`;
+        <td class="c" colspan="5" style="font-size:10px;color:var(--rtx)">⚠ salida corta (opener): la proyección no aplica</td></tr>`;
       const esBest = e===best;
       return `<tr${esBest?' style="background:var(--bg3)"':''}>
         <td style="font-weight:700">${e.tag}${esBest?' <span style="color:var(--gold)">★</span>':''}</td>
@@ -3828,6 +3876,7 @@ function renderPitchers(games) {
         <td class="c" style="font-weight:700;color:${e.over?'var(--gtx)':'var(--rtx)'}" title="${e.books?`Mejor precio entre las ${e.books} casa(s) que cuelgan la línea ${e.line}${e.allBooks>e.books?` (otras ${e.allBooks-e.books} cotizan una línea distinta y se descartan)`:''}.`:''}">${e.over?'OVER':'UNDER'} ${amFmt(e.price)}${e.books?`<span style="font-size:9px;color:var(--text3);font-weight:400"> ·${e.books}</span>`:''}</td>
         <td class="num" style="color:${evCol(e.edge)}">${pctTxt(e.edge)}</td>
         <td class="num" style="font-weight:800;color:${evCol(e.ev)}">${pctTxt(e.ev)}</td>
+        <td class="num" style="font-weight:700;color:${confCol(e.conf)}" title="${e.conf==null?'':`El error típico de la proyección en ${e.nombre.toLowerCase()} es de ±${(e.cv*100).toFixed(0)}%, medido sobre 2,133 aperturas de 2026. Moviendo la proyección dentro de ese margen, el pick sigue del lado correcto del mercado en el ${(e.conf*100).toFixed(0)}% de los escenarios.`}">${e.conf==null?'—':(e.conf*100).toFixed(0)+'%'}</td>
         <td class="num" style="color:${e.stake>0?'var(--gold)':'var(--text3)'};font-weight:700">${e.stake>0?e.stake+'%':'—'}</td>
       </tr>`;
     }).join('');
@@ -3841,7 +3890,7 @@ function renderPitchers(games) {
         <span style="font-size:13px;font-weight:700;color:${badgeCol}">${badge}</span>
       </div>
       <div style="overflow-x:auto"><table class="htable">
-        <thead><tr><th></th><th>Mercado</th><th class="num">Proy</th><th class="num">Línea</th><th class="c">Lado</th><th class="num">Edge</th><th class="num">EV</th><th class="num" title="Cuánto del bankroll apostar: medio-Kelly, con tope de 5%.">Stake</th></tr></thead>
+        <thead><tr><th></th><th>Mercado</th><th class="num">Proy</th><th class="num">Línea</th><th class="c">Lado</th><th class="num">Edge</th><th class="num">EV</th><th class="num" title="Qué tan seguido el pick sigue del lado correcto del mercado si la proyección se equivoca lo que suele equivocarse. 50% es moneda al aire. El margen de error está medido por mercado sobre 2,133 aperturas.">Confianza Proj.</th><th class="num" title="Cuánto del bankroll apostar: medio-Kelly, con tope de 5%.">Stake</th></tr></thead>
         <tbody>${mktRows}</tbody></table></div>
       <div style="display:flex;gap:6px;padding:8px 12px;flex-wrap:wrap">
         ${[['ERA',p.era],['ERA aj.',p.eraAdj??'—'],['FIP',p.fip],['xFIP',p.xfip],['xERA',p.xera??'—'],['H/9',p.h9??'—'],['BB/9',p.bb9??'—'],['K/9',p.k9],['Whiff%',p.whiff??'—'],['Chase%',p.chase??'—'],['IP esp.',p.expIP??'—']].map(([l,v])=>`

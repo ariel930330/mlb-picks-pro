@@ -3460,15 +3460,39 @@ async function savePropPicks(date){
       .select('id,kind,player_id,market,target,edge,ev,result').eq('game_date',date);
     if(propErr(eSel)) return;
     const prev = existing||[];
-    // Mejor edge ya guardado de bateadores ese día: la vara que hay que superar para
-    // que entre uno nuevo. Los ABRIDORES no tienen vara — entran todas las tarjetas.
+    const clave = e => `${e.player_id}|${e.market}|${e.target}`;
+    const mismo = {};   // jugador|mercado|línea -> fila existente
+    prev.forEach(e=>{ mismo[clave(e)]=e; });
+
+    // SINCRONIZAR, no acumular a ciegas. Si el historial es el espejo de las tarjetas,
+    // un pick SIN CALIFICAR que el análisis de AHORA ya no recomienda tiene que salir:
+    // no es el registro de nada, es una recomendación caducada. Pasaba con Rasmussen —
+    // por la mañana entraba como Over 4.5 K y por la tarde la tarjeta ya lo marcaba ⚠,
+    // pero la fila seguía ahí para siempre porque nada la borraba.
+    //
+    // Lo YA CALIFICADO no se toca jamás: eso sí es el récord, y es lo único que sirve
+    // para medir si el sistema acierta.
+    //
+    // La limpieza va POR TIPO: si esta corrida no saco ni un abridor (por ejemplo
+    // porque las casas aún no colgaron las líneas), no se borra ningún abridor. Así un
+    // análisis a deshora no puede vaciar el historial del día.
+    const tiposVivos = new Set(cand.map(r=>r.kind));
+    const vivos = new Set(cand.map(clave));
+    const caducos = prev.filter(e=>!e.result && tiposVivos.has(e.kind) && !vivos.has(clave(e)));
+    if(caducos.length){
+      const {error} = await sb.from('prop_picks').delete().in('id', caducos.map(e=>e.id));
+      if(propErr(error)) return;
+    }
+    const fuera = new Set(caducos.map(e=>e.id));
+
+    // Mejor edge de bateadores que SIGUE en pie ese día: la vara que hay que superar
+    // para que entre uno nuevo. Los ABRIDORES no tienen vara — entran todas las
+    // tarjetas. Se mide sobre los supervivientes, no sobre lo que se acaba de borrar.
     // Ojo: las filas viejas traen edge null, y +null es 0 — eso bajaría la vara a 0 y
     // dejaría entrar cualquier cosa. Se ignoran.
     let varaBat = -Infinity;
-    prev.forEach(e=>{ if(e.kind!=='batter' || e.edge==null) return; const v=+e.edge;
-      if(isFinite(v)) varaBat=Math.max(varaBat, v); });
-    const mismo = {};   // jugador|mercado|línea -> fila existente
-    prev.forEach(e=>{ mismo[`${e.player_id}|${e.market}|${e.target}`]=e; });
+    prev.forEach(e=>{ if(e.kind!=='batter' || e.edge==null || fuera.has(e.id)) return;
+      const v=+e.edge; if(isFinite(v)) varaBat=Math.max(varaBat, v); });
 
     const nuevos=[];
     for(const r of cand){
@@ -4633,7 +4657,7 @@ function renderPropHist(kind){
     ? `<div class="error-box" style="margin-bottom:10px"><b>⚠ El último análisis no se pudo guardar</b><br>${propSaveMsg}</div>`
     : '';
   if(!rows.length){
-    el.innerHTML=aviso+'<div class="empty">Sin registros todavía.<br>Analiza una fecha con sesión iniciada y aquí se van guardando los de mayor edge.</div>';
+    el.innerHTML=aviso+'<div class="empty">Sin registros todavía.<br>Analiza una fecha con sesión iniciada y aquí se va guardando la mejor jugada de cada abridor y bateador.</div>';
     return;
   }
 
@@ -4688,7 +4712,7 @@ function renderPropHist(kind){
   const cardDia = `<div class="card">
     <div class="card-hdr">
       <span class="card-hdr-title">${esc(day)} · ${arr.length} pick${arr.length===1?'':'s'}</span>
-      <span style="font-size:11px;color:var(--text2)">${rd.n?`récord <b style="color:${recCol(rd)}">${rd.w}-${rd.l}</b>`:'sin calificar'}</span>
+      <span style="font-size:11px;color:var(--text2)" title="Al reanalizar, un pick que todavía no se ha calificado y que el análisis nuevo ya no recomienda se retira: el historial es el espejo de las tarjetas. Lo ya calificado no se toca nunca.">${rd.n?`récord <b style="color:${recCol(rd)}">${rd.w}-${rd.l}</b>`:'sin calificar'} · <span style="color:var(--text3)">espejo de las tarjetas</span></span>
     </div>
     <div style="overflow-x:auto"><table class="htable">
       <thead><tr><th>Jugador</th><th>Eq</th><th>Mercado</th><th>Pick</th><th class="num" title="Mejor precio entre las casas que colgaban esa misma línea.">Cuota</th><th class="num" title="Cuánto mejor es nuestra probabilidad que la del mercado sin vig.">Edge</th><th class="num" title="Valor esperado a 1 unidad con esa cuota. Es lo que decide el pick del abridor.">EV</th><th class="num">Real</th><th class="c">✓/✗</th></tr></thead>

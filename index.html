@@ -1896,14 +1896,22 @@ async function getFormWindows(id,yr,date) {
 // nombre, que falla con acentos, sufijos (Jr.) y homónimos.
 // active devuelve null si la petición falla, para no vaciar al equipo por un error de red.
 async function getRoster(id) {
-  try{
-    const d=await mlb(`/teams/${id}/roster?rosterType=40Man`);
-    const r=d.roster||[], isP=p=>['P','SP','RP','TWP'].includes(p.position?.abbreviation);
-    const active=r.filter(p=>p.status?.code==='A').map(p=>p.person?.id).filter(Boolean);
-    const injured=r.filter(p=>/^(D\d+|ILF)$/.test(p.status?.code||'') && !isP(p))
-                   .map(p=>({id:p.person?.id, name:p.person?.fullName, status:p.status?.description||''}));
-    return {active:active.length?active:null, injured};
-  }catch{return {active:null, injured:[]};}
+  // Reintento: si el fetch falla, 'active' vendría null y el filtro de disponibilidad se
+  // saltaría, colando lesionados. Dos intentos para que eso casi nunca pase.
+  for(let intento=0; intento<2; intento++){
+    try{
+      const d=await mlb(`/teams/${id}/roster?rosterType=40Man`);
+      const r=d.roster||[], isP=p=>['P','SP','RP','TWP'].includes(p.position?.abbreviation);
+      const active=r.filter(p=>p.status?.code==='A').map(p=>p.person?.id).filter(Boolean);
+      // injured = SOLO lesionados de verdad (IL): se usa como penalización al OPS del equipo,
+      // así que no debe incluir a los reasignados a menores. La disponibilidad para el FILTRO
+      // la da el roster activo (play() muestra solo los 'A').
+      const injured=r.filter(p=>/^(D\d+|ILF)$/.test(p.status?.code||'') && !isP(p))
+                     .map(p=>({id:p.person?.id, name:p.person?.fullName, status:p.status?.description||''})).filter(p=>p.id);
+      if(active.length) return {active, injured};
+    }catch{}
+  }
+  return {active:null, injured:[]};
 }
 // Clutch del equipo: OPS con corredores en posición de anotar (risp) y con bases llenas (r123)
 async function getTeamClutch(id,yr){
@@ -4043,16 +4051,18 @@ function renderBatters(batData) {
     // getTopBatters ordena el roster COMPLETO de la temporada por OPS, así que un
     // jugador que se lesionó en julio sigue saliendo entre los mejores. Se descarta
     // a quien no puede jugar, en este orden:
-    //   1. Alineación confirmada → manda ella y nada más (es el dato más fresco).
-    //   2. Sin confirmar → tiene que estar en el roster activo (la IL queda fuera)
-    //      y no aparecer en el parte de lesionados (incluye day-to-day).
-    // Si la API de roster falla (null) no se filtra por ahí, para no vaciar el equipo.
+    //   0. LESIONADO (cualquier estatus ≠ Activo) → SIEMPRE fuera, aunque no se pueda
+    //      verificar el roster (se chequea primero, para que un fallo de red no lo cuele).
+    //   1. Alineación confirmada → manda ella y nada más (el dato más fresco).
+    //   2. Sin confirmar pero con roster verificado → solo el roster activo (26).
+    //   3. Sin alineación NI roster verificable → NO se muestra: es mejor no dar un pick
+    //      que arriesgarse a mandar un lesionado o un banca. (Antes se mostraban todos.)
     const setOf = a => Array.isArray(a) ? new Set(a) : null;
     const play = (lineSet, actSet, outSet, b) => {
-      if(lineSet) return lineSet.has(b.id);
-      if(actSet && !actSet.has(b.id)) return false;
-      if(outSet && outSet.has(b.id))  return false;
-      return true;
+      if(outSet && outSet.has(b.id)) return false;   // lesionado/no disponible → siempre fuera
+      if(lineSet) return lineSet.has(b.id);           // alineación confirmada → solo titulares
+      if(actSet)  return actSet.has(b.id);            // sin alineación → solo roster activo
+      return false;                                    // sin nada verificable → no mostrar
     };
     const aSet=setOf(g.awayLineup), hSet=setOf(g.homeLineup);
     const aAct=setOf(g.awayActive), hAct=setOf(g.homeActive);

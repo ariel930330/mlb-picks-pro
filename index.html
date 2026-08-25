@@ -1428,7 +1428,7 @@ function computePicks(data) {
   // Selección por EDGE (valor), NUNCA por probabilidad: un favorito al 70% sin valor
   // vale menos que un underdog al 45% que el mercado paga de más.
   picks.sort(byValue);
-  const top3=picks.slice(0,3).map(p=>({...p,conf:p.prob>=.58?'High':p.prob>=.53?'Medium':'Low'}));
+  const top3=picks.slice(0,3).map(p=>({...p,conf:p.prob>=.58?'High':'Medium'}));   // sin BAJA: solo ALTA/MEDIA
 
   // ── MLB EDGE READ: lectura de juego por categoría + convicción + data quality ──
   const _e=data.edge||{};
@@ -3583,9 +3583,12 @@ function setPickFilter(f){
 // Si no hay cuotas conectadas este filtro se queda vacío — y eso es lo correcto:
 // sin precio no hay forma de saber si algo tiene valor.
 function pickPasses(p){ return pickFilter==='ev' ? (hasPrice(p)&&p.edge>0) : pickFilter==='high' ? (p.conf||confOf(p))==='High' : true; }
-// confOf sigue existiendo SOLO como etiqueta visual (🟢🟡🔴) y para el filtro manual
+// confOf sigue existiendo SOLO como etiqueta visual (🟢🟡) y para el filtro manual
 // "Alta conf.". Nunca decide qué picks se muestran ni en qué orden.
-const confOf = p => p.prob>=.58?'High':p.prob>=.53?'Medium':'Low';
+// Se quitó la categoría BAJA: era una etiqueta por PROBABILIDAD que hacía ver "malo"
+// a un underdog con buen edge, contra la regla de que todo se elige por valor. Ahora
+// solo hay ALTA / MEDIA (lo que era Baja pasa a MEDIA, sin la etiqueta roja).
+const confOf = p => p.prob>=.58?'High':'Medium';
 // Máxima variedad: el mejor pick de cada TIPO de mercado (sin repetir), hasta 5,
 // elegido y ordenado con byValue. Sin piso de probabilidad: un underdog con valor
 // real tiene que poder aparecer, y antes el umbral del 58% lo eliminaba siempre.
@@ -3626,8 +3629,8 @@ function convictionBoard(games){
   </div>`;
 }
 function renderPicks(games) {
-  const confMap = {High:'high',Medium:'med',Low:'low'};
-  const labelMap = {High:'🟢 ALTA',Medium:'🟡 MEDIA',Low:'🔴 BAJA'};
+  const confMap = {High:'high',Medium:'med'};
+  const labelMap = {High:'🟢 ALTA',Medium:'🟡 MEDIA'};   // sin BAJA
   $('filterbar').style.display = games.length ? 'flex' : 'none';
   // Sin una sola cuota real en toda la jornada NO hay edge en ningún lado, y el
   // orden se cae a probabilidad del modelo. Se avisa fuerte en vez de disimularlo:
@@ -3683,7 +3686,7 @@ function renderPicks(games) {
       })(g.edgeRead):''}
       <div class="picks">
         ${picks.length?picks.map(p=>{
-          const cc=confMap[p.conf]||'low', lbl=labelMap[p.conf]||'🔴 BAJA';
+          const cc=confMap[p.conf]||'med', lbl=labelMap[p.conf]||'🟡 MEDIA';   // 'Low' viejo → MEDIA
           return `<div class="pick-row ${cc}">
             <div class="pick-accent"></div>
             <div class="pick-badge"><span class="icon">${lbl.split(' ')[0]}</span><span class="label">${lbl.split(' ')[1]||''}</span></div>

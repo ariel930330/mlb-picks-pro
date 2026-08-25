@@ -3938,6 +3938,42 @@ function renderPitchers(games) {
 }
 
 // ── Batters ───────────────────────────────────────────────────────────────────
+// ── Props de bateador: MISMO trato que el abridor ───────────────────────────
+// Blend con el mercado (BLEND_MKT), lado por edge, sospecha por desacuerdo grande,
+// piso de EV y Confianza en la proyección. Antes usaba evalProp (sin sospecha, sin
+// piso de EV, sin confianza y con Poisson en vez de binomial).
+// OJO: los CV son ESTIMADOS, no medidos como los del abridor (2,133 aperturas). El
+// bateo por juego es más ruidoso: la tasa de hit (AVG) es la habilidad más estable;
+// el poder (SLG→TB) menos; los HR son lo más volátil. Recalibrables con historial.
+const BAT_MIN_EV = 0.01;
+const BAT_CV = { hit:0.12, tb:0.18, hr:0.30 };
+const BAT_PA = 4.2;   // apariciones al plato esperadas por juego (trials del binomial)
+// P(over) del modelo: hit/HR binomial sobre las PA (acotado, no puede pasar de 1 por PA);
+// TB Poisson (0-4 bases por hit, no es un binomio simple).
+const batProb = (k, mu, line) => k==='tb' ? poissonOver(mu,line) : binomOverMu(mu, BAT_PA, line);
+// Confianza en la proyección: si se equivoca lo que suele (CV), ¿sigue del lado correcto
+// del mercado? (lognormal, ±3σ, 25 puntos) — espejo de pmConf del abridor.
+function batConf(k, mu, mkt, over){
+  const cv=BAT_CV[k]; if(cv==null||mu==null||!isFinite(mu)||!mkt) return null;
+  let sw=0, sok=0;
+  for(const z of CONF_Z){ const w=Math.exp(-z*z/2), mz=mu*Math.exp(cv*z-cv*cv/2);
+    const pv=batProb(k, mz, mkt.line); const ok=over?pv>mkt.fairOver:(1-pv)>mkt.fairUnder; sw+=w; if(ok)sok+=w; }
+  return sok/sw;
+}
+// Evalúa un mercado de bateador contra la línea REAL de casa (espejo de pmEval).
+function batEval(k, mu, mkt){
+  if(!mkt || mu==null || !isFinite(mu)) return null;
+  const line=mkt.line, mOver=batProb(k, mu, line), bOver=blend(mOver, mkt.fairOver);
+  const gap=Math.abs(mOver-mkt.fairOver);
+  let over, prob, fair, price, edge;
+  if(mkt.overOnly || mkt.fairUnder==null){ over=true; prob=bOver; fair=mkt.fairOver; price=mkt.priceOver; edge=bOver-mkt.fairOver; }
+  else { const eO=bOver-mkt.fairOver, eU=(1-bOver)-mkt.fairUnder; over=eO>=eU;
+    prob=over?bOver:1-bOver; fair=over?mkt.fairOver:mkt.fairUnder; price=over?mkt.priceOver:mkt.priceUnder; edge=over?eO:eU; }
+  const ev=prob*amDec(price)-1, rec=ev>=BAT_MIN_EV && gap<.25;
+  return {k, over, line, prob, fair, price, edge, ev, mRaw:mOver, gap, sospecha:gap>=.25,
+          conf:batConf(k, mu, mkt, over), cv:BAT_CV[k], books:mkt.books, allBooks:mkt.allBooks,
+          rec, stake: rec?stakePct(prob,price):0};
+}
 function renderBatters(batData) {
   const rows=[];
   batData.forEach(g=>{
@@ -3972,9 +4008,9 @@ function renderBatters(batData) {
       const expHR=(b.hrRate??(b.ab?b.hr/b.ab:0))*4.2*pAdj*envAdj;   // home runs (tasa regresada)
       // Comparación vs casa (props reales) si están disponibles
       const bp=allBProps[normName(b.name)];
-      const evHits=bp?.hits?evalProp(poissonOver(expH,bp.hits.line),bp.hits):null;
-      const evTB  =bp?.tb  ?evalProp(poissonOver(expTB,bp.tb.line),  bp.tb)  :null;
-      const evHR  =bp?.hr  ?evalProp(poissonOver(expHR,bp.hr.line),  bp.hr)  :null;
+      const evHits=bp?.hits?batEval('hit', expH,  bp.hits):null;
+      const evTB  =bp?.tb  ?batEval('tb',  expTB, bp.tb  ):null;
+      const evHR  =bp?.hr  ?batEval('hr',  expHR, bp.hr  ):null;
       return {id:b.id,name:b.name,pos:b.pos,pitcher:oppPitcher,oppHand,hand:b.hand,split:bs?{...bs,rel:+bsRel.toFixed(2)}:bs,bvp:b.bvp,tag,hitP,expTB,hrbiR,expBB,expHR,evHits,evTB,evHR};
     };
     // ── DISPONIBILIDAD ────────────────────────────────────────────────────────
@@ -4033,17 +4069,18 @@ function renderBatters(batData) {
         ${chips.length?`<div class="bt-chips">${chips.join('')}</div>`:''}
       </div>
       <div class="bt-proj">${(ev=>ev
-        // El número grande es el EDGE, que es lo que decide el pick. La proyección y
-        // la probabilidad pasan a la línea de abajo: son el insumo, no la conclusión.
-        ? `<span class="bt-val" style="color:${ev.edge>0?'var(--gtx)':'var(--rtx)'}">${ev.edge>=0?'+':''}${(ev.edge*100).toFixed(1)}%</span>
-           <span class="bt-casa" style="color:var(--text2)">${ev.over?'O':'U'}${ev.line} ${amFmt(ev.price)}</span>
-           <span class="bt-casa" style="color:var(--text3);font-weight:400">proy ${cat.fmt(r)} · mkt ${pct(ev.fair)}</span>
-           ${ev.stake>0?`<span class="bt-casa" style="color:var(--gold)">apostar ${ev.stake}%</span>`:''}`
+        // El número grande es el EDGE. Si no es apostable (EV bajo o sospecha) se atenúa
+        // a gris para no pregonarlo. La proyección, el precio, la Confianza y el stake
+        // pasan a las líneas de abajo: son el insumo, no la conclusión.
+        ? `<span class="bt-val" style="color:${!ev.rec?'var(--text3)':ev.edge>0?'var(--gtx)':'var(--rtx)'}">${ev.edge>=0?'+':''}${(ev.edge*100).toFixed(1)}%${ev.sospecha?' <span style="color:var(--rtx)" title="El modelo se aleja ≥25 pts del mercado: casi nunca es dinero gratis (línea de opener/vieja/lesión). No apostable.">⚠</span>':''}</span>
+           <span class="bt-casa" style="color:var(--text2)">${ev.over?'O':'U'}${ev.line} ${amFmt(ev.price)} · EV ${ev.ev>=0?'+':''}${(ev.ev*100).toFixed(1)}%</span>
+           <span class="bt-casa" style="color:var(--text3);font-weight:400">proy ${cat.fmt(r)} · mkt ${pct(ev.fair)}${ev.conf!=null?` · <span title="Qué tan seguido el pick sigue del lado correcto del mercado si la proyección se equivoca lo que suele. 50% = moneda al aire. CV estimado, no medido.">conf ${(ev.conf*100).toFixed(0)}%</span>`:''}</span>
+           ${ev.rec?`<span class="bt-casa" style="color:var(--gold)">apostar ${ev.stake}%</span>`:`<span class="bt-casa" style="color:var(--rtx)">no apostable</span>`}`
         : `<span class="bt-val">${cat.fmt(r)}</span>`)(cat.tag?cat.tag(r):null)}</div>
     </div>`;
   };
   $('batters-area').innerHTML=`
-    <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los 2 de <b>mayor edge (valor)</b> por categoría · el número grande es el <b>edge contra la línea real de casa</b>; la proyección va debajo, como insumo · <b>sin cuota no hay pick</b>: las categorías sin mercado (H+R+RBI, BB) no se muestran · ajustado por pitcher rival, mano, estadio y clima${rows.some(r=>r.conf)?' · <b style="color:var(--gtx)">✓</b> = titular confirmado':''}${rows.some(r=>!r.conf)?' · <b>sin confirmar</b> = activo y sin lesión, pero la alineación no se publica todavía':''} · <b>se excluyen lesionados y jugadores fuera del roster activo</b>.</div>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los 2 de <b>mayor edge</b> por categoría · <b>mismo trato que el abridor</b>: proyección mezclada con el mercado (70/30), lado por edge, <b>Confianza Proj.</b> y piso de EV · el ⚠ y el gris marcan lo <b>no apostable</b> (EV bajo o el modelo se aleja demasiado del mercado) · <b>sin cuota no hay pick</b> (H+R+RBI y BB no se cotizan) · hit/HR binomial sobre las PA, TB Poisson${rows.some(r=>r.conf)?' · <b style="color:var(--gtx)">✓</b> = titular confirmado':''}${rows.some(r=>!r.conf)?' · <b>sin confirmar</b> = activo y sin lesión, pero la alineación no se publica todavía':''} · <b>se excluyen lesionados y fuera del roster activo</b>.</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px">
       ${cats.map(cat=>{
         // SIN CUOTA NO HAY PICK: solo entran los que tienen línea real de casa en ESTA
@@ -4052,14 +4089,18 @@ function renderBatters(batData) {
         if(!cat.tag) return '';
         const conLinea = pool.filter(r=>!!cat.tag(r));
         if(!conLinea.length) return '';
-        const top2 = conLinea.sort((a,b)=>cat.tag(b).edge-cat.tag(a).edge).slice(0,2);
-        top2.forEach(r=>{ const ev=cat.tag(r); propsBatter.push({gamePk:r.gamePk,player_id:r.id,player_name:r.name,team:r.team,market:cat.mkt,
-          // La línea que se guarda es la REAL de la casa (ev.line), no la nominal de la
-          // categoría: si el mercado cuelga otro número, el pick es sobre ESE.
-          target:ev.line??(typeof cat.target==='function'?cat.target(r):cat.target), side:ev.over?'over':'under',
+        // Orden como el abridor: apostables limpias primero (sospecha ⚠ al final), luego por
+        // edge. Un mercado ⚠ NUNCA es el pick principal — es justo el que más infla el edge.
+        const top2 = conLinea.sort((a,b)=>{ const A=cat.tag(a),B=cat.tag(b);
+          return ((A.sospecha?1:0)-(B.sospecha?1:0)) || ((B.rec?1:0)-(A.rec?1:0)) || (B.edge-A.edge); }).slice(0,2);
+        // Al historial va solo lo APOSTABLE que se muestra (espejo de las tarjetas). La línea
+        // guardada es la REAL de la casa (ev.line); model_prob es la prob del modelo en ESA línea.
+        top2.forEach(r=>{ const ev=cat.tag(r); if(!ev.rec) return;
+          propsBatter.push({gamePk:r.gamePk,player_id:r.id,player_name:r.name,team:r.team,market:cat.mkt,
+          target:ev.line, side:ev.over?'over':'under',
           prob:+ev.prob.toFixed(3), proj:+cat.metric(r).toFixed(2), edge:+ev.edge.toFixed(3),
-          model_prob:cat.prob?+cat.prob(r).toFixed(3):null, fair:+ev.fair.toFixed(3),
-          price:ev.price, ev:+((ev.prob*amDec(ev.price))-1).toFixed(3), books:ev.books??null}); });
+          model_prob:+(ev.over?ev.mRaw:1-ev.mRaw).toFixed(3), fair:+ev.fair.toFixed(3),
+          price:ev.price, ev:+ev.ev.toFixed(3), books:ev.books??null}); });
         return `<div class="card"><div class="card-hdr"><span class="card-hdr-title">${cat.title}</span></div>${top2.map((r,i)=>row(r,i,cat)).join('')}</div>`;
       }).join('')}
     </div>`;

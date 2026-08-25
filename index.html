@@ -2049,6 +2049,11 @@ const getBvPOn  = () => localStorage.getItem('bvp_on')==='1';       // BvP APAGA
 const saveBvPOn = on => on?localStorage.setItem('bvp_on','1'):localStorage.removeItem('bvp_on');
 const getSplitsOn = () => localStorage.getItem('splits_on')==='1';  // splits del bateador vs L/R APAGADO por defecto
 const saveSplitsOn = on => on?localStorage.setItem('splits_on','1'):localStorage.removeItem('splits_on');
+// Solo bateadores en la ALINEACIÓN PUBLICADA (default ON): si un equipo no ha posteado,
+// no se muestra a nadie de ese equipo (nada de banca ni proyectados).
+const getOnlyConfirmed  = () => localStorage.getItem('only_confirmed')!=='0';
+const saveOnlyConfirmed = on => on?localStorage.removeItem('only_confirmed'):localStorage.setItem('only_confirmed','0');
+function toggleOnlyConfirmed(on){ saveOnlyConfirmed(on); renderBatters(allBatters); }
 
 // Evalúa una prop Over/Under: compara la prob. del modelo (over) contra el mercado sin vig
 // y devuelve el mejor lado con su edge y stake (medio-Kelly).
@@ -4008,6 +4013,13 @@ function batEval(k, mu, mkt){
 }
 function renderBatters(batData) {
   const rows=[];
+  const onlyConf = getOnlyConfirmed();
+  // Cuántos equipos con juego hoy aún no publican alineación (para avisarlo)
+  let sinPub=0; (batData||[]).forEach(g=>{ if(!(g.awayLineup?.length)) sinPub++; if(!(g.homeLineup?.length)) sinPub++; });
+  const controls = `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;font-size:11px">
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-weight:700" title="Con esto, si un equipo aún no publica su alineación, no se muestra a NADIE de ese equipo (ni banca ni proyectados).">
+      <input type="checkbox" ${onlyConf?'checked':''} onchange="toggleOnlyConfirmed(this.checked)"> Solo alineación publicada</label>
+    ${sinPub?`<span style="color:var(--atx)">⚠ ${sinPub} equipo${sinPub===1?'':'s'} sin publicar${onlyConf?' — ocultos hasta que salga su alineación':''}</span>`:`<span style="color:var(--gtx)">✓ todas las alineaciones publicadas</span>`}</div>`;
   batData.forEach(g=>{
     const wxF=wxFactor(g.wx), pf=g.pf||1, envAdj=pf*wxF;
     const mk=(b,oppScore,oppPitcher,plat,oppHand)=>{
@@ -4060,9 +4072,10 @@ function renderBatters(batData) {
     const setOf = a => Array.isArray(a) ? new Set(a) : null;
     const play = (lineSet, actSet, outSet, b) => {
       if(outSet && outSet.has(b.id)) return false;   // lesionado/no disponible → siempre fuera
-      if(lineSet) return lineSet.has(b.id);           // alineación confirmada → solo titulares
-      if(actSet)  return actSet.has(b.id);            // sin alineación → solo roster activo
-      return false;                                    // sin nada verificable → no mostrar
+      if(lineSet) return lineSet.has(b.id);           // alineación PUBLICADA → solo esos 9, descarta el resto
+      if(onlyConf) return false;                       // modo estricto: sin publicar no se muestra a nadie
+      if(actSet)  return actSet.has(b.id);            // modo laxo: roster activo (proyectados)
+      return false;
     };
     const aSet=setOf(g.awayLineup), hSet=setOf(g.homeLineup);
     const aAct=setOf(g.awayActive), hAct=setOf(g.homeActive);
@@ -4070,13 +4083,15 @@ function renderBatters(batData) {
     (g.awayBatters||[]).forEach(b=>{ if(!play(aSet,aAct,aOut,b)) return; const r=mk(b,g.awayOppScore??.5,g.homePitcher,g.awayPlatoon,g.awayOppHand); if(r){r.team=g.away;r.gamePk=g.gamePk;r.conf=!!aSet;rows.push(r);} });
     (g.homeBatters||[]).forEach(b=>{ if(!play(hSet,hAct,hOut,b)) return; const r=mk(b,g.homeOppScore??.5,g.awayPitcher,g.homePlatoon,g.homeOppHand); if(r){r.team=g.home;r.gamePk=g.gamePk;r.conf=!!hSet;rows.push(r);} });
   });
-  if(!rows.length){$('batters-area').innerHTML='<div class="empty">Corre el análisis primero.</div>';return;}
+  if(!rows.length){$('batters-area').innerHTML=controls+`<div class="empty">${onlyConf&&sinPub
+    ?'Ningún equipo ha publicado su alineación todavía.<br>Analiza más cerca de la hora del juego, o desmarca <b>“Solo alineación publicada”</b> para ver proyectados.'
+    :'Corre el análisis primero.'}</div>`;return;}
   // SIN CUOTA NO HAY PICK: solo bateadores con línea REAL de casa en alguna categoría.
   // El "matchup favorable" ya no basta: sin precio no se sabe si el prop paga bien,
   // y un bateador contra un abridor flojo puede estar carísimo en la casa.
   const anyLine = r => !!(r.evHits||r.evTB||r.evHR);
   const pool = rows.filter(anyLine);
-  if(!pool.length){$('batters-area').innerHTML='<div class="empty">Ningún bateador tiene línea real de casa en esta jornada.<br>Sin cuota no hay pick: no se puede saber si el precio paga bien.</div>';return;}
+  if(!pool.length){$('batters-area').innerHTML=controls+'<div class="empty">Ningún bateador (de alineación publicada) tiene línea real de casa en esta jornada.<br>Sin cuota no hay pick: no se puede saber si el precio paga bien.</div>';return;}
 
   // Cada categoría: los 2 de MAYOR EDGE contra la línea real de casa. mkt/target/prob para el historial.
   const cats=[
@@ -4115,8 +4130,8 @@ function renderBatters(batData) {
         : `<span class="bt-val">${cat.fmt(r)}</span>`)(cat.tag?cat.tag(r):null)}</div>
     </div>`;
   };
-  $('batters-area').innerHTML=`
-    <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los 2 de <b>mayor edge</b> por categoría · <b>mismo trato que el abridor</b>: proyección mezclada con el mercado (70/30), lado por edge, <b>Confianza Proj.</b> y piso de EV · el ⚠ y el gris marcan lo <b>no apostable</b> (EV bajo o el modelo se aleja demasiado del mercado) · 5 mercados: <b>Hits, Total Bases, H+R+RBI, Walks y HR</b> · dist: hit/HR/BB binomial, TB Poisson, H+R+RBI binomial negativo${rows.some(r=>r.conf)?' · <b style="color:var(--gtx)">✓</b> = titular confirmado':''}${rows.some(r=>!r.conf)?' · <b>sin confirmar</b> = activo y sin lesión, pero la alineación no se publica todavía':''} · <b>se excluyen lesionados y fuera del roster activo</b>.</div>
+  $('batters-area').innerHTML=controls+`
+    <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los 2 de <b>mayor edge</b> por categoría · <b>mismo trato que el abridor</b>: proyección mezclada con el mercado (70/30), lado por edge, <b>Confianza Proj.</b> y piso de EV · el ⚠ y el gris marcan lo <b>no apostable</b> (EV bajo o el modelo se aleja demasiado del mercado) · 5 mercados: <b>Hits, Total Bases, H+R+RBI, Walks y HR</b> · dist: hit/HR/BB binomial, TB Poisson, H+R+RBI binomial negativo${rows.some(r=>r.conf)?' · <b style="color:var(--gtx)">✓</b> = titular confirmado':''}${!onlyConf&&rows.some(r=>!r.conf)?' · <b>sin confirmar</b> = activo y sin lesión, pero la alineación no se publica todavía':''} · <b>se excluyen lesionados y fuera del roster activo</b>.</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px">
       ${cats.map(cat=>{
         // SIN CUOTA NO HAY PICK: solo entran los que tienen línea real de casa en ESTA

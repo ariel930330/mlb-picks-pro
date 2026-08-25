@@ -3942,11 +3942,22 @@ function renderPitchers(games) {
 // Blend con el mercado (BLEND_MKT), lado por edge, sospecha por desacuerdo grande,
 // piso de EV y Confianza en la proyección. Antes usaba evalProp (sin sospecha, sin
 // piso de EV, sin confianza y con Poisson en vez de binomial).
-// OJO: los CV son ESTIMADOS, no medidos como los del abridor (2,133 aperturas). El
-// bateo por juego es más ruidoso: la tasa de hit (AVG) es la habilidad más estable;
-// el poder (SLG→TB) menos; los HR son lo más volátil. Recalibrables con historial.
+// CV MEDIDOS sobre 16,390 batter-games de 2026 (136 bateadores calificados), con la
+// MISMA descomposición del abridor: Var(real) = Var(azar) + Var(error de proyección).
+// La tasa de temporada proyecta cada juego y el residual se separa del ruido de la
+// distribución (binomial en Hit/HR; compuesto de bases en TB). Ver measure-batter-cv.js.
+//
+//   mercado   mu medio   Var(real)   Var(azar)   Var(proy)   CV
+//   Hit         0.95        0.743       0.734       0.010    10.3 %
+//   TB          1.60        3.186       3.175       0.011     6.5 %
+//   HR          0.15        0.141       0.139       0.002    28.3 %
+//
+// La proyección de bateo es MUY fiable: casi toda la varianza del resultado es azar del
+// juego (ya está en la distribución), no error del modelo — por eso los CV salen bajos.
+// TB es el más estable (SLG fiable, media grande); los HR lo menos (evento raro). Es un
+// techo del error real: la proyección ajustada del app (matchup/park/xStats) yerra ≤ esto.
 const BAT_MIN_EV = 0.01;
-const BAT_CV = { hit:0.12, tb:0.18, hr:0.30 };
+const BAT_CV = { hit:0.103, tb:0.065, hr:0.283 };
 const BAT_PA = 4.2;   // apariciones al plato esperadas por juego (trials del binomial)
 // P(over) del modelo: hit/HR binomial sobre las PA (acotado, no puede pasar de 1 por PA);
 // TB Poisson (0-4 bases por hit, no es un binomio simple).

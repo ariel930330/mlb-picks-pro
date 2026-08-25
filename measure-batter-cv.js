@@ -34,11 +34,15 @@ async function mapLimit(arr, n, fn){
   const lead = await j(`${API}/stats?stats=season&group=hitting&season=${SEASON}&sportId=1&gameType=R&playerPool=qualified&limit=200`);
   const batters = (lead.stats?.[0]?.splits || []).map(s => ({
     id: s.player?.id, name: s.player?.fullName,
-    pa: +s.stat.plateAppearances, h: +s.stat.hits, d: +s.stat.doubles, t: +s.stat.triples, hr: +s.stat.homeRuns,
+    pa: +s.stat.plateAppearances, h: +s.stat.hits, d: +s.stat.doubles, t: +s.stat.triples, hr: +s.stat.homeRuns, bb: +s.stat.baseOnBalls,
   })).filter(b => b.id && b.pa >= MIN_PA);
   console.log('bateadores calificados:', batters.length);
 
-  const acc = { hit:{sr2:0,sn:0,smu:0,n:0}, tb:{sr2:0,sn:0,smu:0,n:0}, hr:{sr2:0,sn:0,smu:0,n:0} };
+  // hit/tb/hr/bb: azar paramétrico conocido -> descomposición limpia.
+  // hrr: suma correlacionada (H+R+RBI), sin familia simple -> se reporta con Poisson como
+  // referencia, pero en el app va con binomial negativo (Var/mu medida) y CV estimado.
+  const acc = { hit:{sr2:0,sn:0,smu:0,n:0}, tb:{sr2:0,sn:0,smu:0,n:0}, hr:{sr2:0,sn:0,smu:0,n:0},
+                bb:{sr2:0,sn:0,smu:0,n:0}, hrr:{sr2:0,smu:0,n:0} };
   let games = 0;
 
   // 2) Game logs y descomposición de varianza
@@ -49,22 +53,33 @@ async function mapLimit(arr, n, fn){
     const p1 = (b.h - b.d - b.t - b.hr) / b.pa, p2 = b.d / b.pa, p3 = b.t / b.pa, p4 = b.hr / b.pa;
     const meanTB  = p1 + 2*p2 + 3*p3 + 4*p4;                               // bases esperadas por PA
     const varTBpa = (p1 + 4*p2 + 9*p3 + 16*p4) - meanTB*meanTB;            // varianza de bases por PA
-    const pHR = b.hr / b.pa;
+    const pHR = b.hr / b.pa, pBB = b.bb / b.pa;
+    // tasa de H+R+RBI por PA del bateador (para su proyección por juego)
+    let sHRR = 0, sPA = 0;
+    for(const s of gs){ const pa=+s.stat.plateAppearances||0; if(pa<1) continue; sHRR += (+s.stat.hits||0)+(+s.stat.runs||0)+(+s.stat.rbi||0); sPA += pa; }
+    const rHRR = sPA>0 ? sHRR/sPA : 0;
     for(const s of gs){
       const pa = +s.stat.plateAppearances || 0; if(pa < 1) continue;
-      const H  = +s.stat.hits || 0, HR = +s.stat.homeRuns || 0;
-      const TB = +s.stat.totalBases || ((+s.stat.hits||0) + (+s.stat.doubles||0) + 2*(+s.stat.triples||0) + 3*(+s.stat.homeRuns||0));
+      const H  = +s.stat.hits || 0, HR = +s.stat.homeRuns || 0, BB = +s.stat.baseOnBalls || 0;
+      const TB  = +s.stat.totalBases || (H + (+s.stat.doubles||0) + 2*(+s.stat.triples||0) + 3*HR);
+      const HRR = H + (+s.stat.runs||0) + (+s.stat.rbi||0);
       games++;
       { const mu = pH*pa,     nz = pa*pH*(1-pH),     r = H  - mu; acc.hit.sr2 += r*r; acc.hit.sn += nz; acc.hit.smu += mu; acc.hit.n++; }
       { const mu = meanTB*pa, nz = pa*varTBpa,       r = TB - mu; acc.tb.sr2  += r*r; acc.tb.sn  += nz; acc.tb.smu  += mu; acc.tb.n++;  }
       { const mu = pHR*pa,    nz = pa*pHR*(1-pHR),   r = HR - mu; acc.hr.sr2  += r*r; acc.hr.sn  += nz; acc.hr.smu  += mu; acc.hr.n++;  }
+      { const mu = pBB*pa,    nz = pa*pBB*(1-pBB),   r = BB - mu; acc.bb.sr2  += r*r; acc.bb.sn  += nz; acc.bb.smu  += mu; acc.bb.n++;  }
+      { const mu = rHRR*pa,   r = HRR - mu;          acc.hrr.sr2 += r*r; acc.hrr.smu += HRR; acc.hrr.n++; }   // azar = Poisson (mu), abajo
     }
   });
 
   console.log('batter-games:', games, '\n');
-  console.log('mercado   mu_medio  Var(real)  Var(azar)  Var(proy)   CV');
+  console.log('mercado   mu_medio  Var(real)  Var(azar)  Var(proy)   CV      dist');
+  const dist = { hit:'binomial', tb:'Poisson (bases)', hr:'binomial', bb:'binomial', hrr:'NB (sobredisp.)' };
   for(const [k, a] of Object.entries(acc)){
-    const mu = a.smu/a.n, vr = a.sr2/a.n, vn = a.sn/a.n, vp = Math.max(0, vr - vn), cv = Math.sqrt(vp)/mu;
-    console.log(`${k.padEnd(9)} ${mu.toFixed(3).padStart(7)}  ${vr.toFixed(3).padStart(8)}  ${vn.toFixed(3).padStart(8)}  ${vp.toFixed(3).padStart(8)}  ${(cv*100).toFixed(1)}%`);
+    const mu = a.smu/a.n, vr = a.sr2/a.n;
+    const vn = k==='hrr' ? mu /* Poisson de referencia */ : a.sn/a.n;
+    const vp = Math.max(0, vr - vn), cv = Math.sqrt(vp)/mu;
+    const nota = k==='hrr' ? '  (Poisson infla el CV: sobredispersa Var/mu='+(vr/mu).toFixed(2)+' -> app usa NB, CV estimado ~20%)' : '';
+    console.log(`${k.padEnd(9)} ${mu.toFixed(3).padStart(7)}  ${vr.toFixed(3).padStart(8)}  ${vn.toFixed(3).padStart(8)}  ${vp.toFixed(3).padStart(8)}  ${(cv*100).toFixed(1).padStart(5)}%  ${dist[k]}${nota}`);
   }
 })().catch(e => { console.error('ERROR:', e.message); process.exit(1); });

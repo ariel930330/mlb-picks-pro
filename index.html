@@ -2102,11 +2102,12 @@ async function getPitcherProps(key, events) {
 
 // Props de bateadores (hits, bases totales, HR): línea REAL de las casas. Varios mercados por partido.
 async function getBatterProps(key, events) {
-  const MK = { batter_hits: 'hits', batter_total_bases: 'tb', batter_home_runs: 'hr' };
+  const MK = { batter_hits:'hits', batter_total_bases:'tb', batter_home_runs:'hr',
+               batter_walks:'bb', batter_hits_runs_rbis:'hrr' };
   const byBatter = {};
   await mapLimit(events, 5, async (ev) => {
     try {
-      const url = `${ODDS_BASE}/sports/baseball_mlb/events/${ev.id}/odds?apiKey=${key}&regions=us&markets=batter_hits,batter_total_bases,batter_home_runs&oddsFormat=american`;
+      const url = `${ODDS_BASE}/sports/baseball_mlb/events/${ev.id}/odds?apiKey=${key}&regions=us&markets=${Object.keys(MK).join(',')}&oddsFormat=american`;
       const r = await fetch(url); if (!r.ok) return;
       const rem = r.headers.get('x-requests-remaining'); if (rem != null) oddsRemaining = rem;
       const d = await r.json();
@@ -3442,15 +3443,16 @@ const propErr = e => { if(!e) return false;
 async function savePropPicks(date){
   propSaveMsg = null;
   if(!isOwner()){ propSaveMsg='Inicia sesión para que los props se guarden en el historial.'; return; }
-  // TODO SE ELIGE POR EDGE, arriba y abajo. El historial tiene que ser el espejo de
-  // las tarjetas: si arriba se recomienda un pick, ese mismo es el que queda guardado.
-  //   Abridores: entran TODAS las tarjetas, una fila por abridor (su mejor mercado por
-  //   edge). No se cortan a tres — la tabla de abajo debe cuadrar con la de arriba.
-  //   Bateadores: siguen limitados a los PROP_TOP_N de mayor edge de la jornada.
+  // TODO SE ELIGE POR EDGE, arriba y abajo. El historial es el ESPEJO de las tarjetas:
+  // si arriba se destaca un pick, ese mismo queda guardado.
+  //   Abridores: una fila por abridor (su mejor mercado apostable por edge).
+  //   Bateadores: TODOS los picks apostables que muestran las tarjetas (los top-2 por
+  //   categoría que ya pasaron el piso de EV). Antes se cortaban a PROP_TOP_N=3, así que
+  //   el historial dejaba fuera picks que la sección de arriba sí destacaba.
   const porEdge = arr => arr.filter(p=>p.player_id&&p.gamePk&&p.edge!=null&&p.edge>0)
                             .sort((a,b)=>b.edge-a.edge);
   const cand = [...porEdge(propsPitcher).map(p=>({...p,kind:'pitcher'})),
-                ...porEdge(propsBatter ).slice(0,PROP_TOP_N).map(p=>({...p,kind:'batter' }))];
+                ...porEdge(propsBatter ).map(p=>({...p,kind:'batter' }))];
   if(!cand.length){
     propSaveMsg = 'Este análisis no dejó ningún prop apostable, así que no se guardó nada.';
     return;
@@ -3951,17 +3953,25 @@ function renderPitchers(games) {
 //   Hit         0.95        0.743       0.734       0.010    10.3 %
 //   TB          1.60        3.186       3.175       0.011     6.5 %
 //   HR          0.15        0.141       0.139       0.002    28.3 %
+//   BB          0.40        0.363       0.358       0.005    18.4 %
 //
 // La proyección de bateo es MUY fiable: casi toda la varianza del resultado es azar del
 // juego (ya está en la distribución), no error del modelo — por eso los CV salen bajos.
 // TB es el más estable (SLG fiable, media grande); los HR lo menos (evento raro). Es un
 // techo del error real: la proyección ajustada del app (matchup/park/xStats) yerra ≤ esto.
+// H+R+RBI es una SUMA de conteos correlacionados: muy sobredispersa (Var/μ≈1.83, media
+// 1.99, var 3.64), va con NB (HRR_K por momentos = μ²/(var−μ) = 2.4). Su descomposición
+// limpia no aplica (no es una familia paramétrica simple), así que su CV es ESTIMADO ~20%.
 const BAT_MIN_EV = 0.01;
-const BAT_CV = { hit:0.103, tb:0.065, hr:0.283 };
+const BAT_CV = { hit:0.103, tb:0.065, hr:0.283, bb:0.184, hrr:0.20 };
 const BAT_PA = 4.2;   // apariciones al plato esperadas por juego (trials del binomial)
-// P(over) del modelo: hit/HR binomial sobre las PA (acotado, no puede pasar de 1 por PA);
-// TB Poisson (0-4 bases por hit, no es un binomio simple).
-const batProb = (k, mu, line) => k==='tb' ? poissonOver(mu,line) : binomOverMu(mu, BAT_PA, line);
+const HRR_K = 2.4;    // dispersión NB de H+R+RBI (Var/μ≈1.83 medido)
+// P(over) del modelo: hit/HR/BB binomial sobre las PA (acotado, no pasa de 1 por PA);
+// TB Poisson (0-4 bases por hit); H+R+RBI binomial negativo (suma sobredispersa).
+const batProb = (k, mu, line) =>
+    k==='tb'  ? poissonOver(mu,line)
+  : k==='hrr' ? nbOver(mu, HRR_K, line)
+  : binomOverMu(mu, BAT_PA, line);
 // Confianza en la proyección: si se equivoca lo que suele (CV), ¿sigue del lado correcto
 // del mercado? (lognormal, ±3σ, 25 puntos) — espejo de pmConf del abridor.
 function batConf(k, mu, mkt, over){
@@ -4022,7 +4032,9 @@ function renderBatters(batData) {
       const evHits=bp?.hits?batEval('hit', expH,  bp.hits):null;
       const evTB  =bp?.tb  ?batEval('tb',  expTB, bp.tb  ):null;
       const evHR  =bp?.hr  ?batEval('hr',  expHR, bp.hr  ):null;
-      return {id:b.id,name:b.name,pos:b.pos,pitcher:oppPitcher,oppHand,hand:b.hand,split:bs?{...bs,rel:+bsRel.toFixed(2)}:bs,bvp:b.bvp,tag,hitP,expTB,hrbiR,expBB,expHR,evHits,evTB,evHR};
+      const evBB  =bp?.bb  ?batEval('bb',  expBB, bp.bb  ):null;
+      const evHRR =bp?.hrr ?batEval('hrr', hrbiR, bp.hrr ):null;
+      return {id:b.id,name:b.name,pos:b.pos,pitcher:oppPitcher,oppHand,hand:b.hand,split:bs?{...bs,rel:+bsRel.toFixed(2)}:bs,bvp:b.bvp,tag,hitP,expTB,hrbiR,expBB,expHR,evHits,evTB,evHR,evBB,evHRR};
     };
     // ── DISPONIBILIDAD ────────────────────────────────────────────────────────
     // getTopBatters ordena el roster COMPLETO de la temporada por OPS, así que un
@@ -4055,11 +4067,11 @@ function renderBatters(batData) {
 
   // Cada categoría: los 2 de MAYOR EDGE contra la línea real de casa. mkt/target/prob para el historial.
   const cats=[
-    {title:'⚾ Probabilidad de Hit', mkt:'Hit', target:.5, prob:r=>r.hitP,               metric:r=>r.hitP,  fmt:r=>Math.round(r.hitP*100)+'%', tag:r=>r.evHits},
-    {title:'💥 Bases totales (TB)',  mkt:'TB',  target:r=>r.evTB?.line??1.5, prob:r=>1-Math.exp(-r.expTB), metric:r=>r.expTB, fmt:r=>r.expTB.toFixed(1), tag:r=>r.evTB},
-    {title:'🔥 H + R + RBI',         mkt:'H+R+RBI', target:r=>Math.round(r.hrbiR), prob:null, metric:r=>r.hrbiR, fmt:r=>r.hrbiR.toFixed(2),      tag:null},
-    {title:'🚶 Bases por bolas (BB)',mkt:'BB',  target:.5, prob:r=>1-Math.exp(-r.expBB), metric:r=>r.expBB, fmt:r=>r.expBB.toFixed(2),         tag:null},
-    {title:'🏟️ Home runs (HR)',      mkt:'HR',  target:.5, prob:r=>1-Math.exp(-r.expHR), metric:r=>r.expHR, fmt:r=>r.expHR.toFixed(2),         tag:r=>r.evHR},
+    {title:'⚾ Hits (O/U)',          mkt:'Hit',     metric:r=>r.hitP,  fmt:r=>Math.round(r.hitP*100)+'%', tag:r=>r.evHits},
+    {title:'💥 Bases totales (TB)',  mkt:'TB',      metric:r=>r.expTB, fmt:r=>r.expTB.toFixed(1),         tag:r=>r.evTB},
+    {title:'🔥 H + R + RBI',         mkt:'H+R+RBI', metric:r=>r.hrbiR, fmt:r=>r.hrbiR.toFixed(1),         tag:r=>r.evHRR},
+    {title:'🚶 Bases por bolas (BB)',mkt:'BB',      metric:r=>r.expBB, fmt:r=>r.expBB.toFixed(2),         tag:r=>r.evBB},
+    {title:'🏟️ Home runs (HR)',      mkt:'HR',      metric:r=>r.expHR, fmt:r=>r.expHR.toFixed(2),         tag:r=>r.evHR},
   ];
   propsBatter=[];   // recolectar los top-2 de cada categoría para guardar
   const chip=(txt,cls='')=>`<span class="bt-chip ${cls}">${txt}</span>`;
@@ -4091,7 +4103,7 @@ function renderBatters(batData) {
     </div>`;
   };
   $('batters-area').innerHTML=`
-    <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los 2 de <b>mayor edge</b> por categoría · <b>mismo trato que el abridor</b>: proyección mezclada con el mercado (70/30), lado por edge, <b>Confianza Proj.</b> y piso de EV · el ⚠ y el gris marcan lo <b>no apostable</b> (EV bajo o el modelo se aleja demasiado del mercado) · <b>sin cuota no hay pick</b> (H+R+RBI y BB no se cotizan) · hit/HR binomial sobre las PA, TB Poisson${rows.some(r=>r.conf)?' · <b style="color:var(--gtx)">✓</b> = titular confirmado':''}${rows.some(r=>!r.conf)?' · <b>sin confirmar</b> = activo y sin lesión, pero la alineación no se publica todavía':''} · <b>se excluyen lesionados y fuera del roster activo</b>.</div>
+    <div style="font-size:10px;color:var(--text3);margin-bottom:10px">Los 2 de <b>mayor edge</b> por categoría · <b>mismo trato que el abridor</b>: proyección mezclada con el mercado (70/30), lado por edge, <b>Confianza Proj.</b> y piso de EV · el ⚠ y el gris marcan lo <b>no apostable</b> (EV bajo o el modelo se aleja demasiado del mercado) · 5 mercados: <b>Hits, Total Bases, H+R+RBI, Walks y HR</b> · dist: hit/HR/BB binomial, TB Poisson, H+R+RBI binomial negativo${rows.some(r=>r.conf)?' · <b style="color:var(--gtx)">✓</b> = titular confirmado':''}${rows.some(r=>!r.conf)?' · <b>sin confirmar</b> = activo y sin lesión, pero la alineación no se publica todavía':''} · <b>se excluyen lesionados y fuera del roster activo</b>.</div>
     <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:10px">
       ${cats.map(cat=>{
         // SIN CUOTA NO HAY PICK: solo entran los que tienen línea real de casa en ESTA
@@ -4755,6 +4767,8 @@ function renderPropHist(kind){
     <td style="font-weight:700">${esc(r.market||'')}</td>
     <td style="white-space:nowrap"><b style="color:${r.side==='over'?'var(--gtx)':'var(--rtx)'}">${r.side==='over'?'Over':'Under'}</b> ${r.target}${r.market==='Ks'?'K':''}</td>
     <td class="num" style="font-weight:700"${r.books?` title="Mejor precio entre las ${r.books} casa(s) que colgaban esa línea."`:''}>${r.price!=null?amFmt(+r.price):'<span style="color:var(--text3)">—</span>'}</td>
+    <td class="num" title="Probabilidad del modelo en la línea real — la MISMA que la tarjeta de arriba.">${r.model_prob!=null?`<b>${Math.round(+r.model_prob*100)}%</b>`:'<span style="color:var(--text3)">—</span>'}</td>
+    <td class="num" title="Probabilidad justa del mercado (sin vig).">${r.fair!=null?`${Math.round(+r.fair*100)}%`:'<span style="color:var(--text3)">—</span>'}</td>
     <td class="num">${pctTxt(r.edge)}</td>
     <td class="num">${pctTxt(r.ev)}</td>
     <td class="num">${r.actual!=null?`<b>${r.actual}</b>`:'—'}</td>
@@ -4767,7 +4781,7 @@ function renderPropHist(kind){
       <span style="font-size:11px;color:var(--text2)" title="Al reanalizar, un pick que todavía no se ha calificado y que el análisis nuevo ya no recomienda se retira: el historial es el espejo de las tarjetas. Lo ya calificado no se toca nunca.">${rd.n?`récord <b style="color:${recCol(rd)}">${rd.w}-${rd.l}</b>`:'sin calificar'} · <span style="color:var(--text3)">espejo de las tarjetas</span></span>
     </div>
     <div style="overflow-x:auto"><table class="htable">
-      <thead><tr><th>Jugador</th><th>Eq</th><th>Mercado</th><th>Pick</th><th class="num" title="Mejor precio entre las casas que colgaban esa misma línea.">Cuota</th><th class="num" title="Cuánto mejor es nuestra probabilidad que la del mercado sin vig.">Edge</th><th class="num" title="Valor esperado a 1 unidad con esa cuota. Es lo que decide el pick del abridor.">EV</th><th class="num">Real</th><th class="c">✓/✗</th></tr></thead>
+      <thead><tr><th>Jugador</th><th>Eq</th><th>Mercado</th><th>Pick</th><th class="num" title="Mejor precio entre las casas que colgaban esa misma línea.">Cuota</th><th class="num" title="Probabilidad del modelo en la línea real, la misma que muestra la tarjeta de arriba.">Modelo</th><th class="num" title="Probabilidad justa del mercado (sin vig).">Mercado</th><th class="num" title="Cuánto mejor es nuestra probabilidad que la del mercado sin vig.">Edge</th><th class="num" title="Valor esperado a 1 unidad con esa cuota. Es lo que decide el pick.">EV</th><th class="num">Real</th><th class="c">✓/✗</th></tr></thead>
       <tbody>${filas}</tbody></table></div>
   </div>`;
 
@@ -4806,8 +4820,9 @@ function renderPropHist(kind){
         <td class="num"></td><td class="num"></td>
       </tr></tfoot></table></div>
     <div style="padding:8px 12px;font-size:10px;color:var(--text3)">
-      Se guardan los <b>${PROP_TOP_N} de mayor edge</b> de cada análisis. Al reanalizar el mismo día solo se agrega
-      lo que supere al mejor ya registrado; nada se borra. Los picks sin cuota de casa no entran.
+      El historial es el <b>espejo de las tarjetas</b>: se guarda cada pick <b>apostable destacado</b> arriba
+      (por edge, tras pasar el piso de EV), con su prob. del <b>Modelo</b> en la línea real. Al reanalizar el mismo
+      día, un pick sin calificar que ya no se recomienda se retira; lo ya calificado no se toca. Sin cuota no entra.
     </div>
   </div>`;
 

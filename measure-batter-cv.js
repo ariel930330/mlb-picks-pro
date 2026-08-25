@@ -43,6 +43,9 @@ async function mapLimit(arr, n, fn){
   // referencia, pero en el app va con binomial negativo (Var/mu medida) y CV estimado.
   const acc = { hit:{sr2:0,sn:0,smu:0,n:0}, tb:{sr2:0,sn:0,smu:0,n:0}, hr:{sr2:0,sn:0,smu:0,n:0},
                 bb:{sr2:0,sn:0,smu:0,n:0}, hrr:{sr2:0,smu:0,n:0} };
+  // MITAD-CONTRA-MITAD (odd/even): error de proyección de la tasa SIN conocer el azar.
+  // Es la única vía para H+R+RBI (suma correlacionada). Se valida contra Hit.
+  const split = { hit:{d:[],m:[]}, hrr:{d:[],m:[]} };
   let games = 0;
 
   // 2) Game logs y descomposición de varianza
@@ -70,6 +73,13 @@ async function mapLimit(arr, n, fn){
       { const mu = pBB*pa,    nz = pa*pBB*(1-pBB),   r = BB - mu; acc.bb.sr2  += r*r; acc.bb.sn  += nz; acc.bb.smu  += mu; acc.bb.n++;  }
       { const mu = rHRR*pa,   r = HRR - mu;          acc.hrr.sr2 += r*r; acc.hrr.smu += HRR; acc.hrr.n++; }   // azar = Poisson (mu), abajo
     }
+    // Mitad-contra-mitad: tasa de H y H+R+RBI en juegos pares vs impares
+    const half = { hit:[[0,0],[0,0]], hrr:[[0,0],[0,0]] };
+    gs.forEach((s,i)=>{ const pa=+s.stat.plateAppearances||0; if(pa<1) return; const h=i%2;
+      half.hit[h][0]+=(+s.stat.hits||0); half.hit[h][1]+=pa;
+      half.hrr[h][0]+=(+s.stat.hits||0)+(+s.stat.runs||0)+(+s.stat.rbi||0); half.hrr[h][1]+=pa; });
+    for(const k of ['hit','hrr']){ const A=half[k]; if(A[0][1]<80||A[1][1]<80) continue;
+      const rO=A[0][0]/A[0][1], rE=A[1][0]/A[1][1]; split[k].d.push(rO-rE); split[k].m.push((rO+rE)/2); }
   });
 
   console.log('batter-games:', games, '\n');
@@ -79,7 +89,17 @@ async function mapLimit(arr, n, fn){
     const mu = a.smu/a.n, vr = a.sr2/a.n;
     const vn = k==='hrr' ? mu /* Poisson de referencia */ : a.sn/a.n;
     const vp = Math.max(0, vr - vn), cv = Math.sqrt(vp)/mu;
-    const nota = k==='hrr' ? '  (Poisson infla el CV: sobredispersa Var/mu='+(vr/mu).toFixed(2)+' -> app usa NB, CV estimado ~20%)' : '';
+    const nota = k==='hrr' ? '  (Poisson infla: sobredisp. Var/mu='+(vr/mu).toFixed(2)+' -> app usa NB; CV real abajo)' : '';
     console.log(`${k.padEnd(9)} ${mu.toFixed(3).padStart(7)}  ${vr.toFixed(3).padStart(8)}  ${vn.toFixed(3).padStart(8)}  ${vp.toFixed(3).padStart(8)}  ${(cv*100).toFixed(1).padStart(5)}%  ${dist[k]}${nota}`);
+  }
+
+  // ── Mitad-contra-mitad: CV de proyección de la tasa sin conocer el azar ──
+  // Var(dif odd-even) = 2·Var(sampling de media temporada). Error de temporada completa =
+  // Var(dif)/4. CV = sqrt(eso)/media. Válido para H+R+RBI; se valida porque Hit ≈ su CV limpio.
+  const vararr = a => { const m=a.reduce((s,x)=>s+x,0)/a.length; return a.reduce((s,x)=>s+(x-m)*(x-m),0)/a.length; };
+  console.log('\nmitad-contra-mitad (odd/even) — CV del error de proyección de la tasa:');
+  for(const k of ['hit','hrr']){ const S=split[k]; if(!S.d.length) continue;
+    const meanRate=S.m.reduce((s,x)=>s+x,0)/S.m.length, cv=Math.sqrt(vararr(S.d)/4)/meanRate;
+    console.log(`  ${k.padEnd(4)} ${(cv*100).toFixed(1)}%  (n=${S.d.length}${k==='hit'?' · valida vs 10.3% limpio':' · el que va a BAT_CV, ×1.2 a escala limpia ≈ 11%'})`);
   }
 })().catch(e => { console.error('ERROR:', e.message); process.exit(1); });

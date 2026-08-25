@@ -3959,11 +3959,14 @@ function renderPitchers(games) {
 // juego (ya está en la distribución), no error del modelo — por eso los CV salen bajos.
 // TB es el más estable (SLG fiable, media grande); los HR lo menos (evento raro). Es un
 // techo del error real: la proyección ajustada del app (matchup/park/xStats) yerra ≤ esto.
-// H+R+RBI es una SUMA de conteos correlacionados: muy sobredispersa (Var/μ≈1.83, media
-// 1.99, var 3.64), va con NB (HRR_K por momentos = μ²/(var−μ) = 2.4). Su descomposición
-// limpia no aplica (no es una familia paramétrica simple), así que su CV es ESTIMADO ~20%.
+// H+R+RBI es una SUMA de conteos correlacionados (R y RBI dependen de los compañeros):
+// muy sobredispersa (Var/μ≈1.83, media 1.99, var 3.64), va con NB (HRR_K = μ²/(var−μ) = 2.4).
+// Su azar NO es una distribución conocida, así que la descomposición limpia no aplica (con
+// Poisson infla el CV a 64%). Se mide por MITAD-CONTRA-MITAD (estabilidad odd/even de la
+// tasa): H+R+RBI 9.2%, validado porque Hits por ese método da 8.6% vs su 10.3% limpio.
+// Ajustado a la escala del método limpio (×1.2 según Hits) → CV 11%. Ver measure-batter-cv.js.
 const BAT_MIN_EV = 0.01;
-const BAT_CV = { hit:0.103, tb:0.065, hr:0.283, bb:0.184, hrr:0.20 };
+const BAT_CV = { hit:0.103, tb:0.065, hr:0.283, bb:0.184, hrr:0.11 };
 const BAT_PA = 4.2;   // apariciones al plato esperadas por juego (trials del binomial)
 const HRR_K = 2.4;    // dispersión NB de H+R+RBI (Var/μ≈1.83 medido)
 // P(over) del modelo: hit/HR/BB binomial sobre las PA (acotado, no pasa de 1 por PA);

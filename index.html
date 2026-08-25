@@ -358,6 +358,8 @@ body{background:radial-gradient(1100px 560px at 15% -10%,rgba(178,107,255,.10),t
      una celda y dejaban un hueco al lado de la primera tarjeta. */
   #picks-area>.empty,#pitchers-area>.empty,
   #picks-area>.area-note,#pitchers-area>.area-note,
+  #picks-area>.board,#pitchers-area>.board,
+  #picks-area>.full-w,#pitchers-area>.full-w,
   #picks-area>.error-box,#pitchers-area>.error-box{grid-column:1/-1}
 }
 @media(min-width:1500px){
@@ -3637,7 +3639,7 @@ function renderPicks(games) {
   // es la diferencia entre "estos son los de más valor" y "estos son los más probables".
   const nMkt = games.reduce((n,g)=>n+((g.allPicks||g.picks||[]).some(hasPrice)?1:0),0);
   const aviso = (games.length && nMkt<games.length)
-    ? `<div class="card" style="border-color:${nMkt?'var(--border)':'var(--rtx)'};padding:11px 13px;margin-bottom:10px">
+    ? `<div class="card full-w" style="border-color:${nMkt?'var(--border)':'var(--rtx)'};padding:11px 13px;margin-bottom:10px">
          <div style="font-size:12px;font-weight:800;color:${nMkt?'var(--text2)':'var(--rtx)'};margin-bottom:4px">${nMkt?`⚠ ${games.length-nMkt} de ${games.length} partidos sin cuotas`:'⚠ Ningún partido trae cuotas de casa'}</div>
          <div style="font-size:11px;color:var(--text2);line-height:1.5">Sin precio de mercado no hay pick: no se puede saber si algo paga bien o mal, así que esos partidos aparecen sin recomendación. La lectura de convicción de arriba sí se calcula igual.${nMkt?'':' Revisa tu API key de The Odds API en ⚙ Ajustes.'}</div>
        </div>`

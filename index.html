@@ -269,6 +269,12 @@ a{color:var(--blue);text-decoration:none}
      margin-bottom:14px;overflow:hidden}
 .pod-hdr{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
          padding:9px 13px;border-bottom:1px solid var(--border)}
+/* Variante del que NO es el mejor del día: mismo formato, sin corona ni dorado */
+.pod.pod-alt{border-color:var(--border);background:var(--bg2)}
+.pod.pod-alt .pod-tag{color:var(--text2)}
+.pod-otro{padding:7px 13px;background:var(--bg3);border-bottom:1px solid var(--border);
+          font-size:10px;color:var(--text2)}
+.pod-otro b{color:var(--text)}
 .pod-tag{font-size:11px;font-weight:800;letter-spacing:.09em;color:var(--gold)}
 .pod-sub{font-size:10px;color:var(--text3);flex:1;min-width:130px}
 .pod-copy{white-space:nowrap}
@@ -3898,9 +3904,17 @@ function pmEval(p, M){
 // así que ya viven en el edge. Sumarlos otra vez sería premiar dos veces lo mismo.
 // Se enseñan en la tarjeta como contexto, para ver de un vistazo si acompañan al
 // precio o lo contradicen.
+//
+// Se dibuja en las DOS pestañas, pero NO la misma tarjeta repetida: cada pestaña
+// enseña su propio mejor prop, y la que ademas gana en el global se lleva la corona
+// de PROP DEL DÍA. La otra sale en tono neutro y con un renglón que dice dónde está
+// el ganador. Repetir la misma tarjeta en los dos lados no aportaba nada y encima
+// confundía: si el mejor del día era un bateador, aparecía dentro de Abridores.
 let podCands = { pitcher:[], batter:[] };
+let podShown = { pitcher:null, batter:null };
 let podBest  = null;
 const podScore = c => (c && c.ev!=null && c.conf!=null) ? c.ev*c.conf : null;
+const POD_LBL = { pitcher:'abridores', batter:'bateadores' };
 
 function podTexto(c){
   if(!c) return '';
@@ -3913,26 +3927,31 @@ function podTexto(c){
        + `Confianza de proyección: ${Math.round(c.conf*100)}%\n`
        + `${c.calidad}\n${c.matchup}`;
 }
-async function podCopiar(){
-  const t = podTexto(podBest); if(!t) return;
+async function podCopiar(kind, btn){
+  const t = podTexto(podShown[kind]); if(!t) return;
   let ok = true;
   try{ await navigator.clipboard.writeText(t); }catch{ ok = false; }
   // El aviso va en el propio botón: el proyecto no tiene sistema de notificaciones
-  // y no hacía falta montar uno para esto.
-  document.querySelectorAll('.pod-copy').forEach(b=>{
-    b.textContent = ok ? '✓ Copiado' : '✗ No se pudo';
-    setTimeout(()=>{ b.textContent = '📋 Copiar'; }, 1800);
-  });
+  // y no hacía falta montar uno para esto. Solo el botón pulsado, no los dos.
+  if(btn){ btn.textContent = ok ? '✓ Copiado' : '✗ No se pudo';
+    setTimeout(()=>{ btn.textContent = '📋 Copiar'; }, 1800); }
 }
 function renderPOD(){
-  const todos = [...podCands.pitcher, ...podCands.batter]
-    .filter(c=>podScore(c)!=null && c.ev>0)
-    .sort((a,b)=>podScore(b)-podScore(a));
+  const vivos = k => podCands[k].filter(c=>podScore(c)!=null && c.ev>0)
+                                .sort((a,b)=>podScore(b)-podScore(a));
+  const pit = vivos('pitcher'), bat = vivos('batter');
+  const nTot = pit.length + bat.length;
+  const todos = [...pit, ...bat].sort((a,b)=>podScore(b)-podScore(a));
   podBest = todos[0] || null;
-  const html = podBest ? podCard(podBest, todos.length) : '';
-  ['pod-pitcher','pod-batter'].forEach(id=>{ const el=$(id); if(el) el.innerHTML=html; });
+  podShown = { pitcher: pit[0]||null, batter: bat[0]||null };
+  [['pod-pitcher','pitcher'],['pod-batter','batter']].forEach(([id,kind])=>{
+    const el = $(id); if(!el) return;
+    const mio = podShown[kind];
+    el.innerHTML = mio ? podCard(mio, nTot, mio===podBest, mio===podBest?null:podBest) : '';
+  });
 }
-function podCard(c, nCand){
+// esRey: este es el mejor de TODO el día. otro: el ganador global, si no es este.
+function podCard(c, nCand, esRey, otro){
   const pct  = v => `${v>=0?'+':''}${(v*100).toFixed(1)}%`;
   const conf = Math.round(c.conf*100);
   const cCol = conf>=75?'var(--gtx)':conf>=60?'var(--atx)':'var(--rtx)';
@@ -3940,12 +3959,15 @@ function podCard(c, nCand){
       <div class="pod-blk-l">${lbl}</div>
       <div class="pod-blk-v" style="color:${col||'var(--text)'}">${val}</div>
     </div>`;
-  return `<div class="pod">
+  return `<div class="pod${esRey?'':' pod-alt'}">
     <div class="pod-hdr">
-      <span class="pod-tag">⭐ PROP DEL DÍA</span>
-      <span class="pod-sub">el mejor entre ${nCand} props con valor · por EV × confianza</span>
-      <button class="btn-sm pod-copy" onclick="podCopiar()">📋 Copiar</button>
+      <span class="pod-tag">${esRey?'⭐ PROP DEL DÍA':`★ MEJOR DE ${POD_LBL[c.kind].toUpperCase()}`}</span>
+      <span class="pod-sub">${esRey
+        ? `el mejor entre ${nCand} props con valor, abridores y bateadores · por EV × confianza`
+        : `el mejor de esta pestaña · por EV × confianza`}</span>
+      <button class="btn-sm pod-copy" onclick="podCopiar('${c.kind}', this)">📋 Copiar</button>
     </div>
+    ${otro?`<div class="pod-otro">El <b>Prop del Día</b> de hoy no es este: es <b>${esc(otro.name)}</b> ${otro.side==='over'?'OVER':'UNDER'} ${otro.line}${otro.unidad} ${amFmt(otro.price)}, en la pestaña <b>${POD_LBL[otro.kind]==='abridores'?"Pitcher's Model":'Bateadores'}</b>.</div>`:''}
     <div class="pod-body">
       <img class="pod-img" src="${playerImg(c.player_id)}" onerror="${IMG_FALLBACK}">
       <div class="pod-who">

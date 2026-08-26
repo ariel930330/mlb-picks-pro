@@ -275,6 +275,11 @@ a{color:var(--blue);text-decoration:none}
 .pod-otro{padding:7px 13px;background:var(--bg3);border-bottom:1px solid var(--border);
           font-size:10px;color:var(--text2)}
 .pod-otro b{color:var(--text)}
+.pod-cober{padding:7px 13px;border-bottom:1px solid var(--border);font-size:10px;
+           color:var(--text2);line-height:1.55}
+.pod-cober b{color:var(--text)}
+.pod-cober-mal{background:color-mix(in srgb,var(--red) 12%,transparent);color:var(--rtx)}
+.pod-cober-mal b{color:var(--rtx)}
 .pod-tag{font-size:11px;font-weight:800;letter-spacing:.09em;color:var(--gold)}
 .pod-sub{font-size:10px;color:var(--text3);flex:1;min-width:130px}
 .pod-copy{white-space:nowrap}
@@ -511,7 +516,7 @@ body{background:radial-gradient(1100px 560px at 15% -10%,rgba(178,107,255,.10),t
       <div class="ph-hdr">
         <div>
           <div class="ph-title">📅 Historial · Pitcher's Model</div>
-          <div class="ph-sub">Los mejores por edge de cada jornada. Si vuelves a analizar y aparece uno mejor, se agrega; lo ya guardado no se borra.</div>
+          <div class="ph-sub">Espejo de las tarjetas: la jugada de cada abridor, la que marca el ★. Al reanalizar, un pick sin calificar que ya no se recomienda se retira; lo calificado no se toca.</div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn-sm" onclick="loadPropHist('pitcher')">🔄 Recargar</button>
@@ -529,7 +534,7 @@ body{background:radial-gradient(1100px 560px at 15% -10%,rgba(178,107,255,.10),t
       <div class="ph-hdr">
         <div>
           <div class="ph-title">📅 Historial · Bateadores</div>
-          <div class="ph-sub">Los mejores por edge de cada jornada. Si vuelves a analizar y aparece uno mejor, se agrega; lo ya guardado no se borra.</div>
+          <div class="ph-sub">Espejo de las tarjetas. <b>Ojo:</b> el pool de bateo solo incluye equipos con <b>alineación publicada</b>, así que analizar temprano deja fuera a casi todos — el mejor edge de esa corrida puede ser el mejor de 2 equipos, no de 30.</div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn-sm" onclick="loadPropHist('batter')">🔄 Recargar</button>
@@ -3912,6 +3917,7 @@ function pmEval(p, M){
 // confundía: si el mejor del día era un bateador, aparecía dentro de Abridores.
 let podCands = { pitcher:[], batter:[] };
 let podShown = { pitcher:null, batter:null };
+let podCober = { batter:null };   // equipos con alineación publicada / equipos con juego
 let podBest  = null;
 const podScore = c => (c && c.ev!=null && c.conf!=null) ? c.ev*c.conf : null;
 const POD_LBL = { pitcher:'abridores', batter:'bateadores' };
@@ -3950,6 +3956,22 @@ function renderPOD(){
     el.innerHTML = mio ? podCard(mio, nTot, mio===podBest, mio===podBest?null:podBest) : '';
   });
 }
+// Aviso de cobertura. Elegir "el mejor de todos" es honesto solo si "todos" son todos.
+// Con el filtro de alineación publicada y a media mañana, los bateadores pueden salir
+// de 2 equipos de 30, y entonces el ganador lo es de un pool diminuto — no del día.
+// Los abridores no dependen de esto: los probables se anuncian aparte.
+function podAviso(){
+  const b = podCober.batter;
+  if(!b || !b.total || b.con >= b.total) return '';
+  const pct = Math.round(b.con/b.total*100);
+  const grave = pct < 60;
+  return `<div class="pod-cober${grave?' pod-cober-mal':''}">
+    ${grave?'⚠':'ℹ'} Los bateadores salen de <b>${b.con} de ${b.total} equipos</b> (${pct}%): el resto
+    ${b.filtro?'aún no publica alineación y está oculto por el filtro <b>Solo alineación publicada</b>':'aún no publica alineación'}.
+    ${grave?'El mejor prop de bateo de ahora puede quedarse corto: vuelve a analizar cuando salgan las alineaciones.':''}
+    Los abridores no dependen de esto.
+  </div>`;
+}
 // esRey: este es el mejor de TODO el día. otro: el ganador global, si no es este.
 function podCard(c, nCand, esRey, otro){
   const pct  = v => `${v>=0?'+':''}${(v*100).toFixed(1)}%`;
@@ -3968,6 +3990,7 @@ function podCard(c, nCand, esRey, otro){
       <button class="btn-sm pod-copy" onclick="podCopiar('${c.kind}', this)">📋 Copiar</button>
     </div>
     ${otro?`<div class="pod-otro">El <b>Prop del Día</b> de hoy no es este: es <b>${esc(otro.name)}</b> ${otro.side==='over'?'OVER':'UNDER'} ${otro.line}${otro.unidad} ${amFmt(otro.price)}, en la pestaña <b>${POD_LBL[otro.kind]==='abridores'?"Pitcher's Model":'Bateadores'}</b>.</div>`:''}
+    ${podAviso()}
     <div class="pod-body">
       <img class="pod-img" src="${playerImg(c.player_id)}" onerror="${IMG_FALLBACK}">
       <div class="pod-who">
@@ -4203,6 +4226,11 @@ function renderBatters(batData) {
   const onlyConf = getOnlyConfirmed();
   // Cuántos equipos con juego hoy aún no publican alineación (para avisarlo)
   let sinPub=0; (batData||[]).forEach(g=>{ if(!(g.awayLineup?.length)) sinPub++; if(!(g.homeLineup?.length)) sinPub++; });
+  // Cobertura real del pool de bateo. Es la cifra MÁS importante de esta pestaña y no
+  // se estaba diciendo en ningún sitio: con el filtro de alineación publicada activo y
+  // a media mañana, el "mejor bateador del día" puede estar saliendo de 2 equipos de 30.
+  // Un edge de 5% dentro de 2 equipos no es lo mismo que un 5% dentro de 30.
+  podCober.batter = { con:(batData||[]).length*2 - sinPub, total:(batData||[]).length*2, filtro:onlyConf };
   const controls = `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;font-size:11px">
     <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-weight:700" title="Con esto, si un equipo aún no publica su alineación, no se muestra a NADIE de ese equipo (ni banca ni proyectados).">
       <input type="checkbox" ${onlyConf?'checked':''} onchange="toggleOnlyConfirmed(this.checked)"> Solo alineación publicada</label>

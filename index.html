@@ -263,6 +263,31 @@ a{color:var(--blue);text-decoration:none}
 .bt-val{font-size:18px;font-weight:800;color:var(--green);line-height:1;font-variant-numeric:tabular-nums}
 .bt-casa{font-size:9px;font-weight:700;white-space:nowrap}
 
+/* ── Prop del Día ── */
+.pod{border:1px solid var(--gold);border-radius:var(--r);background:
+     linear-gradient(180deg,color-mix(in srgb,var(--gold) 9%,transparent),transparent 62%),var(--bg2);
+     margin-bottom:14px;overflow:hidden}
+.pod-hdr{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+         padding:9px 13px;border-bottom:1px solid var(--border)}
+.pod-tag{font-size:11px;font-weight:800;letter-spacing:.09em;color:var(--gold)}
+.pod-sub{font-size:10px;color:var(--text3);flex:1;min-width:130px}
+.pod-copy{white-space:nowrap}
+.pod-body{display:flex;align-items:center;gap:13px;padding:13px;flex-wrap:wrap}
+.pod-img{width:52px;height:52px;border-radius:50%;object-fit:cover;background:var(--bg3);flex-shrink:0}
+.pod-who{flex:1;min-width:190px}
+.pod-name{font-size:17px;font-weight:800;line-height:1.15}
+.pod-vs{font-size:10px;color:var(--text2);display:flex;align-items:center;gap:4px;margin:2px 0 5px}
+.pod-pick{font-size:19px;font-weight:800;letter-spacing:-.01em}
+.pod-price{font-size:14px;color:var(--text2);font-weight:700;margin-left:5px}
+.pod-blks{display:flex;gap:7px;flex-wrap:wrap}
+.pod-blk{background:var(--bg3);border-radius:var(--rs);padding:6px 12px;text-align:center;min-width:66px}
+.pod-blk-l{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.04em}
+.pod-blk-v{font-size:15px;font-weight:800;font-variant-numeric:tabular-nums}
+.pod-ctx{display:flex;gap:16px;flex-wrap:wrap;padding:0 13px 9px;font-size:10px;color:var(--text2)}
+.pod-ctx b{color:var(--text3);font-weight:700}
+.pod-note{padding:8px 13px;border-top:1px solid var(--border);font-size:9px;color:var(--text3);line-height:1.5}
+@media(max-width:560px){ .pod-blks{width:100%} .pod-blk{flex:1} }
+
 /* ── Stats bar ── */
 .stats-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
 .stat-card{background:var(--bg2);border-radius:var(--rs);padding:10px 12px;border:1px solid var(--border)}
@@ -473,11 +498,12 @@ body{background:radial-gradient(1100px 560px at 15% -10%,rgba(178,107,255,.10),t
 
     <!-- PITCHERS -->
     <div class="tab-pane" id="tab-pitchers">
+      <div id="pod-pitcher"></div>
       <div id="pitchers-area"><div class="empty">Corre el análisis primero.</div></div>
       <div class="ph-hdr">
         <div>
           <div class="ph-title">📅 Historial · Pitcher's Model</div>
-          <div class="ph-sub">Los mejores por edge de cada jornada. Si vuelves a analizar y aparece uno mejor, se agrega; lo ya guardado no se borra.</div>
+          <div class="ph-sub">La jugada de cada abridor, la misma que marca el ★ en las tarjetas. Al reanalizar, un pick sin calificar que ya no se recomienda se retira; lo calificado no se toca.</div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn-sm" onclick="loadPropHist('pitcher')">🔄 Recargar</button>
@@ -490,11 +516,12 @@ body{background:radial-gradient(1100px 560px at 15% -10%,rgba(178,107,255,.10),t
 
     <!-- BATTERS -->
     <div class="tab-pane" id="tab-batters">
+      <div id="pod-batter"></div>
       <div id="batters-area"><div class="empty">Corre el análisis primero.</div></div>
       <div class="ph-hdr">
         <div>
           <div class="ph-title">📅 Historial · Bateadores</div>
-          <div class="ph-sub">Los mejores por edge de cada jornada. Si vuelves a analizar y aparece uno mejor, se agrega; lo ya guardado no se borra.</div>
+          <div class="ph-sub">Los 3 de mayor edge de cada jornada. Al reanalizar, un pick sin calificar que ya no se recomienda se retira; lo calificado no se toca.</div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn-sm" onclick="loadPropHist('batter')">🔄 Recargar</button>
@@ -833,8 +860,27 @@ const binomOver = (n,p,line) => {
   for(let x=1;x<top&&x<=n;x++){ t*=((n-x+1)/x)*(p/(1-p)); cdf+=t; }
   return cl(1-cdf,.02,.98);
 };
-// Envoltorio: recibe la media ya ajustada por rival/parque y los BF esperados.
-const binomOverMu = (mu,bf,line) => (bf>0 && mu<bf) ? binomOver(bf,mu/bf,line) : poissonOver(mu,line);
+// Envoltorio: recibe la media ya ajustada por rival/parque y los turnos esperados.
+// n se redondea, y p se recalcula CON ESE n para que la media salga exacta: con
+// p=mu/bf y n=round(bf) se perdía hasta un 2% de la proyección por el redondeo.
+const binomOverMu = (mu,bf,line) => {
+  const n = Math.max(1, Math.round(bf));
+  return (n>0 && mu<n) ? binomOver(n, mu/n, line) : poissonOver(mu,line);
+};
+// Turnos al bate por juego de un titular, y dispersión de las bases totales.
+// TB no es Poisson ni de lejos: un jonrón reparte 4 bases de golpe, así que la cola
+// es MUCHO más larga. Medido sobre 25,661 partidos-jugador de 2026:
+//   Over 3.5 TB   real 15.4%   Poisson 8.2%   NB k=1.25 12.8%
+//   error medio   Poisson 0.0710  ->  NB k=1.25 0.0112   (6 veces mejor)
+// La Poisson subestimaba a la mitad las líneas altas de bases totales.
+const PA_G = 4.2, TB_K = 1.25;
+// Probabilidad de pasarse de la línea en cada mercado de bateador. Se guarda aparte
+// para poder reevaluarla con la proyección movida dentro de su margen (confianza).
+const DIST_BAT = {
+  Hit:(m,ln)=>binomOverMu(m,PA_G,ln),
+  TB :(m,ln)=>nbOver(m,TB_K,ln),
+  HR :(m,ln)=>binomOverMu(m,PA_G,ln),
+};
 // P(X > line) con X ~ Normal(mean,sd)
 const normOver = (mean,sd,line) => cl(1-normCDF((line-mean)/sd),.02,.98);
 const BREAKEVEN = .524; // breakeven real frente al vig de -110
@@ -2050,8 +2096,8 @@ function evalProp(mOver, mkt) {
   const eOver = bOver - mkt.fairOver;
   // Prop de un solo lado (over): la fair es implícita cruda (con vig) → edge conservador.
   if (mkt.overOnly || mkt.fairUnder == null) {
-    return { over:true, line:mkt.line, prob:bOver, fair:mkt.fairOver, price:mkt.priceOver,
-      edge:eOver, stake: eOver>0?stakePct(bOver,mkt.priceOver):0, overOnly:true,
+    return { over:true, line:mkt.line, prob:bOver, fair:mkt.fairOver, fairOver:mkt.fairOver,
+      price:mkt.priceOver, edge:eOver, stake: eOver>0?stakePct(bOver,mkt.priceOver):0, overOnly:true,
       books:mkt.books, allBooks:mkt.allBooks };
   }
   const eUnder = (1 - bOver) - mkt.fairUnder;
@@ -2059,7 +2105,7 @@ function evalProp(mOver, mkt) {
   const prob = over ? bOver : 1 - bOver, fair = over ? mkt.fairOver : mkt.fairUnder;
   const price = over ? mkt.priceOver : mkt.priceUnder, edge = over ? eOver : eUnder;
   const stake = edge > 0 ? stakePct(prob, price) : 0;
-  return { over, line: mkt.line, prob, fair, price, edge, stake, books:mkt.books, allBooks:mkt.allBooks };
+  return { over, line: mkt.line, prob, fair, fairOver:mkt.fairOver, price, edge, stake, books:mkt.books, allBooks:mkt.allBooks };
 }
 
 // Props del abridor: ponches, hits permitidos y carreras limpias. Los TRES mercados
@@ -3775,26 +3821,41 @@ const PM_MKTS = [
 // menos fiable, que es justo lo que se sabe de la ERA. Un 60% aquí no significa
 // "gano 6 de cada 10": significa que en 6 de cada 10 escenarios de error razonable
 // el pick sigue teniendo valor.
+// Se comprobó también si la incertidumbre del MERCADO merece entrar aquí: no. Las
+// casas que cuelgan la misma línea discrepan 0.86 puntos de media (559 líneas
+// medidas), un orden de magnitud menos que el error de la proyección. No mueve nada.
 const PM_CV = { ks:0.097, ha:0.338, bb:0.320, er:0.393 };
+// Los mismos CV, medidos igual, para los props de bateador. 25,661 partidos-jugador:
+//   Hit 15.1 %   TB 27.7 %   HR 49.5 %
+// El jonrón es lo más incierto que proyecta el sistema, y el hit lo más firme del
+// lado de los bateadores. Sirven para poner en la MISMA escala un prop de abridor
+// y uno de bateador, que es lo que hace falta para elegir el Prop del Día.
+const CV_PROY = { Ks:0.097, HA:0.338, BB:0.320, ER:0.393, Hit:0.151, TB:0.277, HR:0.495 };
 // Malla fina (25 puntos, ±3 desviaciones): con pocos puntos el porcentaje salta a
 // trozos (39%, 61%, 80%) y parece más preciso de lo que es en unos sitios y más
 // tosco en otros. Cuesta nada: son 25 evaluaciones por mercado.
 const CONF_Z = Array.from({length:25}, (_,i)=>-3+i*0.25);
-function pmConf(M, p, mkt, over){
-  const cv = PM_CV[M.k], mu = M.exp(p);
-  if(cv==null || mu==null || !isFinite(mu) || !mkt) return null;
+// Núcleo compartido: mueve la proyección dentro de su margen de error medido y
+// cuenta en qué fracción de escenarios seguimos del lado bueno del mercado.
+// probAt(mu) devuelve la probabilidad de pasarse de la línea con esa proyección.
+function confProy(mu, cv, fairOver, over, probAt){
+  if(cv==null || mu==null || !isFinite(mu) || fairOver==null) return null;
   let sw=0, sok=0;
   for(const z of CONF_Z){
     const w  = Math.exp(-z*z/2);
     // lognormal: nunca da una proyección negativa y conserva la media
     const mz = mu*Math.exp(cv*z - cv*cv/2);
-    const pv = M.prob(mz, mkt.line, p);
+    const pv = probAt(mz);
     // El blend no cambia el SIGNO del edge (es 0.30·(modelo−mercado)), así que basta
     // con mirar de qué lado del mercado cae la proyección.
-    const ok = over ? pv > mkt.fairOver : (1-pv) > mkt.fairUnder;
+    const ok = over ? pv > fairOver : (1-pv) > (1-fairOver);
     sw += w; if(ok) sok += w;
   }
   return sok/sw;
+}
+function pmConf(M, p, mkt, over){
+  if(!mkt) return null;
+  return confProy(M.exp(p), PM_CV[M.k], mkt.fairOver, over, mz=>M.prob(mz, mkt.line, p));
 }
 
 function pmEval(p, M){
@@ -3824,6 +3885,105 @@ function pmEval(p, M){
           mkt:true, rec:ev>=PM_MIN_EV && gap<.25, stake: (ev>=PM_MIN_EV&&gap<.25)?stakePct(prob,price):0};
 }
 
+// ── PROP DEL DÍA ────────────────────────────────────────────────────────────
+// Un solo pick entre TODOS los props del día, abridores y bateadores mezclados.
+//
+// Se elige por VALOR AJUSTADO POR FIABILIDAD:
+//        puntaje = EV × Confianza
+//
+//   EV         cuánto paga de más el precio real de casa.
+//   Confianza  qué tan seguido el pick sigue del lado bueno del mercado si la
+//              proyección se equivoca lo que SUELE equivocarse. El margen de error
+//              está medido mercado por mercado, no supuesto.
+//
+// El EMPAREJAMIENTO y la CALIDAD del jugador no se suman aparte a propósito: ya
+// están DENTRO de la proyección (ajuste por abridor rival, mano, parque y clima),
+// así que ya viven en el edge. Sumarlos otra vez sería contarlos dos veces y
+// premiar dos veces lo mismo. Se enseñan en la tarjeta como contexto, para poder
+// ver de un vistazo si apuntan al mismo lado que el precio o lo contradicen.
+//
+// Por qué EV y no edge a secas: el edge dice cuánto mejor es nuestra probabilidad
+// que la del mercado, pero no cuánto PAGA. Un edge de 8 puntos a -250 vale menos
+// que uno de 5 a +120. Para "el mejor de todos" lo que importa es el dinero.
+let podCands = { pitcher:[], batter:[] };
+let podBest  = null;
+const podScore = c => (c && c.ev!=null && c.conf!=null) ? c.ev*c.conf : null;
+
+function podTexto(c){
+  if(!c) return '';
+  const pct = v => `${v>=0?'+':''}${(v*100).toFixed(1)}%`;
+  return `⭐ PROP DEL DÍA · ${c.fecha}\n`
+       + `${c.name} (${c.team}) vs ${c.opp}\n`
+       + `${c.side.toUpperCase()} ${c.line}${c.unidad} ${amFmt(c.price)}\n`
+       + `\n`
+       + `Proyección: ${c.mu}${c.unidad}\n`
+       + `Edge ${pct(c.edge)} · EV ${pct(c.ev)} · Stake ${c.stake}%\n`
+       + `Confianza de proyección: ${Math.round(c.conf*100)}%\n`
+       + `${c.calidad}\n`
+       + `${c.matchup}`;
+}
+async function podCopiar(){
+  const t = podTexto(podBest); if(!t) return;
+  let ok = true;
+  try{ await navigator.clipboard.writeText(t); }catch{ ok = false; }
+  // El aviso va en el propio botón: el proyecto no tiene sistema de notificaciones
+  // y no hacía falta montar uno para esto.
+  document.querySelectorAll('.pod-copy').forEach(b=>{
+    b.textContent = ok ? '✓ Copiado' : '✗ No se pudo';
+    setTimeout(()=>{ b.textContent = '📋 Copiar'; }, 1800);
+  });
+}
+
+function renderPOD(){
+  const todos = [...podCands.pitcher, ...podCands.batter]
+    .filter(c=>podScore(c)!=null && c.ev>0)
+    .sort((a,b)=>podScore(b)-podScore(a));
+  podBest = todos[0] || null;
+  const html = podBest ? podCard(podBest, todos.length) : '';
+  ['pod-pitcher','pod-batter'].forEach(id=>{ const el=$(id); if(el) el.innerHTML=html; });
+}
+
+function podCard(c, nCand){
+  const pct  = v => `${v>=0?'+':''}${(v*100).toFixed(1)}%`;
+  const conf = Math.round(c.conf*100);
+  const cCol = conf>=75?'var(--gtx)':conf>=60?'var(--atx)':'var(--rtx)';
+  const blk = (lbl,val,col,tip) => `<div class="pod-blk" title="${tip||''}">
+      <div class="pod-blk-l">${lbl}</div>
+      <div class="pod-blk-v" style="color:${col||'var(--text)'}">${val}</div>
+    </div>`;
+  return `<div class="pod">
+    <div class="pod-hdr">
+      <span class="pod-tag">⭐ PROP DEL DÍA</span>
+      <span class="pod-sub">el mejor entre ${nCand} props con valor · por EV × confianza</span>
+      <button class="btn-sm pod-copy" onclick="podCopiar()">📋 Copiar</button>
+    </div>
+    <div class="pod-body">
+      <img class="pod-img" src="${playerImg(c.player_id)}" onerror="${IMG_FALLBACK}">
+      <div class="pod-who">
+        <div class="pod-name">${esc(c.name)}</div>
+        <div class="pod-vs"><img class="logo-xs" src="${teamLogo(c.teamId)}" onerror="${IMG_FALLBACK}">${esc(c.team)} vs ${esc(c.opp)} · <span style="color:var(--text3)">${esc(c.nombre)}</span></div>
+        <div class="pod-pick" style="color:${c.side==='over'?'var(--gtx)':'var(--rtx)'}">
+          ${c.side==='over'?'OVER':'UNDER'} ${c.line}${c.unidad}
+          <span class="pod-price">${amFmt(c.price)}</span>
+        </div>
+      </div>
+      <div class="pod-blks">
+        ${blk('Edge', pct(c.edge), c.edge>0?'var(--gtx)':'var(--rtx)', 'Cuánto mejor es nuestra probabilidad que la del mercado sin vig.')}
+        ${blk('EV', pct(c.ev), c.ev>0?'var(--gtx)':'var(--rtx)', 'Lo que paga de más el precio, a 1 unidad. Es la mitad del puntaje.')}
+        ${blk('Confianza', conf+'%', cCol, `Margen de error medido de esta proyección: ±${Math.round(c.cv*100)}%. Moviéndola dentro de ese margen, el pick sigue del lado correcto del mercado en el ${conf}% de los escenarios. Es la otra mitad del puntaje.`)}
+        ${blk('Stake', c.stake+'%', 'var(--gold)', 'Medio-Kelly, con tope de 5% del bankroll.')}
+      </div>
+    </div>
+    <div class="pod-ctx">
+      <span><b>Proyección</b> ${c.mu}${c.unidad} vs línea ${c.line}</span>
+      <span><b>Calidad</b> ${esc(c.calidad)}</span>
+      <span><b>Emparejamiento</b> ${esc(c.matchup)}</span>
+      ${c.books?`<span><b>Mercado</b> ${c.books} casa${c.books===1?'':'s'} en esta línea</span>`:''}
+    </div>
+    <div class="pod-note">La calidad y el emparejamiento ya están dentro de la proyección (ajuste por rival, mano, parque y clima), así que no se suman aparte al puntaje: van aquí para que veas si acompañan al precio o lo contradicen.</div>
+  </div>`;
+}
+
 function renderPitchers(games) {
   const pitchers = games.flatMap(g=>[
     {...g.pitchers.away,team:g.away,teamId:g.awayId,opp:g.home,matchup:`${g.away} @ ${g.home}`,gamePk:g.gamePk},
@@ -3850,11 +4010,13 @@ function renderPitchers(games) {
   filas.sort((a,b)=>((a.best.rec?0:1)-(b.best.rec?0:1)) || (b.best.edge-a.best.edge));
   const top = filas.slice(0,8);
   propsPitcher=[];
+  const candPitcher=[];
 
   if(!top.length){
     $('pitchers-area').innerHTML=`<div class="empty">${allGames.length
       ?'Ningún abridor tiene línea real de casa en esta jornada.<br>Sin cuota no hay pick: no se puede saber si el precio paga bien.'
       :'Corre el análisis primero.'}</div>`;
+    podCands.pitcher=[]; renderPOD();
     return;
   }
 
@@ -3871,12 +4033,23 @@ function renderPitchers(games) {
     // Antes se guardaban TODOS los mercados apostables del abridor y luego se cortaba
     // por edge, así que el historial podía terminar con un mercado distinto del que la
     // pantalla recomendaba. Ahora registra lo mismo que ves.
-    if(best.rec) propsPitcher.push({
-      gamePk:p.gamePk, player_id:p.id, player_name:p.name, team:p.team, market:best.tag,
-      target:best.line, side:best.over?'over':'under', prob:+best.prob.toFixed(3),
-      proj:+best.mu.toFixed(2), edge:+best.edge.toFixed(3),
-      model_prob:+(best.over?best.mRaw:1-best.mRaw).toFixed(3), fair:+best.fair.toFixed(3),
-      price:best.price, ev:+best.ev.toFixed(3), books:best.books??null});
+    if(best.rec){
+      propsPitcher.push({
+        gamePk:p.gamePk, player_id:p.id, player_name:p.name, team:p.team, market:best.tag,
+        target:best.line, side:best.over?'over':'under', prob:+best.prob.toFixed(3),
+        proj:+best.mu.toFixed(2), edge:+best.edge.toFixed(3),
+        model_prob:+(best.over?best.mRaw:1-best.mRaw).toFixed(3), fair:+best.fair.toFixed(3),
+        price:best.price, ev:+best.ev.toFixed(3), books:best.books??null});
+      // Candidato a Prop del Día. Calidad y emparejamiento van como texto de contexto.
+      candPitcher.push({
+        kind:'pitcher', fecha:$('date')?.value||'', player_id:p.id, name:p.name,
+        team:p.team, teamId:p.teamId, opp:p.opp, nombre:best.nombre, unidad:best.unidad,
+        line:best.line, side:best.over?'over':'under', price:best.price, mu:+best.mu.toFixed(2),
+        edge:best.edge, ev:best.ev, conf:best.conf, cv:best.cv, stake:best.stake, books:best.books,
+        calidad:`ERA aj. ${p.eraAdj??'—'} · FIP ${p.fip} · K/9 ${p.k9}${p.whiff!=null?` · Whiff ${p.whiff}%`:''}`,
+        matchup:`vs ${p.opp}${p.kMatchK!=null?` · ponchan ${p.kMatchK}% de sus turnos`:''}`,
+      });
+    }
 
     const badge = `${best.over?'OVER':'UNDER'} ${best.line}${best.unidad} ${amFmt(best.price)}`;
     const badgeCol = best.rec ? (best.over?'var(--green)':'var(--red)') : 'var(--text3)';
@@ -3935,6 +4108,9 @@ function renderPitchers(games) {
       </div>
     </div>`;
   }).join('');
+
+  podCands.pitcher = candPitcher;
+  renderPOD();
 }
 
 // ── Batters ───────────────────────────────────────────────────────────────────
@@ -3972,10 +4148,17 @@ function renderBatters(batData) {
       const expHR=(b.hrRate??(b.ab?b.hr/b.ab:0))*4.2*pAdj*envAdj;   // home runs (tasa regresada)
       // Comparación vs casa (props reales) si están disponibles
       const bp=allBProps[normName(b.name)];
-      const evHits=bp?.hits?evalProp(poissonOver(expH,bp.hits.line),bp.hits):null;
-      const evTB  =bp?.tb  ?evalProp(poissonOver(expTB,bp.tb.line),  bp.tb)  :null;
-      const evHR  =bp?.hr  ?evalProp(poissonOver(expHR,bp.hr.line),  bp.hr)  :null;
-      return {id:b.id,name:b.name,pos:b.pos,pitcher:oppPitcher,oppHand,hand:b.hand,split:bs?{...bs,rel:+bsRel.toFixed(2)}:bs,bvp:b.bvp,tag,hitP,expTB,hrbiR,expBB,expHR,evHits,evTB,evHR};
+      // HITS: binomial, no Poisson. Cada turno es un hit o no. Sobre 25,661
+      // partidos-jugador, en la línea 0.5 —la más usada— la Poisson decía 57.8%
+      // cuando la realidad es 61.7%; la binomial clava 62.7%. Error medio
+      // 0.0218 -> 0.0039, casi 6 veces mejor. Además la pantalla YA enseñaba la
+      // binomial (hitP) mientras el edge se calculaba con la Poisson: dos números
+      // distintos para la misma cosa, con 6 puntos de diferencia.
+      const evHits=bp?.hits?evalProp(binomOverMu(expH,PA_G,bp.hits.line),bp.hits):null;
+      const evTB  =bp?.tb  ?evalProp(nbOver(expTB,TB_K,bp.tb.line),      bp.tb)  :null;
+      const evHR  =bp?.hr  ?evalProp(binomOverMu(expHR,PA_G,bp.hr.line), bp.hr)  :null;
+      return {id:b.id,name:b.name,pos:b.pos,pitcher:oppPitcher,oppHand,hand:b.hand,split:bs?{...bs,rel:+bsRel.toFixed(2)}:bs,bvp:b.bvp,tag,hitP,expTB,hrbiR,expBB,expHR,evHits,evTB,evHR,
+              ops:b.ops,ba:b.ba,slg:b.slg,oppScore,expH};
     };
     // ── DISPONIBILIDAD ────────────────────────────────────────────────────────
     // getTopBatters ordena el roster COMPLETO de la temporada por OPS, así que un
@@ -3998,23 +4181,27 @@ function renderBatters(batData) {
     (g.awayBatters||[]).forEach(b=>{ if(!play(aSet,aAct,aOut,b)) return; const r=mk(b,g.awayOppScore??.5,g.homePitcher,g.awayPlatoon,g.awayOppHand); if(r){r.team=g.away;r.gamePk=g.gamePk;r.conf=!!aSet;rows.push(r);} });
     (g.homeBatters||[]).forEach(b=>{ if(!play(hSet,hAct,hOut,b)) return; const r=mk(b,g.homeOppScore??.5,g.awayPitcher,g.homePlatoon,g.homeOppHand); if(r){r.team=g.home;r.gamePk=g.gamePk;r.conf=!!hSet;rows.push(r);} });
   });
-  if(!rows.length){$('batters-area').innerHTML='<div class="empty">Corre el análisis primero.</div>';return;}
+  if(!rows.length){$('batters-area').innerHTML='<div class="empty">Corre el análisis primero.</div>';podCands.batter=[];renderPOD();return;}
   // SIN CUOTA NO HAY PICK: solo bateadores con línea REAL de casa en alguna categoría.
   // El "matchup favorable" ya no basta: sin precio no se sabe si el prop paga bien,
   // y un bateador contra un abridor flojo puede estar carísimo en la casa.
   const anyLine = r => !!(r.evHits||r.evTB||r.evHR);
   const pool = rows.filter(anyLine);
-  if(!pool.length){$('batters-area').innerHTML='<div class="empty">Ningún bateador tiene línea real de casa en esta jornada.<br>Sin cuota no hay pick: no se puede saber si el precio paga bien.</div>';return;}
+  if(!pool.length){$('batters-area').innerHTML='<div class="empty">Ningún bateador tiene línea real de casa en esta jornada.<br>Sin cuota no hay pick: no se puede saber si el precio paga bien.</div>';podCands.batter=[];renderPOD();return;}
 
   // Cada categoría: los 2 de MAYOR EDGE contra la línea real de casa. mkt/target/prob para el historial.
+  // `mu` es la PROYECCIÓN cruda (un conteo esperado), que es lo que hay que mover
+  // dentro de su margen de error para la confianza. Ojo: `metric` no sirve para eso
+  // porque en Hit devuelve una probabilidad y en TB un conteo.
   const cats=[
-    {title:'⚾ Probabilidad de Hit', mkt:'Hit', target:.5, prob:r=>r.hitP,               metric:r=>r.hitP,  fmt:r=>Math.round(r.hitP*100)+'%', tag:r=>r.evHits},
-    {title:'💥 Bases totales (TB)',  mkt:'TB',  target:r=>r.evTB?.line??1.5, prob:r=>1-Math.exp(-r.expTB), metric:r=>r.expTB, fmt:r=>r.expTB.toFixed(1), tag:r=>r.evTB},
-    {title:'🔥 H + R + RBI',         mkt:'H+R+RBI', target:r=>Math.round(r.hrbiR), prob:null, metric:r=>r.hrbiR, fmt:r=>r.hrbiR.toFixed(2),      tag:null},
-    {title:'🚶 Bases por bolas (BB)',mkt:'BB',  target:.5, prob:r=>1-Math.exp(-r.expBB), metric:r=>r.expBB, fmt:r=>r.expBB.toFixed(2),         tag:null},
-    {title:'🏟️ Home runs (HR)',      mkt:'HR',  target:.5, prob:r=>1-Math.exp(-r.expHR), metric:r=>r.expHR, fmt:r=>r.expHR.toFixed(2),         tag:r=>r.evHR},
+    {title:'⚾ Probabilidad de Hit', mkt:'Hit', target:.5, prob:r=>r.hitP,               metric:r=>r.hitP,  mu:r=>r.expH,  unidad:'H',  nombre:'Hits',         fmt:r=>Math.round(r.hitP*100)+'%', tag:r=>r.evHits},
+    {title:'💥 Bases totales (TB)',  mkt:'TB',  target:r=>r.evTB?.line??1.5, prob:r=>1-Math.exp(-r.expTB), metric:r=>r.expTB, mu:r=>r.expTB, unidad:'TB', nombre:'Bases totales', fmt:r=>r.expTB.toFixed(1), tag:r=>r.evTB},
+    {title:'🔥 H + R + RBI',         mkt:'H+R+RBI', target:r=>Math.round(r.hrbiR), prob:null, metric:r=>r.hrbiR, mu:r=>r.hrbiR, unidad:'',  nombre:'H+R+RBI',      fmt:r=>r.hrbiR.toFixed(2),      tag:null},
+    {title:'🚶 Bases por bolas (BB)',mkt:'BB',  target:.5, prob:r=>1-Math.exp(-r.expBB), metric:r=>r.expBB, mu:r=>r.expBB, unidad:'BB', nombre:'Bases por bolas', fmt:r=>r.expBB.toFixed(2),   tag:null},
+    {title:'🏟️ Home runs (HR)',      mkt:'HR',  target:.5, prob:r=>1-Math.exp(-r.expHR), metric:r=>r.expHR, mu:r=>r.expHR, unidad:'HR', nombre:'Home runs',    fmt:r=>r.expHR.toFixed(2),      tag:r=>r.evHR},
   ];
   propsBatter=[];   // recolectar los top-2 de cada categoría para guardar
+  const candBatter=[];
   const chip=(txt,cls='')=>`<span class="bt-chip ${cls}">${txt}</span>`;
   const row=(r,i,cat)=>{
     const chips=[];
@@ -4053,7 +4240,23 @@ function renderBatters(batData) {
         const conLinea = pool.filter(r=>!!cat.tag(r));
         if(!conLinea.length) return '';
         const top2 = conLinea.sort((a,b)=>cat.tag(b).edge-cat.tag(a).edge).slice(0,2);
-        top2.forEach(r=>{ const ev=cat.tag(r); propsBatter.push({gamePk:r.gamePk,player_id:r.id,player_name:r.name,team:r.team,market:cat.mkt,
+        top2.forEach(r=>{ const ev=cat.tag(r);
+          // Candidato a Prop del Día, en la misma escala que los abridores.
+          const cvB = CV_PROY[cat.mkt], dB = DIST_BAT[cat.mkt];
+          if(cvB && dB && ev.price!=null){
+            const cf = confProy(cat.mu(r), cvB, ev.fairOver, ev.over, mz=>dB(mz, ev.line));
+            const evv = ev.prob*amDec(ev.price)-1;
+            if(cf!=null) candBatter.push({
+              kind:'batter', fecha:$('date')?.value||'', player_id:r.id, name:r.name,
+              team:r.team, teamId:ABBR2ID[r.team], opp:(r.pitcher||'rival'), nombre:cat.nombre,
+              unidad:cat.unidad, line:ev.line, side:ev.over?'over':'under', price:ev.price,
+              mu:+cat.mu(r).toFixed(2), edge:ev.edge, ev:evv, conf:cf, cv:cvB,
+              stake:ev.stake, books:ev.books,
+              calidad:`OPS ${r.ops!=null?(+r.ops).toFixed(3):'—'} · BA ${r.ba!=null?(+r.ba).toFixed(3):'—'} · SLG ${r.slg!=null?(+r.slg).toFixed(3):'—'}`,
+              matchup:`vs ${(r.pitcher||'—')}${r.oppHand?` (${r.oppHand})`:''} · abridor ${r.tag.t}${r.split&&r.split.ops?` · ${r.split.ops.toFixed(3)} OPS vs ${r.oppHand}`:''}`,
+            });
+          }
+          propsBatter.push({gamePk:r.gamePk,player_id:r.id,player_name:r.name,team:r.team,market:cat.mkt,
           // La línea que se guarda es la REAL de la casa (ev.line), no la nominal de la
           // categoría: si el mercado cuelga otro número, el pick es sobre ESE.
           target:ev.line??(typeof cat.target==='function'?cat.target(r):cat.target), side:ev.over?'over':'under',
@@ -4063,6 +4266,8 @@ function renderBatters(batData) {
         return `<div class="card"><div class="card-hdr"><span class="card-hdr-title">${cat.title}</span></div>${top2.map((r,i)=>row(r,i,cat)).join('')}</div>`;
       }).join('')}
     </div>`;
+  podCands.batter = candBatter;
+  renderPOD();
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

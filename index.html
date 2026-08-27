@@ -521,7 +521,8 @@ body{background:radial-gradient(1100px 560px at 15% -10%,rgba(178,107,255,.10),t
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn-sm" onclick="loadPropHist('pitcher')">🔄 Recargar</button>
           <button class="btn-sm owner-only" onclick="autoGradeProps()" title="Califica los props desde el boxscore final de MLB">⚡ Auto-calificar</button>
-          <button class="btn-sm owner-only" style="color:var(--rtx);border-color:var(--red)" onclick="clearPropHist('pitcher')">🗑 Limpiar</button>
+          <button class="btn-sm owner-only" onclick="clearPropHist('pitcher')" title="Borra solo la jornada que estás viendo. Las demás fechas no se tocan.">🗑 Limpiar día</button>
+          <button class="btn-sm owner-only" style="color:var(--rtx);border-color:var(--red)" onclick="clearPropHist('pitcher',true)" title="Borra TODAS las fechas, incluidos los picks ya calificados. Ese récord no se puede regenerar.">🗑 Todo</button>
         </div>
       </div>
       <div id="pitchers-hist"><div class="empty">Cargando…</div></div>
@@ -539,7 +540,8 @@ body{background:radial-gradient(1100px 560px at 15% -10%,rgba(178,107,255,.10),t
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <button class="btn-sm" onclick="loadPropHist('batter')">🔄 Recargar</button>
           <button class="btn-sm owner-only" onclick="autoGradeProps()" title="Califica los props desde el boxscore final de MLB">⚡ Auto-calificar</button>
-          <button class="btn-sm owner-only" style="color:var(--rtx);border-color:var(--red)" onclick="clearPropHist('batter')">🗑 Limpiar</button>
+          <button class="btn-sm owner-only" onclick="clearPropHist('batter')" title="Borra solo la jornada que estás viendo. Las demás fechas no se tocan.">🗑 Limpiar día</button>
+          <button class="btn-sm owner-only" style="color:var(--rtx);border-color:var(--red)" onclick="clearPropHist('batter',true)" title="Borra TODAS las fechas, incluidos los picks ya calificados. Ese récord no se puede regenerar.">🗑 Todo</button>
         </div>
       </div>
       <div id="batters-hist"><div class="empty">Cargando…</div></div>
@@ -3963,17 +3965,25 @@ function pmEval(p, M){
 // ── PROP DEL DÍA ────────────────────────────────────────────────────────────
 // Un solo pick entre TODOS los props del día, abridores y bateadores mezclados.
 //
-// Se elige por VALOR AJUSTADO POR FIABILIDAD:
-//        puntaje = EV × Confianza
+// Se elige por EDGE AJUSTADO POR FIABILIDAD:
+//        puntaje = Edge × Confianza
 //
-//   EV         cuánto paga de más el precio real de casa.
+//   Edge       cuánto mejor es nuestra probabilidad que la del mercado sin comisión.
+//              Es el mismo criterio con el que las tarjetas eligen su pick, así que
+//              el Prop del Día no puede contradecir a la tarjeta de la que sale.
 //   Confianza  qué tan seguido el pick sigue del lado bueno del mercado si la
 //              proyección se equivoca lo que SUELE equivocarse. El margen de error
 //              está MEDIDO mercado por mercado (PM_CV y BAT_CV), no supuesto.
 //
-// Por qué EV y no edge a secas: el edge dice cuánto mejor es nuestra probabilidad
-// que la del mercado, pero no cuánto PAGA. Un edge de 8 puntos a -250 vale menos
-// que uno de 5 a +120. Para "el mejor de todos" lo que importa es el dinero.
+// Se MULTIPLICA, no se suma. El edge va de 0 a ~0.15 y la confianza de 0 a 1: al
+// sumarlos, la confianza aplastaría al edge y el ganador sería siempre el pick más
+// seguro aunque casi no tuviera valor. Multiplicando, la confianza hace de descuento
+// sobre el edge, que es lo que se busca: edge que de verdad esperamos cobrar.
+//
+// El EV ya no ordena, pero SÍ sigue filtrando: los candidatos salen de picks que
+// pasaron el piso de EV (rec). Hace falta porque el edge se mide contra el precio
+// SIN comisión, así que un edge positivo pequeño puede seguir siendo dinero perdido
+// una vez pagas el vig — pasó de verdad: Gerrit Cole con +1.8% de edge y −2.1% de EV.
 //
 // El EMPAREJAMIENTO y la CALIDAD del jugador no se suman aparte a propósito: ya
 // están DENTRO de la proyección (ajuste por abridor rival, mano, parque y clima),
@@ -3990,7 +4000,7 @@ let podCands = { pitcher:[], batter:[] };
 let podShown = { pitcher:null, batter:null };
 let podCober = { batter:null };   // equipos con alineación publicada / equipos con juego
 let podBest  = null;
-const podScore = c => (c && c.ev!=null && c.conf!=null) ? c.ev*c.conf : null;
+const podScore = c => (c && c.edge!=null && c.conf!=null) ? c.edge*c.conf : null;
 const POD_LBL = { pitcher:'abridores', batter:'bateadores' };
 
 function podTexto(c){
@@ -4014,7 +4024,8 @@ async function podCopiar(kind, btn){
     setTimeout(()=>{ btn.textContent = '📋 Copiar'; }, 1800); }
 }
 function renderPOD(){
-  const vivos = k => podCands[k].filter(c=>podScore(c)!=null && c.ev>0)
+  // edge>0 para entrar; el piso de EV ya lo aplicó rec al construir los candidatos.
+  const vivos = k => podCands[k].filter(c=>podScore(c)!=null && c.edge>0)
                                 .sort((a,b)=>podScore(b)-podScore(a));
   const pit = vivos('pitcher'), bat = vivos('batter');
   const nTot = pit.length + bat.length;
@@ -4056,8 +4067,8 @@ function podCard(c, nCand, esRey, otro){
     <div class="pod-hdr">
       <span class="pod-tag">${esRey?'⭐ PROP DEL DÍA':`★ MEJOR DE ${POD_LBL[c.kind].toUpperCase()}`}</span>
       <span class="pod-sub">${esRey
-        ? `el mejor entre ${nCand} props con valor, abridores y bateadores · por EV × confianza`
-        : `el mejor de esta pestaña · por EV × confianza`}</span>
+        ? `el mejor entre ${nCand} props con valor, abridores y bateadores · por edge × confianza`
+        : `el mejor de esta pestaña · por edge × confianza`}</span>
       <button class="btn-sm pod-copy" onclick="podCopiar('${c.kind}', this)">📋 Copiar</button>
     </div>
     ${otro?`<div class="pod-otro">El <b>Prop del Día</b> de hoy no es este: es <b>${esc(otro.name)}</b> ${otro.side==='over'?'OVER':'UNDER'} ${otro.line}${otro.unidad} ${amFmt(otro.price)}, en la pestaña <b>${POD_LBL[otro.kind]==='abridores'?"Pitcher's Model":'Bateadores'}</b>.</div>`:''}
@@ -4073,9 +4084,9 @@ function podCard(c, nCand, esRey, otro){
         </div>
       </div>
       <div class="pod-blks">
-        ${blk('Edge', pct(c.edge), c.edge>0?'var(--gtx)':'var(--rtx)', 'Cuánto mejor es nuestra probabilidad que la del mercado sin vig.')}
-        ${blk('EV', pct(c.ev), c.ev>0?'var(--gtx)':'var(--rtx)', 'Lo que paga de más el precio, a 1 unidad. Es la mitad del puntaje.')}
-        ${blk('Confianza', conf+'%', cCol, `Margen de error medido de esta proyección: ±${Math.round(c.cv*100)}%. Moviéndola dentro de ese margen, el pick sigue del lado correcto del mercado en el ${conf}% de los escenarios. Es la otra mitad del puntaje.`)}
+        ${blk('Edge', pct(c.edge), c.edge>0?'var(--gtx)':'var(--rtx)', 'Cuánto mejor es nuestra probabilidad que la del mercado sin comisión. Es la MITAD DEL PUNTAJE del Prop del Día.')}
+        ${blk('EV', pct(c.ev), c.ev>0?'var(--gtx)':'var(--rtx)', 'Lo que paga de más el precio real, a 1 unidad. Ya no ordena el Prop del Día, pero sí filtra: un pick tiene que superar el piso de EV para poder competir.')}
+        ${blk('Confianza', conf+'%', cCol, `Margen de error medido de esta proyección: ±${Math.round(c.cv*100)}%. Moviéndola dentro de ese margen, el pick sigue del lado correcto del mercado en el ${conf}% de los escenarios. Es la OTRA MITAD del puntaje.`)}
         ${blk('Stake', c.stake+'%', 'var(--gold)', 'Medio-Kelly, con tope de 5% del bankroll.')}
       </div>
     </div>
@@ -5206,11 +5217,35 @@ function renderPropHist(kind){
 
   el.innerHTML = aviso + daybar + cardDia + cardHist;
 }
-async function clearPropHist(kind){
+// Borra el historial de props. Por defecto SOLO EL DÍA QUE SE ESTÁ VIENDO.
+//
+// Antes borraba todas las fechas de golpe con un .eq('kind',kind) sin filtro de día,
+// y el aviso decía "¿Borrar TODO el historial?" — que es cierto, pero se lee como
+// "limpiar esta tabla". Con los dos botones se vaciaba la tabla entera, incluidos los
+// picks YA CALIFICADOS, que son lo único que sirve para medir si el sistema acierta:
+// se pueden volver a generar los de hoy, pero un resultado pasado no vuelve.
+//
+// Ahora hay que pedir el borrado total a propósito, y el aviso dice cuántos
+// resultados se van a perder antes de hacerlo.
+async function clearPropHist(kind, todo=false){
   if(!requireAuth()) return;
-  const nom = kind==='pitcher' ? 'ponches' : 'bateadores';
-  if(!confirm(`¿Borrar TODO el historial de ${nom}?`)) return;
-  const {error}=await sb.from('prop_picks').delete().eq('kind',kind);
+  const nom = kind==='pitcher' ? 'abridores' : 'bateadores';
+  const dia = propDay[kind] || (propRows[kind]||[])[0]?.game_date || null;
+
+  let q = sb.from('prop_picks').delete().eq('kind',kind);
+  if(todo){
+    const cal = (propRows[kind]||[]).filter(r=>r.result==='win'||r.result==='loss').length;
+    const aviso = `¿Borrar el historial COMPLETO de ${nom}, de TODAS las fechas?`
+      + (cal ? `\n\nSe perderán ${cal} picks YA CALIFICADOS. Ese récord no se puede regenerar: `
+             + `los análisis se pueden repetir, pero un resultado pasado no vuelve.` : '')
+      + `\n\nEsto no se puede deshacer.`;
+    if(!confirm(aviso)) return;
+  }else{
+    if(!dia){ alert('No hay ninguna jornada seleccionada.'); return; }
+    if(!confirm(`¿Borrar los picks de ${nom} del ${dia}?\n\nLas demás fechas no se tocan.`)) return;
+    q = q.eq('game_date', dia);
+  }
+  const {error}=await q;
   if(error){ alert('Error: '+error.message); return; }
   loadPropHist(kind);
 }

@@ -344,3 +344,14 @@ alter table public.prop_picks add column if not exists price      integer;
 alter table public.prop_picks add column if not exists ev         numeric;
 alter table public.prop_picks add column if not exists books      integer;
 alter table public.prop_picks add column if not exists model_prob numeric;
+
+-- ============================================================================
+--  signals : hora de inicio del partido
+-- ----------------------------------------------------------------------------
+--  Se guarda el ISO completo con zona, no una hora ya formateada. Asi se puede
+--  pintar en la zona que se quiera; hoy se muestra en HORA DEL ESTE, que es la
+--  referencia con la que MLB publica horarios y las casas cuelgan las lineas.
+--  Las señales guardadas antes de esta columna quedan en null y simplemente no
+--  muestran hora, en vez de inventarla.
+-- ============================================================================
+alter table public.signals add column if not exists game_time timestamptz;

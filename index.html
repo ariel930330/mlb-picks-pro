@@ -950,6 +950,20 @@ const byPropValue = (a,b) => {
 const amProb   = a => a<0 ? (-a)/(-a+100) : 100/(a+100);   // prob implícita (con vig)
 const amPayout = a => a>0 ? a/100 : 100/(-a);              // ganancia por unidad apostada
 const amFmt    = a => (a>0?'+':'')+a;
+// Hora de inicio en HORA DEL ESTE, que es la referencia con la que se publican los
+// horarios de MLB y las líneas. Se fija la zona a America/New_York a propósito: si se
+// dejara la del navegador, el mismo partido saldría a una hora distinta según dónde
+// estés, y no cuadraría con lo que anuncia la casa. El cambio de horario de verano lo
+// resuelve solo la zona IANA.
+const horaET = iso => {
+  if(!iso) return '';
+  try{
+    const t = new Date(iso);
+    if(isNaN(t)) return '';
+    return t.toLocaleTimeString('en-US',{timeZone:'America/New_York',hour:'numeric',minute:'2-digit'})
+            .replace(/\s/g,'').toLowerCase() + ' ET';
+  }catch{ return ''; }
+};
 const bestAm   = arr => arr.reduce((b,x)=> amPayout(x)>amPayout(b)?x:b);  // mejor línea (line shopping)
 const avg      = arr => arr.reduce((s,x)=>s+x,0)/arr.length;
 const median   = arr => { const s=[...arr].sort((a,b)=>a-b); return s[Math.floor(s.length/2)]; };
@@ -3713,7 +3727,10 @@ function renderPicks(games) {
     return `<div class="card" id="game-${g.gamePk}">
       <div class="card-hdr">
         <span class="card-hdr-title"><img class="logo-xs" src="${teamLogo(g.awayId)}" onerror="${IMG_FALLBACK}"> ${g.away} <span style="color:var(--text3)">@</span> <img class="logo-xs" src="${teamLogo(g.homeId)}" onerror="${IMG_FALLBACK}"> ${g.home}</span>
-        <span style="font-size:10px;color:var(--text3)">${g.venue}</span>
+        <span style="font-size:10px;color:var(--text3);display:flex;align-items:center;gap:7px">
+          ${g.time?`<span style="font-weight:700;color:var(--text2);font-variant-numeric:tabular-nums">${horaET(g.time)}</span>`:''}
+          <span>${g.venue}</span>
+        </span>
       </div>
       <div class="game-matchup">
         <div class="team-away"><img class="team-logo-img" src="${teamLogo(g.awayId)}" onerror="${IMG_FALLBACK}"><div class="team-name">${g.away}</div><div class="team-pct" style="color:var(--blue)">${awp}%</div><div class="team-ml">${g.awayML}</div></div>
@@ -4443,6 +4460,7 @@ function signalRow(date, g){
   return {
     best_mkt: bm.mkt, best_line: bm.line,
     game_date:date, game_pk:g.gamePk, away:g.away, home:g.home, venue:g.venue||'',
+    game_time: g.time||null,   // ISO con zona; se pinta en hora del Este al mostrarlo
     edge_team:er.edgeTeam, tier:er.tier,
     conv_eff:+(er.convEff||0).toFixed(1), net_abs:+(er.netAbs||0).toFixed(1), net:+(er.net||0).toFixed(1),
     dq:er.dq, park_pts:er.park?.pts??null, best_bet:er.best?.[0]||null,
@@ -4548,7 +4566,8 @@ function sigGameRow(r){
   const etC = r.edge_team===r.home ? 'var(--green)' : 'var(--blue)';
   const score = r.home_score!=null ? `${r.away_score}–${r.home_score}` : '—';
   return `<tr>
-    <td style="white-space:nowrap"><strong>${esc(r.away)}</strong> <span style="color:var(--text3)">@</span> <strong>${esc(r.home)}</strong></td>
+    <td style="white-space:nowrap"><strong>${esc(r.away)}</strong> <span style="color:var(--text3)">@</span> <strong>${esc(r.home)}</strong>${
+      r.game_time?`<div style="font-size:10px;color:var(--text3);font-weight:400;font-variant-numeric:tabular-nums">${horaET(r.game_time)}</div>`:''}</td>
     <td style="white-space:nowrap"><span style="font-weight:800;color:${etC}">${esc(r.edge_team)}</span> <span style="font-variant-numeric:tabular-nums;color:var(--text2)">+${Math.round(r.conv_eff||0)}</span></td>
     <td class="num" style="font-weight:800;color:${dqColor(r.dq)}">${r.dq??'—'}</td>
     <td class="c" style="font-size:11px;font-weight:700;color:var(--gold);white-space:nowrap">${esc(mktLabel(r))}</td>

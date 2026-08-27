@@ -355,3 +355,18 @@ alter table public.prop_picks add column if not exists model_prob numeric;
 --  muestran hora, en vez de inventarla.
 -- ============================================================================
 alter table public.signals add column if not exists game_time timestamptz;
+
+-- ============================================================================
+--  predictions : game_pk (dobles carteleras)
+-- ----------------------------------------------------------------------------
+--  La fila se identificaba por (game_date, away, home). En una doble cartelera
+--  esos tres valores son IDENTICOS en los dos juegos, asi que el segundo
+--  encontraba la fila del primero y la pisaba: solo sobrevivia uno, y el otro
+--  desaparecia del historial y del reentrenamiento del modelo.
+--
+--  La tabla signals ya usaba game_pk justo por esto; predictions se quedo atras.
+--  Las filas viejas quedan con game_pk en null y se rellenan solas la proxima vez
+--  que se analice esa fecha.
+-- ============================================================================
+alter table public.predictions add column if not exists game_pk bigint;
+create index if not exists predictions_game_pk on public.predictions (game_pk);

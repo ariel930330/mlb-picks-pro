@@ -3658,7 +3658,28 @@ async function savePropPicks(date){
 // El pick de MAYOR edge del juego (busca en TODOS los mercados, no solo el top-3 por probabilidad)
 // Solo picks CON cuota real: es el único pick que se puede calificar de verdad.
 const bestEdgePick = g => (g.allPicks||g.picks||[]).filter(hasPrice).sort(byValue)[0];
+// DOBLES CARTELERAS: la clave es game_pk, no (fecha, visitante, local).
+// Con la clave vieja los dos juegos de una doble cartelera tienen los MISMOS tres
+// valores, así que el segundo encontraba la fila del primero y la actualizaba: solo
+// sobrevivía uno, y el otro desaparecía del historial y del reentrenamiento. Señales
+// ya usaba game_pk por esto mismo; predictions se había quedado atrás.
+//
+// Si la columna aún no existe, se sigue guardando con la clave vieja en vez de perder
+// la jornada entera, y se avisa qué SQL correr. Se sondea UNA vez, no juego por juego.
+let predSaveMsg = null;
 async function savePredictions(date, games) {
+  predSaveMsg = null;
+  let usaPk = true;
+  {
+    const {error} = await sb.from('predictions').select('game_pk').limit(1);
+    if(error && /does not exist/i.test(error.message||'')){
+      usaPk = false;
+      predSaveMsg = 'Falta la columna <code>game_pk</code> en <code>predictions</code>: en dobles carteleras '
+                  + 'solo se guarda uno de los dos juegos. Corre en el SQL Editor:<br>'
+                  + '<code>alter table public.predictions add column if not exists game_pk bigint;</code>';
+      console.warn('savePredictions:', predSaveMsg.replace(/<[^>]+>/g,''));
+    }
+  }
   for(const g of games){
     // Si el juego no trae NINGUNA cuota real, la fila igual se guarda: los campos de
     // features y home_won son los que alimentan el reentrenamiento y el historial, y
@@ -3680,10 +3701,27 @@ async function savePredictions(date, games) {
       // Solo los picks CON cuota entran al historial guardado.
       all_picks_json: JSON.stringify((g.picks||[]).filter(hasPrice).map(p=>({cat:p.cat,main:p.main,prob:p.prob,edge:p.edge,conf:p.conf,price:p.price,fair:p.fair}))),
     };
-    const {data:ex} = await sb.from('predictions').select('id,result').eq('game_date',date).eq('away',g.away).eq('home',g.home);
+    if(usaPk && g.gamePk!=null) row.game_pk = g.gamePk;
+
+    // Se busca por game_pk cuando se puede. Si no aparece nada, se mira la clave vieja
+    // (fecha+equipos) para no duplicar las filas que se guardaron antes de existir la
+    // columna: esas se actualizan y de paso quedan con su game_pk.
+    let ex = null;
+    if(usaPk && g.gamePk!=null){
+      const r = await sb.from('predictions').select('id,result').eq('game_pk',g.gamePk);
+      ex = r.data;
+    }
+    if(!ex?.length){
+      const r = await sb.from('predictions').select('id,result,game_pk')
+        .eq('game_date',date).eq('away',g.away).eq('home',g.home);
+      // Solo se reutiliza una fila legacy (sin game_pk). Una que YA tenga otro game_pk
+      // es el otro juego de la doble cartelera y no hay que tocarla.
+      ex = (r.data||[]).filter(x => x.game_pk==null || !usaPk);
+    }
     if(ex?.length){ if(!ex[0].result) await sb.from('predictions').update(row).eq('id',ex[0].id); }
     else { await sb.from('predictions').insert(row); }
   }
+  return !predSaveMsg;
 }
 
 // ── Render picks ──────────────────────────────────────────────────────────────
@@ -4935,10 +4973,29 @@ async function recalibrate(){
   const {data:rows}=await sb.from('predictions').select('top_pick_prob,result').limit(5000);
   const fit=fitPlatt(rows);
   if(!fit){ alert('Necesitas ~30+ picks calificados (✓/✗) para recalibrar.'); return; }
-  CAL={a:fit.a,b:fit.b};
+
+  // COMPOSICIÓN, no reemplazo. Las probabilidades guardadas en predictions YA salieron
+  // calibradas con el CAL vigente, así que el ajuste nuevo corrige la SALIDA de esa
+  // calibración, no la probabilidad cruda del modelo. Machacar CAL con {a,b} aplicaba
+  // la corrección al sitio equivocado y cada recalibración se montaba sobre la anterior.
+  //
+  // Platt compone exacto en el espacio logit, así que no hace falta guardar la prob.
+  // cruda ni aproximar nada:
+  //   calibrado_viejo(p) = sig(a1·L + b1)          con L = logit(p)
+  //   ajuste(q)          = sig(a2·logit(q) + b2)
+  //   ajuste(calibrado_viejo(p)) = sig(a2·(a1·L + b1) + b2) = sig(a1·a2·L + a2·b1 + b2)
+  // Es decir, la corrección total en un solo paso es:
+  const prev = {a:CAL.a, b:CAL.b};
+  CAL = { a:+(prev.a*fit.a).toFixed(4), b:+(fit.a*prev.b + fit.b).toFixed(4) };
+
   localStorage.setItem('cal_ab',JSON.stringify(CAL));
   try{ await sb.from('model_weights').upsert({id:2,weights_json:JSON.stringify(CAL),train_iter:fit.n},{onConflict:'id'}); }catch{}
-  alert(`✅ Recalibrado con ${fit.n} picks calificados\n  a=${fit.a} · b=${fit.b}\nLas próximas proyecciones aplican esta corrección.`);
+  alert(`✅ Recalibrado con ${fit.n} picks calificados\n\n`
+      + `  ajuste medido  a=${fit.a} · b=${fit.b}\n`
+      + `  antes          a=${prev.a} · b=${prev.b}\n`
+      + `  corrección total  a=${CAL.a} · b=${CAL.b}\n\n`
+      + `Se compone con la calibración anterior, no la reemplaza: las probabilidades del `
+      + `historial ya venían corregidas, así que el ajuste se suma en vez de sustituir.`);
   loadValidation();
 }
 function resetCalibration(){ CAL={a:1,b:0}; localStorage.removeItem('cal_ab'); try{sb.from('model_weights').delete().eq('id',2);}catch{} loadValidation(); }

@@ -111,4 +111,4 @@ En `toca-correr.mjs`:
 | `MIN_ANTES` | 60 | Minutos antes del primer juego de la oleada. |
 | `VENTANA` | 35 | Margen de disparo: entra si faltan entre 60 y 25 min. **Tiene que ser mayor que el intervalo del cron (30)** o hay oleadas que caen entre dos disparos y no se analizan nunca. Con 20 se perdían 2 de 4. |
 | `MIN_ENTRE` | 40 | Minutos mínimos entre dos análisis. Con la ventana más ancha que el cron, dos disparos seguidos pueden caer en la misma oleada; esto evita pagarla dos veces. |
-| `RACIMO_MIN` | 45 | Juegos que empiezan dentro de estos minutos = una sola oleada. Subirlo agrupa más y gasta menos; bajarlo analiza más cerca de cada juego y gasta más. |
+| `RACIMO_MIN` | **120** | Juegos que empiezan dentro de estos minutos = una sola oleada. Subirlo agrupa más y gasta menos; bajarlo analiza más cerca de cada juego y gasta más.<br>**Está en 120 por presupuesto, no por criterio.** El backtest de agosto consumió 10,000 créditos; con 45 salían 3.6 oleadas/día (338 créditos) y no alcanzaba hasta el reinicio. **El 19 de septiembre, cuando la cuota vuelva a 20,000, hay que devolverlo a 45.** |

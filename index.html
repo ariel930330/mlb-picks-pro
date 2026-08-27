@@ -1029,7 +1029,19 @@ const BLEND_MKT = 0.70;   // por defecto, para los mercados que NO se han medido
 //   regresado × entradas esperadas + binomial). Le faltan el ajuste de
 //   emparejamiento, whiff/chase de Statcast, parque y clima, que no se pueden
 //   reconstruir hacia atrás. El modelo real podría ser mejor.
-const BLEND_POR_MKT = { ks: 0.85 };
+// ha 0.85 — 296 aperturas. Óptimo medido 0.90. correlación con lo real: proyección
+//   0.150 vs línea de casa 0.166. Es el único de los tres donde el modelo aporta algo,
+//   y es poquísimo: el log loss a w=0.90 (0.68680) apenas mejora al de solo mercado
+//   (0.68705).
+// er 0.85 — 297 aperturas. Óptimo medido 1.00, o sea que tampoco aporta. correlación
+//   proyección 0.083 vs línea 0.157: la peor de las tres, coherente con que la ERA es
+//   lo menos estable que proyecta el modelo (su CV medido es 39.3%, el mayor).
+//
+// Los tres se ponen en 0.85 aunque el óptimo medido sea 0.90-1.00: es la postura
+// defensiva acordada. Poner el óptimo real dejaría el sistema casi sin picks de
+// abridor, y todavía falta comprobar si el modelo COMPLETO —con emparejamiento y
+// Statcast, que no se pueden reconstruir hacia atrás— aporta lo que este no.
+const BLEND_POR_MKT = { ks: 0.85, ha: 0.85, er: 0.85 };
 const blend = (model, market, k) => {
   const w = (k && BLEND_POR_MKT[k] != null) ? BLEND_POR_MKT[k] : BLEND_MKT;
   return w*market + (1-w)*model;

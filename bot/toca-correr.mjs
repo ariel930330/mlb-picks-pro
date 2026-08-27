@@ -30,7 +30,17 @@ const MIN_ANTES   = 60;   // objetivo: analizar 60 min antes del primer juego de
 // 22:00 UTC faltaban 65 min (muy pronto) y a las 22:30 faltaban 35 (ya fuera). Con 35
 // se cubren las cuatro. Comprobado sobre la jornada real.
 const VENTANA     = 35;   // se dispara si faltan entre 60 y 25 min
-const RACIMO_MIN  = 45;   // juegos que arrancan dentro de estos minutos = una sola oleada
+// RACIMO_MIN 120 es TEMPORAL, por presupuesto — no es una decision de modelo.
+// El backtest de agosto se comio 10,000 creditos y quedan 6,465 para 23 dias, o sea
+// 281 al dia = 3 analisis. Con 45 min salian 3.6 oleadas diarias (338 creditos) y NO
+// alcanzaba. Con 120 salen 2.0 (188 al dia, 4,324 en total) y sobran ~2,100 de margen
+// para corridas manuales y dobles carteleras.
+//
+// EL COSTE: un juego que empieza 2 horas despues del primero de su grupo se analiza
+// con 3 horas de antelacion en vez de 1, asi que le tocan alineaciones mas verdes.
+//
+// EL 19 DE SEPTIEMBRE se reinicia la cuota a 20,000: ahi hay que volver a poner 45.
+const RACIMO_MIN  = 120;  // juegos que arrancan dentro de estos minutos = una sola oleada
 // Con la ventana mas ancha que el cron, dos disparos seguidos pueden caer dentro de la
 // misma oleada y gastarian el doble de creditos. Antes de correr se comprueba si ya
 // hubo un analisis hace poco.

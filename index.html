@@ -1002,8 +1002,38 @@ const STAKE_CAP  = 5;    // tope de % del bankroll (el modelo no es una casa sha
 const stakePct = (prob,price) => +Math.min(STAKE_CAP, KELLY_FRAC*kelly(prob,price)*100).toFixed(1);
 // El mercado es más sharp que el modelo: la prob. final mezcla 70% mercado + 30% modelo.
 // Esto encoge los edges inflados (lo que difiere del mercado suele estar mal en el modelo).
-const BLEND_MKT = 0.70;
-const blend = (model, market) => BLEND_MKT*market + (1-BLEND_MKT)*model;
+const BLEND_MKT = 0.70;   // por defecto, para los mercados que NO se han medido
+// Peso MEDIDO por mercado. Solo entra aquí lo que se probó contra datos reales; el
+// resto se queda en el 0.70 por defecto, que sigue siendo un juicio.
+//
+// ks 0.85 — backtest de 704 aperturas con mercado de ponches (abril a agosto 2026,
+//   495 partidos, snapshot a 60 min del primer lanzamiento). El resultado incómodo:
+//   la proyección de ponches NO le gana al mercado. El log loss baja en línea recta
+//   hasta w=1.00 (solo mercado), y en TODOS los subconjuntos probados —pitchers con
+//   mucha o poca muestra, líneas con muchas o pocas casas, modelo cerca o lejos del
+//   50%, e incluso encogiéndole la confianza antes de mezclar— el peso óptimo sigue
+//   siendo 1.00.
+//
+//     correlación con los K reales   proyección 0.358   línea de la casa 0.443
+//     error de calibración            modelo 12.1%      mercado 4.3%
+//     el modelo dice 74.7% -> pasa el 49.1%;  dice 24.7% -> pasa el 41.1%
+//
+//   Rendimiento simulado con el piso de EV al 1%:
+//     w 0.70 -> 419 picks, ROI -9.2%      w 0.85 -> 190 picks, ROI -6.2%
+//
+//   No se pone en 1.00 porque eso apagaría el mercado entero. 0.85 es una postura
+//   defensiva a propósito: recorta los picks a la mitad y deja pasar solo los
+//   desacuerdos grandes, mientras se comprueba en vivo con el modelo COMPLETO.
+//
+//   OJO CON LOS LÍMITES: el backtest reconstruye una versión simplificada (K/9
+//   regresado × entradas esperadas + binomial). Le faltan el ajuste de
+//   emparejamiento, whiff/chase de Statcast, parque y clima, que no se pueden
+//   reconstruir hacia atrás. El modelo real podría ser mejor.
+const BLEND_POR_MKT = { ks: 0.85 };
+const blend = (model, market, k) => {
+  const w = (k && BLEND_POR_MKT[k] != null) ? BLEND_POR_MKT[k] : BLEND_MKT;
+  return w*market + (1-w)*model;
+};
 // Recalibración aprendida del historial (Platt scaling): p_cal = sigmoid(a·logit(p)+b).
 // Identidad (a=1,b=0) hasta que el dueño recalibre con sus resultados.
 let CAL = {a:1, b:0};
@@ -4012,7 +4042,7 @@ function pmEval(p, M){
   // ÚNICO del sistema que se saltaba este paso, y por eso soltaban EV absurdos: una
   // proyección de 6.5 Ks contra una línea de 4.5 daba +74% de EV, cuando lo honesto es
   // que si el modelo se aleja tanto del mercado, el que suele estar mal es el modelo.
-  const bOver = blend(mOver, mkt.fairOver);
+  const bOver = blend(mOver, mkt.fairOver, M.k);   // peso MEDIDO por mercado (ks=0.85)
   const eO = bOver-mkt.fairOver, eU = (1-bOver)-mkt.fairUnder, over = eO>=eU;   // lado con MÁS edge
   const prob = over?bOver:1-bOver, fair = over?mkt.fairOver:mkt.fairUnder, price = over?mkt.priceOver:mkt.priceUnder;
   const edge = prob-fair, ev = prob*amDec(price)-1;

@@ -3493,11 +3493,26 @@ async function runAnalysis() {
     // Se guarda la PROMESA además de dispararla: el modo automático tiene que poder
     // esperar a que el guardado termine antes de cerrar el navegador. Antes era
     // fuego-y-olvido, y un runner headless habría matado la página a media escritura.
+    // saveSignals devuelve false si falló. Antes se tragaba el error dentro y el
+    // Promise.all resolvía "bien" igual, así que el robot reportaba éxito con las
+    // señales sin guardar. Ahora el resultado de cada guardado cuenta.
     window.__auto.guardadoPromesa =
       Promise.all([ savePredictions(date, best5Games), saveSignals(date, results), savePropPicks(date) ])
-        .then(() => { loadPropHist('pitcher'); loadPropHist('batter'); return true; })
+        .then(([,okSig]) => {
+          loadPropHist('pitcher'); loadPropHist('batter'); loadSignals();
+          const fallos = [];
+          if(okSig === false) fallos.push('señales');
+          if(propSaveMsg)     fallos.push('props');
+          if(fallos.length){
+            $('run-status').textContent += ` · ⚠ no se guardó: ${fallos.join(' y ')}`;
+            window.__auto.msgGuardado = fallos.join(' y ');
+            return false;
+          }
+          return true;
+        })
         .catch(e => { console.warn('guardado:', e.message);
-          $('run-status').textContent += ' · ⚠ no se pudo guardar en Supabase'; return false; });
+          $('run-status').textContent += ' · ⚠ no se pudo guardar en Supabase';
+          window.__auto.msgGuardado = e.message; return false; });
 
   } catch(e) {
     $('picks-area').innerHTML=`<div class="error-box"><i class="ti ti-alert-circle"></i> ${e.message}</div>`;
@@ -4476,21 +4491,57 @@ function signalRow(date, g){
 }
 // Guarda las señales del día — una por juego, clave game_pk (los doubleheaders NO se pisan).
 // Nunca sobrescribe una señal que ya tiene resultado.
+// El cliente de supabase DEVUELVE el error en {error}, no lo lanza. Un try/catch
+// solo no atrapa nada: por eso esto se veía "bien" mientras no guardaba ni una fila.
+// Pasó de verdad — al añadir game_time sin correr el ALTER TABLE, cada inserción
+// moría con 42703 y la pestaña de Señales se quedaba muda.
+let sigSaveMsg = null;
+const sigErr = e => { if(!e) return false;
+  sigSaveMsg = e.message || String(e);
+  console.warn('saveSignals:', sigSaveMsg);
+  return true; };
+// Columnas que pueden no existir todavía si falta correr una migración. Si la base
+// se queja de una de ellas, se reintenta SIN ella en vez de perder toda la jornada:
+// más vale una señal sin hora que ninguna señal.
+const SIG_OPCIONALES = ['game_time'];
+const sinOpcional = (rows, col) => rows.map(r => { const c={...r}; delete c[col]; return c; });
+
 async function saveSignals(date, games){
-  if(!isOwner()) return;
-  const rows = games.map(g=>signalRow(date,g)).filter(Boolean);
-  if(!rows.length) return;
-  try{
-    const {data:ex} = await sb.from('signals').select('id,game_pk,result').eq('game_date',date);
-    const map={}; (ex||[]).forEach(e=>map[e.game_pk]=e);
-    const toInsert=[];
-    for(const r of rows){
-      const e=map[r.game_pk];
-      if(e){ if(!e.result) await sb.from('signals').update(r).eq('id',e.id); }
-      else toInsert.push(r);
+  sigSaveMsg = null;
+  if(!isOwner()){ sigSaveMsg='Sin sesión: las señales no se guardaron.'; return false; }
+  let rows = games.map(g=>signalRow(date,g)).filter(Boolean);
+  if(!rows.length) return true;
+
+  const {data:ex, error:eSel} = await sb.from('signals').select('id,game_pk,result').eq('game_date',date);
+  if(sigErr(eSel)) return false;
+  const map={}; (ex||[]).forEach(e=>map[e.game_pk]=e);
+
+  // Sondeo con la primera fila: si falta una columna opcional, se cae de una vez y
+  // se reintenta sin ella, en vez de descubrirlo juego por juego.
+  for(const col of SIG_OPCIONALES){
+    if(rows[0][col] === undefined) continue;
+    const {error} = await sb.from('signals').select(col).limit(1);
+    if(error && /does not exist/i.test(error.message||'')){
+      rows = sinOpcional(rows, col);
+      sigSaveMsg = `La columna <code>${col}</code> no existe todavía en la tabla <code>signals</code>. `
+                 + `Las señales se guardaron SIN ella. Corre esto en el SQL Editor de Supabase para tenerla:<br>`
+                 + `<code>alter table public.signals add column if not exists ${col} timestamptz;</code>`;
     }
-    if(toInsert.length) await sb.from('signals').insert(toInsert);
-  }catch(e){ console.warn('saveSignals:',e.message); }
+  }
+
+  const toInsert=[];
+  for(const r of rows){
+    const e=map[r.game_pk];
+    if(e){
+      if(!e.result){ const {error} = await sb.from('signals').update(r).eq('id',e.id); if(sigErr(error)) return false; }
+    }
+    else toInsert.push(r);
+  }
+  if(toInsert.length){
+    const {error} = await sb.from('signals').insert(toInsert);
+    if(sigErr(error)) return false;
+  }
+  return true;
 }
 
 // ── Día activo (las 3 secciones muestran un día a la vez) ─────────────────────
@@ -4723,7 +4774,12 @@ async function loadSignals(){
     ${nSig<60?`<b style="color:var(--atx)">Llevas ${nSig} calificadas: con menos de ~60 por tramo las diferencias todavía son ruido.</b>`:''}
   </div>`;
 
-  $('signals-area').innerHTML = secciones + noEdgeNota + histCard + porConv + porDQ + rangoNota + `
+  // Si el último guardado falló, se dice AQUÍ. Antes solo iba a la consola, así que
+  // la pestaña se quedaba en el día viejo sin explicar por qué.
+  const sigAviso = sigSaveMsg
+    ? `<div class="error-box" style="margin-bottom:10px"><b>⚠ El último análisis no guardó las señales</b><br>${sigSaveMsg}</div>`
+    : '';
+  $('signals-area').innerHTML = sigAviso + secciones + noEdgeNota + histCard + porConv + porDQ + rangoNota + `
     <details class="er-more" style="margin-top:12px"><summary>📊 Más cortes acumulados (todos los días)</summary>
       <div style="padding-top:12px">${porTier}${porAcuerdo}
         <div style="font-size:10px;color:var(--text3);padding:0 2px 4px">
@@ -5337,7 +5393,8 @@ function autoArranca(){
       await runAnalysis();
       window.__auto.guardado = await (window.__auto.guardadoPromesa || Promise.resolve(false));
       window.__auto.ok  = true;
-      window.__auto.msg = `${(allGames||[]).length} partidos · guardado: ${window.__auto.guardado?'sí':'no'}`;
+      window.__auto.msg = `${(allGames||[]).length} partidos · guardado: ${window.__auto.guardado?'sí'
+        : `NO (${window.__auto.msgGuardado||'motivo desconocido'})`}`;
     }catch(e){
       window.__auto.ok  = false;
       window.__auto.msg = e?.message || String(e);

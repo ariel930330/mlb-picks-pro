@@ -1272,11 +1272,20 @@ function computePicks(data) {
   const logit = W.w_hp*hps+W.w_ap*aps+W.w_ho*hos+W.w_ao*aos+W.w_hb*hbs+W.w_ab*abs2+W.w_str*str+W.w_hfa;
   const hwp=sig(logit), awp=1-hwp;
 
-  const lg=4.4;
+  // Carreras por equipo por juego, MEDIDO en las 1,990 finales de 2026: 8.939 de total
+  // por partido / 2 = 4.469. Estaba en 4.4, con lo que TODAS las proyecciones de total
+  // salían un 1.5% bajas antes de cualquier otro ajuste.
+  const lg=4.47;
   const wxF=wxFactor(data.wx)*windFactor(data.wx,VENUE_BEARING[homeId],data.windAmp||1);   // (temp+humedad) × viento×fly-ball (1.0 si techado)
   // El abridor lanza ~60% del juego; el bullpen cubre el resto (cerca del promedio).
   // Mezclar abridor+bullpen evita sub-proyectar totales en duelos de ases (antes daba ~5.5 irreal).
-  const SF=.6, KP=.6;                            // fracción del abridor · fuerza de supresión
+  // SF MEDIDO sobre la temporada 2026: 19,736 entradas de abridores contra 15,804 de
+  // relevo = 0.555. El 0.6 de antes le daba al abridor mas juego del que lanza, o sea
+  // que los duelos de ases bajaban el total mas de la cuenta y al reves.
+  // KP sigue SIN MEDIR: es cuanto mueve la calidad de quien lanza las carreras
+  // esperadas, y para despejarlo hace falta cruzar las puntuaciones del propio modelo
+  // con lo que paso, cosa que no se puede hacer sin un backtest.
+  const SF=.555, KP=.6;                          // fracción del abridor · fuerza de supresión
   const kF=s=>1+(.5-s)*KP;                        // factor de carreras por calidad de quien lanza
   const oF=o=>1+(o-.5)*.55;                       // factor por ofensiva
   const awayStaff=SF*kF(aps)+(1-SF)*kF(abs2);    // pitcheo visitante (abridor+bullpen) que enfrenta al local
@@ -1284,7 +1293,23 @@ function computePicks(data) {
   const hExp=lg*oF(hos)*awayStaff*pf*wxF;        // carreras del local = su ofensiva vs pitcheo visitante
   const aExp=lg*oF(aos)*homeStaff*pf*wxF;
   const total=+(hExp+aExp).toFixed(1);
-  const totalSigma=Math.sqrt(total)*1.3;         // runs totales: sobre-dispersos respecto a Poisson
+  // LAS CARRERAS TOTALES NO SON NORMALES. Están sesgadas a la derecha: sobre las 1,990
+  // finales de 2026 la media es 8.94 pero la MEDIANA es 8 — casi una carrera de cola.
+  // Una normal es simétrica, así que ponía demasiada masa arriba y sobrestimaba el
+  // OVER en todas las líneas, siempre hacia el mismo lado:
+  //
+  //   línea      real     normal σ×1.3     NB k=6
+  //    6.5      67.8 %       73.5 %        67.2 %
+  //    7.5      56.5 %       64.4 %        57.8 %
+  //    9.5      39.5 %       44.3 %        40.0 %
+  //   12.5      21.9 %       18.0 %        19.9 %
+  //   error medio            0.0435        0.0065   -> 6.7 veces mejor
+  //
+  // Subir el sigma no arreglaba nada porque el problema era la FORMA, no la anchura:
+  // con la SD real medida (1.515 en vez de 1.3) el error empeora a 0.0376.
+  // k por momentos da 6.91; ajustando contra las frecuencias reales de cada línea, 6.0.
+  const TOT_K=6.0;
+  const totalSigma=Math.sqrt(total)*1.3;         // se conserva para F5 y para mostrar
   const favHome=hwp>=awp;
   // Run line consistente con la prob. de victoria entrenada: margen esperado = SD · probit(hwp)
   // SD del diferencial de carreras. MEDIDA sobre las 1,990 finales de 2026, calibrando
@@ -1308,7 +1333,7 @@ function computePicks(data) {
 
   // Total: la línea es la proyección redondeada a .5 (sin el sesgo artificial al OVER)
   const totalLine=+(Math.round(total*2)/2).toFixed(1);
-  const totalOver=normOver(total,totalSigma,totalLine);
+  const totalOver=nbOver(total,TOT_K,totalLine);
   const totalPick=totalOver>=.5, totalProb=Math.max(totalOver,1-totalOver);
 
   // F5: solo abridores (sin bullpen ni racha) y regresado hacia 50% por ser pocos innings.
@@ -1392,7 +1417,7 @@ function computePicks(data) {
 
   // ── Total: usa la línea del mercado y compara P(over) modelo vs mercado ──
   if(odds?.total){
-    const line=odds.total.point, mOver=normOver(total,totalSigma,line), bOver=blend(mOver,odds.total.fairOver);
+    const line=odds.total.point, mOver=nbOver(total,TOT_K,line), bOver=blend(mOver,odds.total.fairOver);
     const overSide=bOver>=0.5;   // lado MÁS PROBABLE (over o under)
     const prob=overSide?bOver:1-bOver, fair=overSide?odds.total.fairOver:odds.total.fairUnder, price=overSide?odds.total.priceOver:odds.total.priceUnder, mRaw=overSide?mOver:1-mOver;
     picks.push({cat:'Total del partido',main:`${overSide?'OVER':'UNDER'} ${line} ${amFmt(price)}`,sub:`Proy ${total} · Modelo ${pct(mRaw)} → ${pct(prob)} vs Mercado ${pct(fair)}`,prob,edge:+(prob-fair).toFixed(3),bEdge:+(mRaw-fair).toFixed(3),mkt:true,price,fair});

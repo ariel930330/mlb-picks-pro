@@ -24,8 +24,19 @@
 import { appendFileSync } from 'node:fs';
 
 const MIN_ANTES   = 60;   // objetivo: analizar 60 min antes del primer juego del grupo
-const VENTANA     = 20;   // margen: se dispara si faltan entre 60 y 40 min
+// VENTANA TIENE QUE SER MAYOR QUE EL INTERVALO DEL CRON (30 min). Si es menor, hay
+// oleadas que caen ENTRE dos disparos y no se analizan nunca. Con 20 se perdian 2 de
+// las 4 oleadas del 27 de agosto, incluida la de las 7:05 pm con 4 partidos: a las
+// 22:00 UTC faltaban 65 min (muy pronto) y a las 22:30 faltaban 35 (ya fuera). Con 35
+// se cubren las cuatro. Comprobado sobre la jornada real.
+const VENTANA     = 35;   // se dispara si faltan entre 60 y 25 min
 const RACIMO_MIN  = 45;   // juegos que arrancan dentro de estos minutos = una sola oleada
+// Con la ventana mas ancha que el cron, dos disparos seguidos pueden caer dentro de la
+// misma oleada y gastarian el doble de creditos. Antes de correr se comprueba si ya
+// hubo un analisis hace poco.
+const MIN_ENTRE   = 40;   // minutos minimos entre dos analisis
+const SB_URL  = 'https://xirpwbmekufozsddnaok.supabase.co';
+const SB_KEY  = 'sb_publishable_G3k6Se24l9d0kGfbuRZATQ_qYoV7RFK';   // key publica, ya va en el index.html
 
 const salida = (correr, motivo) => {
   console.log(`${correr ? 'SI' : 'NO'}  ${motivo}`);
@@ -85,6 +96,23 @@ for (const o of oleadas) {
 for (const o of oleadas) {
   const faltan = (o[0].t - ahora) / 60000;
   if (faltan <= MIN_ANTES && faltan > MIN_ANTES - VENTANA) {
+    // Anti-repeticion: si ya se analizo hace poco, no se vuelve a gastar. Se mira la
+    // hora del ultimo guardado de senales, que es de lectura publica. Si la consulta
+    // falla se corre igual: mas vale gastar de mas que saltarse una oleada.
+    try {
+      const r = await fetch(
+        `${SB_URL}/rest/v1/signals?select=created_at&game_date=eq.${hoyET}&order=created_at.desc&limit=1`,
+        { headers: { apikey: SB_KEY } });
+      if (r.ok) {
+        const [ult] = await r.json();
+        if (ult?.created_at) {
+          const min = (Date.now() - new Date(ult.created_at).getTime()) / 60000;
+          if (min < MIN_ENTRE) {
+            salida(false, `ya se analizo hace ${Math.round(min)} min (minimo ${MIN_ENTRE})`);
+          }
+        }
+      }
+    } catch { /* si Supabase no responde, se corre igual */ }
     salida(true, `oleada de ${fmt(o[0].t)} ET a ${Math.round(faltan)} min · ${o.map(x => x.mu).join(' ')}`);
   }
 }

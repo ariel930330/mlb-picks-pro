@@ -109,5 +109,6 @@ En `toca-correr.mjs`:
 | Constante | Valor | Qué es |
 |---|---|---|
 | `MIN_ANTES` | 60 | Minutos antes del primer juego de la oleada. |
-| `VENTANA` | 20 | Margen de disparo: entra si faltan entre 60 y 40 min. Tiene que ser mayor que el intervalo del cron o se saltarían oleadas. |
+| `VENTANA` | 35 | Margen de disparo: entra si faltan entre 60 y 25 min. **Tiene que ser mayor que el intervalo del cron (30)** o hay oleadas que caen entre dos disparos y no se analizan nunca. Con 20 se perdían 2 de 4. |
+| `MIN_ENTRE` | 40 | Minutos mínimos entre dos análisis. Con la ventana más ancha que el cron, dos disparos seguidos pueden caer en la misma oleada; esto evita pagarla dos veces. |
 | `RACIMO_MIN` | 45 | Juegos que empiezan dentro de estos minutos = una sola oleada. Subirlo agrupa más y gasta menos; bajarlo analiza más cerca de cada juego y gasta más. |

@@ -1271,7 +1271,22 @@ function computePicks(data) {
   const totalSigma=Math.sqrt(total)*1.3;         // runs totales: sobre-dispersos respecto a Poisson
   const favHome=hwp>=awp;
   // Run line consistente con la prob. de victoria entrenada: margen esperado = SD · probit(hwp)
-  const RUN_SD=3.4;                              // SD empírica del diferencial de carreras en MLB
+  // SD del diferencial de carreras. MEDIDA sobre las 1,990 finales de 2026, calibrando
+  // contra la frecuencia real de cubrir cada línea (no la SD cruda, que da 4.59: el
+  // diferencial no es normal — en béisbol no hay empates, así que el centro está vacío
+  // y una normal ajustada a la SD cruda se pasa en las líneas altas).
+  //
+  //   línea      |dif| > línea      SD 3.4      SD 4.2
+  //    1.5          72.8 %          65.9 %      72.1 %
+  //    2.5          53.4 %          46.2 %      55.2 %
+  //    3.5          39.1 %          30.3 %      40.5 %
+  //    4.5          29.2 %          18.6 %      28.4 %
+  //    5.5          20.5 %          10.6 %      19.0 %
+  //   error medio                   0.0868      0.0123   -> 7 veces mejor
+  //
+  // Con 3.4 el modelo daba 65.9% de cubrir el -1.5 cuando la realidad de la liga es
+  // 72.8%: siete puntos de sesgo sistemático en TODA run line y todo spread de F5.
+  const RUN_SD=4.2;
   const hMargin=RUN_SD*probit(hwp);             // diferencial esperado del local (+ favorece al local)
   const rlProb=favHome?normOver(hMargin,RUN_SD,1.5):normOver(-hMargin,RUN_SD,1.5);
 

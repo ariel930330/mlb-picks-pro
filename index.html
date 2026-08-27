@@ -3500,9 +3500,12 @@ async function runAnalysis() {
       Promise.all([ savePredictions(date, best5Games), saveSignals(date, results), savePropPicks(date) ])
         .then(([,okSig]) => {
           loadPropHist('pitcher'); loadPropHist('batter'); loadSignals();
+          // Solo cuenta como fallo que la BASE haya rechazado algo. Que un análisis
+          // no deje props apostables es normal a media mañana, y marcarlo en rojo
+          // hacía que el robot reportara error por funcionar bien.
           const fallos = [];
-          if(okSig === false) fallos.push('señales');
-          if(propSaveMsg)     fallos.push('props');
+          if(okSig === false)  fallos.push('señales');
+          if(propSaveOk===false) fallos.push('props');
           if(fallos.length){
             $('run-status').textContent += ` · ⚠ no se guardó: ${fallos.join(' y ')}`;
             window.__auto.msgGuardado = fallos.join(' y ');
@@ -3542,15 +3545,24 @@ const PROP_TOP_N = 3;
 // fallaba sin dejar rastro: analizabas, el historial seguía vacío y nada te lo decía.
 // Aquí se guarda el motivo y loadPropHist lo muestra arriba de la tabla.
 let propSaveMsg = null;
+// OJO: "no había nada que guardar" NO es un fallo. Una jornada a media mañana, sin
+// alineaciones publicadas y con medio mercado sin colgar, deja cero props apostables
+// y eso es lo correcto. Se separan las dos cosas porque confundirlas hacía que el
+// robot marcara la corrida en ROJO por funcionar bien.
+//   propSaveMsg  = qué contar en pantalla (aviso o error)
+//   propSaveOk   = false SOLO si la base rechazó algo
+let propSaveOk  = true;
 const FALTA_EDGE = 'Falta la columna <code>edge</code> en la tabla <code>prop_picks</code>. '+
   'Corre esto en Supabase → SQL Editor:<br><code>alter table public.prop_picks add column if not exists edge numeric;</code>';
 const propErr = e => { if(!e) return false;
   propSaveMsg = /column .*edge|edge.* does not exist/i.test(e.message||'') ? FALTA_EDGE : esc(e.message||'error al guardar');
+  propSaveOk = false;
   console.warn('savePropPicks:', e.message); return true; };
 
 async function savePropPicks(date){
-  propSaveMsg = null;
-  if(!isOwner()){ propSaveMsg='Inicia sesión para que los props se guarden en el historial.'; return; }
+  propSaveMsg = null; propSaveOk = true;
+  if(!isOwner()){ propSaveMsg='Inicia sesión para que los props se guarden en el historial.';
+    propSaveOk = false; return false; }
   // TODO SE ELIGE POR EDGE, arriba y abajo. El historial es el ESPEJO de las tarjetas:
   // si arriba se destaca un pick, ese mismo queda guardado.
   //   Abridores: una fila por abridor (su mejor mercado apostable por edge).
@@ -3562,13 +3574,20 @@ async function savePropPicks(date){
   const cand = [...porEdge(propsPitcher).map(p=>({...p,kind:'pitcher'})),
                 ...porEdge(propsBatter ).map(p=>({...p,kind:'batter' }))];
   if(!cand.length){
-    propSaveMsg = 'Este análisis no dejó ningún prop apostable, así que no se guardó nada.';
-    return;
+    // Esto NO es un fallo. Se explica el porqué, que casi siempre es la hora.
+    const conCuota = (typeof oddsCount==='number' && oddsCount>0);
+    propSaveMsg = 'Este análisis no dejó ningún prop apostable, así que no se guardó nada. '
+      + (conCuota
+          ? 'Las casas sí colgaron cuotas, pero ninguna proyección superó el piso de valor. '
+            + 'Si aún no salen las alineaciones, los bateadores casi no compiten: vuelve a analizar más tarde.'
+          : '<b>No llegó ni una cuota de casa.</b> Sin precio no hay pick. Revisa la API key en ⚙ Ajustes, '
+            + 'o si es muy temprano espera a que las casas cuelguen los mercados.');
+    return true;   // no había nada que guardar, no es un error
   }
   try{
     const {data:existing, error:eSel} = await sb.from('prop_picks')
       .select('id,kind,player_id,market,target,edge,ev,result').eq('game_date',date);
-    if(propErr(eSel)) return;
+    if(propErr(eSel)) return false;
     const prev = existing||[];
     const clave = e => `${e.player_id}|${e.market}|${e.target}`;
     const mismo = {};   // jugador|mercado|línea -> fila existente
@@ -3591,7 +3610,7 @@ async function savePropPicks(date){
     const caducos = prev.filter(e=>!e.result && tiposVivos.has(e.kind) && !vivos.has(clave(e)));
     if(caducos.length){
       const {error} = await sb.from('prop_picks').delete().in('id', caducos.map(e=>e.id));
-      if(propErr(error)) return;
+      if(propErr(error)) return false;
     }
     const fuera = new Set(caducos.map(e=>e.id));
 
@@ -3618,7 +3637,7 @@ async function savePropPicks(date){
         // Ya está: solo se refresca si mejoró el edge y todavía no se calificó.
         if(!ex.result && (ex.edge==null || r.edge > +ex.edge)){
           const {error} = await sb.from('prop_picks').update(row).eq('id',ex.id);
-          if(propErr(error)) return;
+          if(propErr(error)) return false;
         }
         continue;
       }
@@ -3628,9 +3647,10 @@ async function savePropPicks(date){
     }
     if(nuevos.length){
       const {error} = await sb.from('prop_picks').insert(nuevos);
-      if(propErr(error)) return;
+      if(propErr(error)) return false;
     }
-  }catch(e){ propErr(e); }
+  }catch(e){ propErr(e); return false; }
+  return true;
 }
 
 // El pick de MAYOR edge del juego (busca en TODOS los mercados, no solo el top-3 por probabilidad)
@@ -5071,9 +5091,13 @@ function renderPropHist(kind){
   const rows = propRows[kind]||[];
 
   // Si el último guardado falló, se dice aquí en vez de dejar la tabla vacía sin motivo.
-  const aviso = propSaveMsg
-    ? `<div class="error-box" style="margin-bottom:10px"><b>⚠ El último análisis no se pudo guardar</b><br>${propSaveMsg}</div>`
-    : '';
+  // Rojo solo si la base rechazó algo. "No hubo nada que guardar" va en tono neutro:
+  // decirle error a un funcionamiento normal enseña a ignorar los avisos de verdad.
+  const aviso = !propSaveMsg ? ''
+    : propSaveOk===false
+      ? `<div class="error-box" style="margin-bottom:10px"><b>⚠ El último análisis no se pudo guardar</b><br>${propSaveMsg}</div>`
+      : `<div class="card" style="margin-bottom:10px;padding:10px 13px;font-size:11px;color:var(--text2);line-height:1.55">
+           <b style="color:var(--text)">Sin picks nuevos en el último análisis</b><br>${propSaveMsg}</div>`;
   if(!rows.length){
     el.innerHTML=aviso+'<div class="empty">Sin registros todavía.<br>Analiza una fecha con sesión iniciada y aquí se va guardando la mejor jugada de cada abridor y bateador.</div>';
     return;

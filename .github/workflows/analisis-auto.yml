@@ -1,0 +1,81 @@
+# ============================================================================
+#  Análisis automático, una hora antes de cada oleada de partidos
+# ----------------------------------------------------------------------------
+#  El cron dispara cada 30 min durante la ventana de béisbol, pero casi siempre
+#  termina en el primer paso sin gastar nada: el portero (bot/toca-correr.mjs)
+#  usa solo la API de MLB, que es gratis, para decidir si toca.
+#
+#  Solo cuando falta ~1 hora para el primer juego de una oleada se abre el
+#  navegador y se corre el análisis de verdad (~94 créditos de The Odds API).
+#  Con eso salen unas 4-5 corridas al día, ~11,000 créditos al mes contra una
+#  cuota de 20,000.
+#
+#  SECRETOS QUE HAY QUE CREAR en Settings > Secrets and variables > Actions:
+#    BOT_EMAIL     correo de la cuenta de Supabase DEDICADA al robot
+#    BOT_PASSWORD  su contraseña
+#  No uses tu cuenta personal: crea una aparte solo para esto. Ver bot/LEEME.md
+# ============================================================================
+name: Análisis automático
+
+on:
+  schedule:
+    # Cada 30 min de 15:00 a 03:00 UTC = 11:00 am a 11:00 pm hora del Este.
+    # GitHub interpreta el cron en UTC, así que la ventana se corre sola con el
+    # horario de verano; por eso se deja ancha en vez de ajustada al minuto.
+    - cron: '0,30 15-23 * * *'
+    - cron: '0,30 0-3 * * *'
+  workflow_dispatch:
+    inputs:
+      forzar:
+        description: 'Correr aunque el portero diga que no toca'
+        type: boolean
+        default: false
+
+# Dos corridas a la vez se pisarían escribiendo en Supabase y gastarían el doble.
+concurrency:
+  group: analisis-auto
+  cancel-in-progress: false
+
+jobs:
+  analizar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: ¿Toca correr?
+        id: portero
+        run: node bot/toca-correr.mjs
+
+      - name: Instalar Chromium
+        if: steps.portero.outputs.correr == 'true' || inputs.forzar
+        run: |
+          npm init -y >/dev/null 2>&1
+          npm i --no-save playwright@1.47.2
+          npx playwright install --with-deps chromium
+
+      - name: Correr el análisis
+        if: steps.portero.outputs.correr == 'true' || inputs.forzar
+        env:
+          BOT_EMAIL:    ${{ secrets.BOT_EMAIL }}
+          BOT_PASSWORD: ${{ secrets.BOT_PASSWORD }}
+          APP_URL:      https://ariel930330.github.io/mlb-picks-pro/index.html
+        run: node bot/correr-analisis.mjs
+
+      # Si algo falla, la captura dice más que cualquier log.
+      - name: Guardar captura del fallo
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fallo-${{ github.run_id }}
+          path: bot/fallo.png
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: No tocaba
+        if: steps.portero.outputs.correr != 'true' && !inputs.forzar
+        run: echo "Sin corrida. ${{ steps.portero.outputs.motivo }}" >> $GITHUB_STEP_SUMMARY

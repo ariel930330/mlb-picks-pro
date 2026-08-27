@@ -3490,10 +3490,14 @@ async function runAnalysis() {
     // barra de estado en vez de fallar en silencio.
     const best5Games = [...results].map(g=>({g,bp:bestEdgePick(g)})).filter(x=>x.bp)
       .sort((x,y)=>byValue(x.bp,y.bp)).slice(0,5).map(x=>x.g);
-    Promise.all([ savePredictions(date, best5Games), saveSignals(date, results), savePropPicks(date) ])
-      .then(() => { loadPropHist('pitcher'); loadPropHist('batter'); })   // refresca los historiales ya guardados
-      .catch(e => { console.warn('guardado:', e.message);
-        $('run-status').textContent += ' · ⚠ no se pudo guardar en Supabase'; });
+    // Se guarda la PROMESA además de dispararla: el modo automático tiene que poder
+    // esperar a que el guardado termine antes de cerrar el navegador. Antes era
+    // fuego-y-olvido, y un runner headless habría matado la página a media escritura.
+    window.__auto.guardadoPromesa =
+      Promise.all([ savePredictions(date, best5Games), saveSignals(date, results), savePropPicks(date) ])
+        .then(() => { loadPropHist('pitcher'); loadPropHist('batter'); return true; })
+        .catch(e => { console.warn('guardado:', e.message);
+          $('run-status').textContent += ' · ⚠ no se pudo guardar en Supabase'; return false; });
 
   } catch(e) {
     $('picks-area').innerHTML=`<div class="error-box"><i class="ti ti-alert-circle"></i> ${e.message}</div>`;
@@ -5302,7 +5306,48 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Restaurar el análisis MÁS RECIENTE entre esta PC y la nube (compartido entre dispositivos).
   await restoreBest();
+  autoArranca();
 });
+
+// ── MODO AUTOMÁTICO ──────────────────────────────────────────────────────────
+// Lo usa el robot de GitHub Actions (.github/workflows/analisis-auto.yml): abre la
+// página con ?auto=1, rellena el login normal, y espera a window.__auto.done.
+//
+// El estado se expone en window y NO se lee del DOM a propósito: el DOM cambia cada
+// vez que se mueve un botón, y el robot no debe romperse por eso.
+//
+// Las credenciales NO viajan por la URL: quedarían en los logs de Actions y en el
+// historial del navegador. El runner rellena el formulario de siempre, y esto se
+// dispara solo cuando ya hay sesión.
+window.__auto = { listo:false, done:false, ok:false, msg:'', guardado:false, guardadoPromesa:null };
+function autoArranca(){
+  if(new URLSearchParams(location.search).get('auto') !== '1') return;
+  let lanzado = false;
+  const intenta = async () => {
+    if(lanzado || !isOwner()) return;
+    lanzado = true;
+    window.__auto.listo = true;
+    try{
+      // La jornada de MLB se cuenta en HORA DEL ESTE, no en UTC ni en la hora del
+      // servidor de Actions: un partido de las 9pm ET ya es "mañana" en UTC, y
+      // analizar esa fecha traería la jornada equivocada.
+      const hoyET = new Date().toLocaleDateString('en-CA',{timeZone:'America/New_York'});
+      const dp = $('date-pick'); if(dp) dp.value = hoyET;
+      window.__auto.fecha = hoyET;
+      await runAnalysis();
+      window.__auto.guardado = await (window.__auto.guardadoPromesa || Promise.resolve(false));
+      window.__auto.ok  = true;
+      window.__auto.msg = `${(allGames||[]).length} partidos · guardado: ${window.__auto.guardado?'sí':'no'}`;
+    }catch(e){
+      window.__auto.ok  = false;
+      window.__auto.msg = e?.message || String(e);
+    }finally{
+      window.__auto.done = true;
+    }
+  };
+  sb.auth.onAuthStateChange(() => setTimeout(intenta, 400));
+  setTimeout(intenta, 1500);   // por si la sesión ya estaba guardada
+}
 
 // Aplica un análisis restaurado a todas las pestañas
 function applyRestored(c, src){

@@ -23,13 +23,17 @@
 // extensión .js reventaría con "Cannot use import statement outside a module".
 import { appendFileSync } from 'node:fs';
 
-const MIN_ANTES   = 60;   // objetivo: analizar 60 min antes del primer juego del grupo
-// VENTANA TIENE QUE SER MAYOR QUE EL INTERVALO DEL CRON (30 min). Si es menor, hay
-// oleadas que caen ENTRE dos disparos y no se analizan nunca. Con 20 se perdian 2 de
-// las 4 oleadas del 27 de agosto, incluida la de las 7:05 pm con 4 partidos: a las
-// 22:00 UTC faltaban 65 min (muy pronto) y a las 22:30 faltaban 35 (ya fuera). Con 35
-// se cubren las cuatro. Comprobado sobre la jornada real.
-const VENTANA     = 35;   // se dispara si faltan entre 60 y 25 min
+// SE MIRA HACIA ADELANTE, NO UNA VENTANA ESTRECHA.
+// Antes se disparaba solo si faltaban entre 60 y 25 minutos. Eso obliga a que el cron
+// caiga justo dentro de esa franja, y el cron de GitHub NO es puntual: se retrasa y a
+// veces se pierde. Con la ventana estrecha, un disparo con 20 minutos de retraso ya
+// no servia y la oleada se quedaba sin analizar en silencio.
+//
+// Ahora la pregunta es otra: hay una oleada en la proxima hora y cuarto que TODAVIA
+// no se haya analizado? Si la hay, se corre — aunque el disparo venga tarde. Y si ya
+// se cubrio, no se gasta. Un retraso hace que el analisis salga mas cerca del juego,
+// que es peor que a los 60 minutos, pero infinitamente mejor que no salir.
+const MIN_ANTES   = 75;   // se analiza si el primer juego del grupo entra en este plazo
 // RACIMO_MIN 120 es TEMPORAL, por presupuesto — no es una decision de modelo.
 // El backtest de agosto se comio 10,000 creditos y quedan 6,465 para 23 dias, o sea
 // 281 al dia = 3 analisis. Con 45 min salian 3.6 oleadas diarias (338 creditos) y NO
@@ -41,10 +45,10 @@ const VENTANA     = 35;   // se dispara si faltan entre 60 y 25 min
 //
 // EL 19 DE SEPTIEMBRE se reinicia la cuota a 20,000: ahi hay que volver a poner 45.
 const RACIMO_MIN  = 120;  // juegos que arrancan dentro de estos minutos = una sola oleada
-// Con la ventana mas ancha que el cron, dos disparos seguidos pueden caer dentro de la
-// misma oleada y gastarian el doble de creditos. Antes de correr se comprueba si ya
-// hubo un analisis hace poco.
-const MIN_ENTRE   = 40;   // minutos minimos entre dos analisis
+// Una oleada se da por CUBIERTA si ya hubo un analisis despues de que ella entrara en
+// el plazo. Asi no se paga dos veces por la misma, aunque el cron dispare varias veces
+// dentro de su hora y cuarto.
+const MIN_ENTRE   = 25;   // suelo absoluto entre dos analisis, pase lo que pase
 const SB_URL  = 'https://xirpwbmekufozsddnaok.supabase.co';
 const SB_KEY  = 'sb_publishable_G3k6Se24l9d0kGfbuRZATQ_qYoV7RFK';   // key publica, ya va en el index.html
 
@@ -102,29 +106,38 @@ for (const o of oleadas) {
   console.log(`  ${fmt(o[0].t)} ET · ${o.length} juego(s) · ${o.map(x => x.mu).join(' ')} · faltan ${faltan} min`);
 }
 
-// ¿Alguna oleada cae dentro de la ventana de disparo?
+// Hora del ULTIMO analisis de esta jornada.
+// Se lee de analysis_cache.updated_at, no de signals.created_at: saveSignals ACTUALIZA
+// las filas existentes en vez de insertar, asi que su created_at se queda clavado en
+// la primera corrida del dia y nunca sirve para saber cuando se analizo por ultima vez.
+// analysis_cache se reescribe en cada analisis, que es justo lo que hace falta.
+let ultimo = null;
+try {
+  const r = await fetch(
+    `${SB_URL}/rest/v1/analysis_cache?select=updated_at&game_date=eq.${hoyET}&limit=1`,
+    { headers: { apikey: SB_KEY } });
+  if (r.ok) { const [x] = await r.json(); if (x?.updated_at) ultimo = new Date(x.updated_at).getTime(); }
+} catch { /* si Supabase no responde se corre igual: mejor gastar de mas que saltarse una oleada */ }
+const minDesde = ultimo ? (Date.now() - ultimo) / 60000 : Infinity;
+console.log(`Ultimo analisis de la jornada: ${ultimo ? Math.round(minDesde) + ' min' : 'ninguno'}`);
+
+// ¿Hay una oleada dentro del plazo que TODAVIA no se haya cubierto?
 for (const o of oleadas) {
   const faltan = (o[0].t - ahora) / 60000;
-  if (faltan <= MIN_ANTES && faltan > MIN_ANTES - VENTANA) {
-    // Anti-repeticion: si ya se analizo hace poco, no se vuelve a gastar. Se mira la
-    // hora del ultimo guardado de senales, que es de lectura publica. Si la consulta
-    // falla se corre igual: mas vale gastar de mas que saltarse una oleada.
-    try {
-      const r = await fetch(
-        `${SB_URL}/rest/v1/signals?select=created_at&game_date=eq.${hoyET}&order=created_at.desc&limit=1`,
-        { headers: { apikey: SB_KEY } });
-      if (r.ok) {
-        const [ult] = await r.json();
-        if (ult?.created_at) {
-          const min = (Date.now() - new Date(ult.created_at).getTime()) / 60000;
-          if (min < MIN_ENTRE) {
-            salida(false, `ya se analizo hace ${Math.round(min)} min (minimo ${MIN_ENTRE})`);
-          }
-        }
-      }
-    } catch { /* si Supabase no responde, se corre igual */ }
-    salida(true, `oleada de ${fmt(o[0].t)} ET a ${Math.round(faltan)} min · ${o.map(x => x.mu).join(' ')}`);
+  if (faltan > MIN_ANTES || faltan <= 0) continue;
+
+  // Cubierta = hubo un analisis DESPUES de que esta oleada entrara en su plazo. Con
+  // esto da igual que el cron dispare tres veces dentro de la misma hora y cuarto:
+  // solo se paga la primera.
+  const entroEnPlazo = o[0].t.getTime() - MIN_ANTES * 60000;
+  if (ultimo && ultimo >= entroEnPlazo) {
+    salida(false, `la oleada de ${fmt(o[0].t)} ET ya se analizo (hace ${Math.round(minDesde)} min)`);
   }
+  // Suelo duro: pase lo que pase, nunca dos analisis pegados.
+  if (minDesde < MIN_ENTRE) {
+    salida(false, `se analizo hace ${Math.round(minDesde)} min (suelo ${MIN_ENTRE})`);
+  }
+  salida(true, `oleada de ${fmt(o[0].t)} ET a ${Math.round(faltan)} min · ${o.map(x => x.mu).join(' ')}`);
 }
 
 const prox = oleadas.map(o => (o[0].t - ahora) / 60000).filter(m => m > 0).sort((a, b) => a - b)[0];

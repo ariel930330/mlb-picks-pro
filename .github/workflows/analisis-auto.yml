@@ -20,10 +20,19 @@ name: Análisis automático
 on:
   schedule:
     # Cada 30 min de 15:00 a 03:00 UTC = 11:00 am a 11:00 pm hora del Este.
-    # GitHub interpreta el cron en UTC, así que la ventana se corre sola con el
-    # horario de verano; por eso se deja ancha en vez de ajustada al minuto.
-    - cron: '0,30 15-23 * * *'
-    - cron: '0,30 0-3 * * *'
+    #
+    # MINUTOS 7 Y 37, NO 0 Y 30, A PROPÓSITO. GitHub avisa en su documentación que
+    # los disparos programados se retrasan o se PIERDEN cuando hay carga alta, y la
+    # carga se concentra en punto y a y media porque ahí los pone todo el mundo.
+    # Con '0,30' el cron disparó 2 veces en 24 horas cuando debía hacerlo 26: el
+    # robot estuvo casi un día entero muerto sin que nada lo avisara.
+    #
+    # Aun con minutos poco concurridos GitHub puede retrasar un disparo bastante.
+    # Por eso el portero YA NO usa una ventana estrecha: mira si hay una oleada en
+    # la próxima hora y cuarto que todavía no se haya analizado. Así un disparo con
+    # retraso llega tarde pero LLEGA, en vez de caer fuera de la ventana y perderse.
+    - cron: '7,37 15-23 * * *'
+    - cron: '7,37 0-3 * * *'
   workflow_dispatch:
     inputs:
       forzar:

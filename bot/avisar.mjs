@@ -74,28 +74,51 @@ if (!r.ok) {
 
 if (PRUEBA) txt = `🧪 <b>Prueba de conexión</b>\n<i>Mensaje de ejemplo, no es un pick real.</i>\n\n` + txt;
 
-const res = await fetch(`https://api.telegram.org/bot${TOKEN}/sendMessage`, {
-  method: 'POST',
-  headers: { 'Content-Type': 'application/json' },
-  body: JSON.stringify({ chat_id: CHAT, text: txt, parse_mode: 'HTML', disable_web_page_preview: true }),
-});
-const j = await res.json().catch(() => ({}));
+// Diagnostico: sin esto, cuando el mensaje no llega no hay forma de saber si el
+// problema es el token, el chat, o que ni siquiera se intento. Nunca se imprimen
+// los valores, solo su longitud y las ultimas cifras del chat.
+console.log(`TG_TOKEN: ${TOKEN.length} caracteres · TG_CHAT: …${String(CHAT).slice(-4)}`);
+console.log(`Enviando ${txt.length} caracteres a Telegram…`);
 
-if (res.ok) { console.log('Aviso enviado por Telegram.'); process.exit(0); }
+let res, j;
+try {
+  res = await fetch(`https://api.telegram.org/bot${TOKEN}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: CHAT, text: txt, parse_mode: 'HTML', disable_web_page_preview: true }),
+  });
+  j = await res.json().catch(() => ({}));
+} catch (e) {
+  console.log(`No se pudo contactar con Telegram: ${e.message}`);
+  process.exit(PRUEBA ? 1 : 0);
+}
 
-// Los errores de Telegram son cripticos, asi que se traducen a lo que hay que hacer.
+// SE COMPRUEBAN LAS DOS COSAS: el estado HTTP **y** el campo ok que devuelve Telegram.
+// Antes solo se miraba res.ok, y por eso el paso salia en verde sin que llegara
+// ningun mensaje: basta con que Telegram conteste 200 diciendo ok:false para que el
+// robot cantara exito. Un aviso que no llega pero se reporta como enviado es peor
+// que uno que falla a gritos.
+console.log(`Respuesta de Telegram: HTTP ${res.status} · ok=${j.ok}`);
+
+if (res.ok && j.ok === true) {
+  console.log('Aviso ENVIADO. Revisa Telegram.');
+  process.exit(0);
+}
+
 const d = j.description || `HTTP ${res.status}`;
-console.log(`No se pudo enviar el aviso: ${d}`);
-if (/not found/i.test(d) && !/chat/i.test(d))
+console.log(`NO se envio: ${d}`);
+if (/chat not found/i.test(d))
+  console.log('  -> El TG_CHAT no existe. Vuelve a sacarlo de getUpdates: es el numero de "chat":{"id":…}, no el update_id ni el message_id. Y tienes que haberle escrito al bot antes.');
+else if (/not found|unauthorized/i.test(d))
   console.log('  -> El TG_TOKEN esta mal o el bot fue revocado. Saca uno nuevo con /token en @BotFather.');
-else if (/chat not found/i.test(d))
-  console.log('  -> El TG_CHAT esta mal, o todavia no le escribiste al bot. Mandale un mensaje y reintenta.');
 else if (/blocked|deactivated/i.test(d))
   console.log('  -> Bloqueaste al bot en Telegram. Desbloquealo y reintenta.');
-else if (/parse/i.test(d))
+else if (/parse|entities/i.test(d))
   console.log('  -> Fallo el formato del mensaje. Esto es un bug: avisa.');
+else
+  console.log(`  -> Respuesta completa: ${JSON.stringify(j)}`);
 
-// En la PRUEBA si se falla, porque el unico objetivo de esa corrida es saber si
-// funciona. En una corrida normal NO, porque el analisis ya se guardo y un aviso
-// perdido no puede tumbar el trabajo bueno.
-if (PRUEBA) process.exit(1);
+// En la PRUEBA si se falla: el unico objetivo de esa corrida es saber si funciona.
+// En una corrida normal no, porque el analisis ya se guardo y un aviso perdido no
+// puede tumbar el trabajo bueno.
+process.exit(PRUEBA ? 1 : 0);

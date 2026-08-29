@@ -65,6 +65,13 @@ try {
   await pg.waitForFunction(() => window.__auto && window.__auto.done, { timeout: TIMEOUT_MS });
   const st = await pg.evaluate(() => window.__auto);
 
+  // Se deja el resultado en disco para que avisar.mjs mande el aviso de Telegram.
+  // Va aparte del envío a propósito: si el aviso falla, el análisis ya está guardado
+  // y no tiene por qué arrastrar al workflow.
+  const { writeFileSync } = await import('node:fs');
+  writeFileSync('bot/resultado.json', JSON.stringify(
+    { ok: st.ok, msg: st.msg, guardado: st.guardado, resumen: st.resumen || null }, null, 2));
+
   console.log(`Fecha analizada : ${st.fecha || '?'}`);
   console.log(`Resultado       : ${st.ok ? 'OK' : 'FALLÓ'} · ${st.msg}`);
   console.log(`Guardado nube   : ${st.guardado ? 'sí' : 'NO'}`);

@@ -84,6 +84,8 @@ jobs:
           BOT_EMAIL:    ${{ secrets.BOT_EMAIL }}
           BOT_PASSWORD: ${{ secrets.BOT_PASSWORD }}
           APP_URL:      https://ariel930330.github.io/mlb-picks-pro/index.html
+          TG_TOKEN:     ${{ secrets.TG_TOKEN }}
+          TG_CHAT:      ${{ secrets.TG_CHAT }}
         run: |
           set -u
           LIMITE=$(( $(date +%s) + 300*60 ))   # margen bajo el timeout del job
@@ -101,6 +103,10 @@ jobs:
             fi
             echo "Vuelta $VUELTA · analizando"
             node bot/correr-analisis.mjs || echo "::warning::El analisis de la vuelta $VUELTA fallo"
+            # El aviso va DESPUES de cada analisis, no al final del job: el job puede
+            # quedarse dormido horas esperando la siguiente oleada, y un aviso que
+            # llega cuatro horas tarde no sirve para apostar nada.
+            node bot/avisar.mjs || true
             [ "$(date +%s)" -ge "$LIMITE" ] && { echo "Tiempo agotado. Fin."; break; }
             # ¿queda otra oleada?
             node bot/toca-correr.mjs > /tmp/portero.txt 2>&1 || true

@@ -5600,6 +5600,21 @@ function autoArranca(){
       window.__auto.ok  = true;
       window.__auto.msg = `${(allGames||[]).length} partidos · guardado: ${window.__auto.guardado?'sí'
         : `NO (${window.__auto.msgGuardado||'motivo desconocido'})`}`;
+      // Resumen para el aviso de Telegram que manda el robot. Se arma aquí y no en el
+      // runner porque aquí es donde vive el dato: el runner solo lee y envía.
+      const b = podBest;
+      window.__auto.resumen = {
+        fecha: hoyET,
+        partidos: (allGames||[]).length,
+        picks: (propsPitcher||[]).length + (propsBatter||[]).length,
+        guardado: window.__auto.guardado,
+        aviso: propSaveMsg && propSaveOk!==false ? propSaveMsg.replace(/<[^>]+>/g,'') : null,
+        pod: b ? {
+          nombre: b.name, equipo: b.team, rival: b.opp, mercado: b.nombre,
+          lado: b.side, linea: b.line, unidad: b.unidad, precio: b.price,
+          edge: b.edge, conf: b.conf, stake: b.stake, proy: b.mu, casas: b.books,
+        } : null,
+      };
     }catch(e){
       window.__auto.ok  = false;
       window.__auto.msg = e?.message || String(e);

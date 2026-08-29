@@ -111,3 +111,62 @@ En `toca-correr.mjs`:
 | `MIN_ANTES` | 75 | Se analiza si el primer juego de la oleada entra en este plazo. **No es una ventana estrecha, es un plazo**: el cron de GitHub se retrasa y a veces se pierde, así que un disparo tardío tiene que seguir sirviendo. Una oleada se da por cubierta si ya hubo un análisis después de que entrara en el plazo, así que no se paga dos veces. |
 | `MIN_ENTRE` | 25 | Suelo duro entre dos análisis, pase lo que pase. |
 | `RACIMO_MIN` | **120** | Juegos que empiezan dentro de estos minutos = una sola oleada. Subirlo agrupa más y gasta menos; bajarlo analiza más cerca de cada juego y gasta más.<br>**Está en 120 por presupuesto, no por criterio.** El backtest de agosto consumió 10,000 créditos; con 45 salían 3.6 oleadas/día (338 créditos) y no alcanzaba hasta el reinicio. **El 19 de septiembre, cuando la cuota vuelva a 20,000, hay que devolverlo a 45.** |
+
+## Avisos por Telegram
+
+Cuando el robot termina un análisis te manda un mensaje con el Prop del Día, los
+picks que salieron y sus números. Llega **aunque nunca abras la app**, y sirve de
+vigilante: si en todo el día no llega nada, el robot no corrió.
+
+> Las notificaciones push del navegador necesitan un servidor que las envíe, y aquí
+> no hay ninguno — la app es una página estática. Pero el robot sí corre en algún
+> sitio y sabe cuándo acabó, así que el aviso sale de él.
+
+### Puesta en marcha (unos 5 minutos)
+
+**1 · Crear el bot.** En Telegram busca **@BotFather**, mándale `/newbot` y sigue los
+dos pasos (nombre y usuario, que debe acabar en `bot`). Te devuelve un **token**, algo
+como `8123456789:AAF...`. Guárdalo.
+
+**2 · Hablarle a tu bot.** Búscalo por el usuario que le pusiste y mándale cualquier
+cosa, por ejemplo `hola`. Esto es obligatorio: Telegram no deja que un bot escriba
+primero a nadie.
+
+**3 · Sacar tu chat id.** Abre en el navegador, cambiando `TU_TOKEN`:
+
+```
+https://api.telegram.org/botTU_TOKEN/getUpdates
+```
+
+Busca `"chat":{"id":123456789` — ese número es tu **chat id**.
+
+**4 · Guardarlos en GitHub.** *Settings → Secrets and variables → Actions*:
+
+| Nombre | Valor |
+|---|---|
+| `TG_TOKEN` | el token de @BotFather |
+| `TG_CHAT` | tu chat id |
+
+**5 · Probar.** *Actions → Análisis automático → Run workflow*, marcando **forzar**.
+
+Si faltan los secretos no pasa nada: el paso avisa por el log y sigue. Y si el envío
+falla, **no tumba el workflow** — el análisis ya está guardado, que es lo que importa.
+
+### Qué llega
+
+```
+MLB Picks · 2026-08-29 · 6:00 PM ET
+
+⭐ PROP DEL DÍA
+Bobby Witt Jr. (KC) vs Cleveland
+OVER 1.5TB  +115
+Bases totales · proyección 1.94TB
+
+Edge +6.4% · Confianza 78% · Stake 2.1%
+3 casa(s) en esta línea
+
+8 pick(s) con valor · 11 partidos
+```
+
+Si una corrida no deja picks, también avisa y dice por qué. Así sabes que el robot
+está vivo aunque no haya nada que apostar.

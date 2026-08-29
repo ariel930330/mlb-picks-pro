@@ -90,6 +90,15 @@ jobs:
           set -u
           LIMITE=$(( $(date +%s) + 300*60 ))   # margen bajo el timeout del job
           DORMIR="${{ steps.portero.outputs.dormir || '0' }}"
+          # "forzar" tiene que significar AHORA. Sin esto, un arranque manual heredaba
+          # la espera del portero y se quedaba dormido hasta la proxima oleada: el job
+          # parecia colgado media hora cuando en realidad estaba haciendo lo correcto,
+          # solo que no lo que se le pidio. Despues de este primer analisis el bucle
+          # sigue normal y espera a las oleadas que queden.
+          if [ "${{ inputs.forzar }}" = "true" ]; then
+            echo "Arranque manual con 'forzar': se analiza YA, sin esperar."
+            DORMIR=0
+          fi
           VUELTA=0
           while :; do
             VUELTA=$((VUELTA+1))

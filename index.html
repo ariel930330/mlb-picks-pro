@@ -2,8 +2,19 @@
 <html lang="es">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
 <title>MLB Picks Pro</title>
+
+<!-- ── App instalable en el teléfono ───────────────────────────────────────── -->
+<!-- Con esto, "Añadir a pantalla de inicio" deja un icono propio y la app abre a
+     pantalla completa, sin la barra del navegador. En iPhone hay que hacerlo desde
+     Safari (Compartir → Añadir a pantalla de inicio); Chrome en iOS no puede. -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#07070d">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="MLB Picks">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.6.0/dist/tabler-icons.min.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
@@ -5546,7 +5557,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Restaurar el análisis MÁS RECIENTE entre esta PC y la nube (compartido entre dispositivos).
   await restoreBest();
   autoArranca();
+  registrarSW();
 });
+
+// Registra el service worker, que es lo que permite instalar la app en el teléfono.
+// Se hace DESPUÉS de cargar todo: si fallara, no debe estorbar al arranque normal.
+// El robot de GitHub abre la página con ?auto=1 en un Chromium desechable, y ahí un
+// service worker no aporta nada y sí puede servir una copia vieja, así que se salta.
+function registrarSW(){
+  if(!('serviceWorker' in navigator)) return;
+  if(new URLSearchParams(location.search).get('auto')==='1') return;
+  navigator.serviceWorker.register('sw.js').catch(e=>console.warn('sw:', e.message));
+}
 
 // ── MODO AUTOMÁTICO ──────────────────────────────────────────────────────────
 // Lo usa el robot de GitHub Actions (.github/workflows/analisis-auto.yml): abre la

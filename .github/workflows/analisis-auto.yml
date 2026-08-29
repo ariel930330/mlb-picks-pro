@@ -40,13 +40,20 @@ on:
   workflow_dispatch:
     inputs:
       forzar:
-        description: 'Correr aunque el portero diga que no toca'
+        description: 'Correr el análisis AHORA, sin esperar a la oleada'
+        type: boolean
+        default: false
+      probar_telegram:
+        description: 'Solo probar Telegram (no analiza, no gasta créditos)'
         type: boolean
         default: false
 
 # Dos corridas a la vez se pisarían escribiendo en Supabase y gastarían el doble.
+# La PRUEBA de Telegram va en su propio grupo: si no, se quedaría encolada detrás de
+# un job que puede estar durmiendo cinco horas esperando una oleada, y probar un
+# mensaje no puede depender de eso.
 concurrency:
-  group: analisis-auto
+  group: ${{ inputs.probar_telegram && 'prueba-telegram' || 'analisis-auto' }}
   cancel-in-progress: false
 
 jobs:
@@ -64,12 +71,29 @@ jobs:
         with:
           node-version: '20'
 
+      # Prueba aislada del aviso. Manda un mensaje de ejemplo y termina: no abre el
+      # navegador, no analiza y no gasta un solo credito de The Odds API. Sirve para
+      # comprobar TG_TOKEN y TG_CHAT sin pagar 94 creditos por ver si llega un mensaje.
+      # Este paso SI falla si el envio falla: es lo unico que se le pidio.
+      - name: Probar Telegram
+        if: inputs.probar_telegram
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT:  ${{ secrets.TG_CHAT }}
+        run: |
+          if [ -z "${TG_TOKEN:-}" ] || [ -z "${TG_CHAT:-}" ]; then
+            echo "::error::Faltan los secretos TG_TOKEN y/o TG_CHAT. Creálos en Settings > Secrets and variables > Actions."
+            exit 1
+          fi
+          node bot/avisar.mjs --prueba
+
       - name: ¿Toca correr?
+        if: ${{ !inputs.probar_telegram }}
         id: portero
         run: node bot/toca-correr.mjs
 
       - name: Instalar Chromium
-        if: steps.portero.outputs.correr == 'true' || inputs.forzar
+        if: (steps.portero.outputs.correr == 'true' || inputs.forzar) && !inputs.probar_telegram
         run: |
           npm init -y >/dev/null 2>&1
           npm i --no-save playwright@1.47.2
@@ -79,7 +103,7 @@ jobs:
       # oleada mas tarde, espera dormida hasta ella y la analiza tambien. Asi UN disparo
       # puede cubrir toda la tarde. Termina cuando no queda nada o se agota el tiempo.
       - name: Analizar las oleadas del día
-        if: steps.portero.outputs.correr == 'true' || inputs.forzar
+        if: (steps.portero.outputs.correr == 'true' || inputs.forzar) && !inputs.probar_telegram
         env:
           BOT_EMAIL:    ${{ secrets.BOT_EMAIL }}
           BOT_PASSWORD: ${{ secrets.BOT_PASSWORD }}
@@ -138,5 +162,5 @@ jobs:
           retention-days: 7
 
       - name: No tocaba
-        if: steps.portero.outputs.correr != 'true' && !inputs.forzar
+        if: steps.portero.outputs.correr != 'true' && !inputs.forzar && !inputs.probar_telegram
         run: echo "Sin corrida. ${{ steps.portero.outputs.motivo }}" >> $GITHUB_STEP_SUMMARY

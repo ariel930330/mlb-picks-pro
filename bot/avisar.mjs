@@ -20,9 +20,24 @@ if (!TOKEN || !CHAT) {
   process.exit(0);
 }
 
+// Modo prueba: manda un mensaje de ejemplo SIN correr ningun analisis. Existe para
+// poder comprobar que el token y el chat estan bien sin gastar 94 creditos de The
+// Odds API solo para ver si llega un mensaje.
+const PRUEBA = process.argv.includes('--prueba');
+
 let r;
-try { r = JSON.parse(readFileSync('bot/resultado.json', 'utf8')); }
-catch { console.log('No hay bot/resultado.json: nada que avisar.'); process.exit(0); }
+if (PRUEBA) {
+  r = { ok: true, guardado: true, resumen: {
+    fecha: new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' }),
+    partidos: 11, picks: 8, guardado: true, aviso: null,
+    pod: { nombre: 'PRUEBA · Bobby Witt Jr.', equipo: 'KC', rival: 'Cleveland',
+           mercado: 'Bases totales', lado: 'over', linea: 1.5, unidad: 'TB',
+           precio: 115, edge: 0.064, conf: 0.78, stake: 2.1, proy: 1.94, casas: 3 },
+  }};
+} else {
+  try { r = JSON.parse(readFileSync('bot/resultado.json', 'utf8')); }
+  catch { console.log('No hay bot/resultado.json: nada que avisar.'); process.exit(0); }
+}
 
 const pct  = v => v == null ? '—' : `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}%`;
 const am   = v => v == null ? '—' : (v > 0 ? `+${v}` : `${v}`);
@@ -57,13 +72,30 @@ if (!r.ok) {
   if (s.guardado === false) txt += `\n\n⚠️ <b>No se guardó en Supabase.</b>`;
 }
 
+if (PRUEBA) txt = `🧪 <b>Prueba de conexión</b>\n<i>Mensaje de ejemplo, no es un pick real.</i>\n\n` + txt;
+
 const res = await fetch(`https://api.telegram.org/bot${TOKEN}/sendMessage`, {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ chat_id: CHAT, text: txt, parse_mode: 'HTML', disable_web_page_preview: true }),
 });
 const j = await res.json().catch(() => ({}));
-// No se hace fallar el workflow por esto: que el aviso no salga es molesto, pero el
-// análisis ya se guardó y eso es lo que importa.
-console.log(res.ok ? 'Aviso enviado por Telegram.'
-                   : `No se pudo enviar el aviso: ${j.description || res.status}`);
+
+if (res.ok) { console.log('Aviso enviado por Telegram.'); process.exit(0); }
+
+// Los errores de Telegram son cripticos, asi que se traducen a lo que hay que hacer.
+const d = j.description || `HTTP ${res.status}`;
+console.log(`No se pudo enviar el aviso: ${d}`);
+if (/not found/i.test(d) && !/chat/i.test(d))
+  console.log('  -> El TG_TOKEN esta mal o el bot fue revocado. Saca uno nuevo con /token en @BotFather.');
+else if (/chat not found/i.test(d))
+  console.log('  -> El TG_CHAT esta mal, o todavia no le escribiste al bot. Mandale un mensaje y reintenta.');
+else if (/blocked|deactivated/i.test(d))
+  console.log('  -> Bloqueaste al bot en Telegram. Desbloquealo y reintenta.');
+else if (/parse/i.test(d))
+  console.log('  -> Fallo el formato del mensaje. Esto es un bug: avisa.');
+
+// En la PRUEBA si se falla, porque el unico objetivo de esa corrida es saber si
+// funciona. En una corrida normal NO, porque el analisis ya se guardo y un aviso
+// perdido no puede tumbar el trabajo bueno.
+if (PRUEBA) process.exit(1);

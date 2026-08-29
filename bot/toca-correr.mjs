@@ -49,13 +49,21 @@ const RACIMO_MIN  = 120;  // juegos que arrancan dentro de estos minutos = una s
 // el plazo. Asi no se paga dos veces por la misma, aunque el cron dispare varias veces
 // dentro de su hora y cuarto.
 const MIN_ENTRE   = 25;   // suelo absoluto entre dos analisis, pase lo que pase
+// Cuanto puede quedarse el job esperando a una oleada futura. El tope duro de un job
+// en GitHub son 6 horas; se deja margen para la instalacion de Chromium y el analisis.
+const MAX_ESPERA  = 270;  // minutos
 const SB_URL  = 'https://xirpwbmekufozsddnaok.supabase.co';
 const SB_KEY  = 'sb_publishable_G3k6Se24l9d0kGfbuRZATQ_qYoV7RFK';   // key publica, ya va en el index.html
 
-const salida = (correr, motivo) => {
-  console.log(`${correr ? 'SI' : 'NO'}  ${motivo}`);
+// dormir = segundos a esperar ANTES de analizar. Existe porque el cron de GitHub es
+// poco de fiar: descarta la mayoria de los disparos y retrasa el resto. En vez de
+// necesitar que caiga uno justo en el momento bueno, el que SI cae se queda esperando
+// hasta la oleada. Un solo disparo al dia puede cubrir varias oleadas.
+const salida = (correr, motivo, dormir = 0) => {
+  console.log(`${correr ? 'SI' : 'NO'}  ${motivo}${dormir ? `  (esperando ${Math.round(dormir/60)} min)` : ''}`);
+  console.log(`RESULTADO correr=${correr} dormir=${Math.round(dormir)}`);   // lo lee el bucle del workflow
   if (process.env.GITHUB_OUTPUT) {
-    appendFileSync(process.env.GITHUB_OUTPUT, `correr=${correr}\nmotivo=${motivo}\n`);
+    appendFileSync(process.env.GITHUB_OUTPUT, `correr=${correr}\ndormir=${Math.round(dormir)}\nmotivo=${motivo}\n`);
   }
   process.exit(0);
 };
@@ -121,26 +129,43 @@ try {
 const minDesde = ultimo ? (Date.now() - ultimo) / 60000 : Infinity;
 console.log(`Ultimo analisis de la jornada: ${ultimo ? Math.round(minDesde) + ' min' : 'ninguno'}`);
 
-// ¿Hay una oleada dentro del plazo que TODAVIA no se haya cubierto?
+// Cubierta = hubo un analisis DESPUES de que esa oleada entrara en su plazo. Con esto
+// da igual que el cron dispare tres veces dentro de la misma hora y cuarto: solo se
+// paga la primera. Y despues de analizar una oleada, ella queda cubierta y el bucle
+// del workflow pasa sola a la siguiente.
+const cubierta = o => ultimo != null && ultimo >= (o[0].t.getTime() - MIN_ANTES * 60000);
+
+// Se recorren TODAS las oleadas de una vez y se decide con la primera que sirva. Es
+// importante NO salir en la primera cubierta: si la de las 6:40 ya se analizo, hay que
+// seguir mirando la de las 9:38, que es justo lo que mantiene vivo el bucle del
+// workflow despues de cada analisis.
+let esperaMin = null, oEspera = null;
 for (const o of oleadas) {
   const faltan = (o[0].t - ahora) / 60000;
-  if (faltan > MIN_ANTES || faltan <= 0) continue;
+  if (faltan <= 0) continue;                    // ya empezo
+  if (cubierta(o)) { console.log(`  (la oleada de ${fmt(o[0].t)} ET ya se analizo)`); continue; }
 
-  // Cubierta = hubo un analisis DESPUES de que esta oleada entrara en su plazo. Con
-  // esto da igual que el cron dispare tres veces dentro de la misma hora y cuarto:
-  // solo se paga la primera.
-  const entroEnPlazo = o[0].t.getTime() - MIN_ANTES * 60000;
-  if (ultimo && ultimo >= entroEnPlazo) {
-    salida(false, `la oleada de ${fmt(o[0].t)} ET ya se analizo (hace ${Math.round(minDesde)} min)`);
+  if (faltan <= MIN_ANTES) {
+    // Lista para analizar YA. El unico freno es el suelo duro entre analisis.
+    if (minDesde < MIN_ENTRE) {
+      salida(false, `la oleada de ${fmt(o[0].t)} ET toca, pero se analizo hace ${Math.round(minDesde)} min (suelo ${MIN_ENTRE})`);
+    }
+    salida(true, `oleada de ${fmt(o[0].t)} ET a ${Math.round(faltan)} min · ${o.map(x => x.mu).join(' ')}`);
   }
-  // Suelo duro: pase lo que pase, nunca dos analisis pegados.
-  if (minDesde < MIN_ENTRE) {
-    salida(false, `se analizo hace ${Math.round(minDesde)} min (suelo ${MIN_ENTRE})`);
-  }
-  salida(true, `oleada de ${fmt(o[0].t)} ET a ${Math.round(faltan)} min · ${o.map(x => x.mu).join(' ')}`);
+
+  // Todavia no entra en plazo. Se apunta la primera y se deja de buscar: si vale la
+  // pena esperarla, el job se queda despierto hasta ella.
+  esperaMin = faltan - MIN_ANTES;
+  oEspera = o;
+  break;
 }
 
-const prox = oleadas.map(o => (o[0].t - ahora) / 60000).filter(m => m > 0).sort((a, b) => a - b)[0];
-salida(false, prox != null
-  ? `ninguna oleada en ventana; la próxima empieza en ${Math.round(prox)} min`
-  : 'todas las oleadas ya empezaron');
+// Esperar despierto es lo que salva el dia: como GitHub se come casi todos los
+// disparos, el que llega no puede decir "no toca" y morirse.
+if (oEspera && esperaMin <= MAX_ESPERA) {
+  salida(true, `esperando a la oleada de ${fmt(oEspera[0].t)} ET (${oEspera.length} juego(s)) · ${oEspera.map(x => x.mu).join(' ')}`,
+         esperaMin * 60);
+}
+salida(false, oEspera
+  ? `la oleada de ${fmt(oEspera[0].t)} ET esta a ${Math.round(esperaMin)} min de entrar en plazo: demasiado para esperar despierto`
+  : 'no queda ninguna oleada por analizar hoy');

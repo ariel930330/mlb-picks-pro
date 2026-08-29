@@ -31,8 +31,12 @@ on:
     # Por eso el portero YA NO usa una ventana estrecha: mira si hay una oleada en
     # la próxima hora y cuarto que todavía no se haya analizado. Así un disparo con
     # retraso llega tarde pero LLEGA, en vez de caer fuera de la ventana y perderse.
-    - cron: '7,37 15-23 * * *'
-    - cron: '7,37 0-3 * * *'
+    # Cuatro intentos por hora en vez de dos: con GitHub descartando ~90% de los
+    # disparos, lo unico que se puede hacer es pedir turno mas veces. El portero es
+    # gratis (solo consulta la API de MLB), asi que intentarlo de mas no cuesta nada.
+    # Basta con que UNO caiga: ese se queda despierto y cubre el resto del dia.
+    - cron: '2,17,32,47 14-23 * * *'
+    - cron: '2,17,32,47 0-2 * * *'
   workflow_dispatch:
     inputs:
       forzar:
@@ -48,7 +52,11 @@ concurrency:
 jobs:
   analizar:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Hasta 5h30. El job puede quedarse ESPERANDO a una oleada futura, porque el cron
+    # de GitHub no es de fiar: descarta la mayoria de los disparos. El que si llega se
+    # queda despierto y cubre varias oleadas seguidas, en vez de decir "no toca" y
+    # morirse dejando el dia sin analizar.
+    timeout-minutes: 330
     steps:
       - uses: actions/checkout@v4
 
@@ -67,13 +75,42 @@ jobs:
           npm i --no-save playwright@1.47.2
           npx playwright install --with-deps chromium
 
-      - name: Correr el análisis
+      # Bucle: analiza la oleada que toca, y despues vuelve a preguntar. Si queda otra
+      # oleada mas tarde, espera dormida hasta ella y la analiza tambien. Asi UN disparo
+      # puede cubrir toda la tarde. Termina cuando no queda nada o se agota el tiempo.
+      - name: Analizar las oleadas del día
         if: steps.portero.outputs.correr == 'true' || inputs.forzar
         env:
           BOT_EMAIL:    ${{ secrets.BOT_EMAIL }}
           BOT_PASSWORD: ${{ secrets.BOT_PASSWORD }}
           APP_URL:      https://ariel930330.github.io/mlb-picks-pro/index.html
-        run: node bot/correr-analisis.mjs
+        run: |
+          set -u
+          LIMITE=$(( $(date +%s) + 300*60 ))   # margen bajo el timeout del job
+          DORMIR="${{ steps.portero.outputs.dormir || '0' }}"
+          VUELTA=0
+          while :; do
+            VUELTA=$((VUELTA+1))
+            if [ "${DORMIR:-0}" -gt 0 ]; then
+              if [ $(( $(date +%s) + DORMIR )) -gt "$LIMITE" ]; then
+                echo "La espera de $((DORMIR/60)) min no cabe en el tiempo del job. Fin."
+                break
+              fi
+              echo "Vuelta $VUELTA · esperando $((DORMIR/60)) min hasta la oleada…"
+              sleep "$DORMIR"
+            fi
+            echo "Vuelta $VUELTA · analizando"
+            node bot/correr-analisis.mjs || echo "::warning::El analisis de la vuelta $VUELTA fallo"
+            [ "$(date +%s)" -ge "$LIMITE" ] && { echo "Tiempo agotado. Fin."; break; }
+            # ¿queda otra oleada?
+            node bot/toca-correr.mjs > /tmp/portero.txt 2>&1 || true
+            cat /tmp/portero.txt
+            LINEA=$(grep '^RESULTADO' /tmp/portero.txt | tail -1)
+            case "$LINEA" in
+              *correr=true*) DORMIR=$(echo "$LINEA" | sed -n 's/.*dormir=\([0-9]*\).*/\1/p') ;;
+              *) echo "No quedan oleadas. Fin."; break ;;
+            esac
+          done
 
       # Si algo falla, la captura dice más que cualquier log.
       - name: Guardar captura del fallo

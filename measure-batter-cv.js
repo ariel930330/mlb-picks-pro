@@ -42,7 +42,7 @@ async function mapLimit(arr, n, fn){
   // hrr: suma correlacionada (H+R+RBI), sin familia simple -> se reporta con Poisson como
   // referencia, pero en el app va con binomial negativo (Var/mu medida) y CV estimado.
   const acc = { hit:{sr2:0,sn:0,smu:0,n:0}, tb:{sr2:0,sn:0,smu:0,n:0}, hr:{sr2:0,sn:0,smu:0,n:0},
-                bb:{sr2:0,sn:0,smu:0,n:0}, hrr:{sr2:0,smu:0,n:0} };
+                bb:{sr2:0,sn:0,smu:0,n:0}, s1:{sr2:0,sn:0,smu:0,n:0}, hrr:{sr2:0,smu:0,n:0} };
   // MITAD-CONTRA-MITAD (odd/even): error de proyección de la tasa SIN conocer el azar.
   // Es la única vía para H+R+RBI (suma correlacionada). Se valida contra Hit.
   const split = { hit:{d:[],m:[]}, hrr:{d:[],m:[]} };
@@ -56,7 +56,7 @@ async function mapLimit(arr, n, fn){
     const p1 = (b.h - b.d - b.t - b.hr) / b.pa, p2 = b.d / b.pa, p3 = b.t / b.pa, p4 = b.hr / b.pa;
     const meanTB  = p1 + 2*p2 + 3*p3 + 4*p4;                               // bases esperadas por PA
     const varTBpa = (p1 + 4*p2 + 9*p3 + 16*p4) - meanTB*meanTB;            // varianza de bases por PA
-    const pHR = b.hr / b.pa, pBB = b.bb / b.pa;
+    const pHR = b.hr / b.pa, pBB = b.bb / b.pa, p1B = p1;   // singles por PA (binomial, como hit)
     // tasa de H+R+RBI por PA del bateador (para su proyección por juego)
     let sHRR = 0, sPA = 0;
     for(const s of gs){ const pa=+s.stat.plateAppearances||0; if(pa<1) continue; sHRR += (+s.stat.hits||0)+(+s.stat.runs||0)+(+s.stat.rbi||0); sPA += pa; }
@@ -66,7 +66,9 @@ async function mapLimit(arr, n, fn){
       const H  = +s.stat.hits || 0, HR = +s.stat.homeRuns || 0, BB = +s.stat.baseOnBalls || 0;
       const TB  = +s.stat.totalBases || (H + (+s.stat.doubles||0) + 2*(+s.stat.triples||0) + 3*HR);
       const HRR = H + (+s.stat.runs||0) + (+s.stat.rbi||0);
+      const S1 = H - (+s.stat.doubles||0) - (+s.stat.triples||0) - HR;   // sencillos del juego
       games++;
+      { const mu = p1B*pa,   nz = pa*p1B*(1-p1B),  r = S1 - mu; acc.s1.sr2 += r*r; acc.s1.sn += nz; acc.s1.smu += mu; acc.s1.n++; }
       { const mu = pH*pa,     nz = pa*pH*(1-pH),     r = H  - mu; acc.hit.sr2 += r*r; acc.hit.sn += nz; acc.hit.smu += mu; acc.hit.n++; }
       { const mu = meanTB*pa, nz = pa*varTBpa,       r = TB - mu; acc.tb.sr2  += r*r; acc.tb.sn  += nz; acc.tb.smu  += mu; acc.tb.n++;  }
       { const mu = pHR*pa,    nz = pa*pHR*(1-pHR),   r = HR - mu; acc.hr.sr2  += r*r; acc.hr.sn  += nz; acc.hr.smu  += mu; acc.hr.n++;  }
@@ -84,7 +86,7 @@ async function mapLimit(arr, n, fn){
 
   console.log('batter-games:', games, '\n');
   console.log('mercado   mu_medio  Var(real)  Var(azar)  Var(proy)   CV      dist');
-  const dist = { hit:'binomial', tb:'Poisson (bases)', hr:'binomial', bb:'binomial', hrr:'NB (sobredisp.)' };
+  const dist = { hit:'binomial', tb:'Poisson (bases)', hr:'binomial', bb:'binomial', s1:'binomial', hrr:'NB (sobredisp.)' };
   for(const [k, a] of Object.entries(acc)){
     const mu = a.smu/a.n, vr = a.sr2/a.n;
     const vn = k==='hrr' ? mu /* Poisson de referencia */ : a.sn/a.n;

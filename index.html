@@ -1003,7 +1003,10 @@ const consensus = (arr, pt, a, b) => {
     (g.length===best.g.length && Math.abs(k-med)<Math.abs(best.k-med))) best={k,g}; });
   const g = best.g;
   const fa = avg(g.map(v => { const ia=amProb(a(v)), ib=amProb(b(v)); return ia/(ia+ib); }));
+  // Mediana del precio de cada lado (§5 HAXIOM): el consenso real, para poder
+  // detectar si el MEJOR precio es un outlier que fabricaría edge de una sola casa.
   return { point:best.k, fairA:fa, fairB:1-fa, priceA:bestAm(g.map(a)), priceB:bestAm(g.map(b)),
+           medA:median(g.map(a)), medB:median(g.map(b)),
            books:g.length, total:arr.length, rows:g };
 };
 // Normaliza acentos a ASCII y deja solo letras: "Cristopher Sánchez"→"cristophersanchez"
@@ -2133,7 +2136,7 @@ async function getTopBatters(id,yr) {
       const obpR=regress(parseFloat(st.obp||0),pa,LG.obp,PR);
       const slgR=regress(parseFloat(st.slg||0),pa,LG.slg,PR);
       const hrR =regress(ab?hr/ab:0,ab,LG.hr,PR);   // HR por turno (regresado)
-      return {id:p.id,name:p.fullName||'?',pos,ba:baR,obp:obpR,slg:slgR,ops:+(obpR+slgR).toFixed(3),hr,hrRate:hrR,rbi:parseInt(st.rbi||0),runs:parseInt(st.runs||0),ab,pa,h,bb,kpct:pa>0?+(k/pa*100).toFixed(1):0,woba};
+      return {id:p.id,name:p.fullName||'?',pos,ba:baR,obp:obpR,slg:slgR,ops:+(obpR+slgR).toFixed(3),hr,hrRate:hrR,rbi:parseInt(st.rbi||0),runs:parseInt(st.runs||0),ab,pa,h,bb,s1:Math.max(0,h-d2-t-hr),kpct:pa>0?+(k/pa*100).toFixed(1):0,woba};
     }).filter(p=>p.ab>=20&&!['P','SP','RP','TWP'].includes(p.pos)).sort((a,b)=>b.ops-a.ops).slice(0,9);
   }catch{return[];}
 }
@@ -2265,7 +2268,7 @@ async function getPitcherProps(key, events) {
         const i = k.indexOf('|'), slot = k.slice(0,i), n = k.slice(i+1);
         const c = consensus(arr, v=>v.point, v=>v.over, v=>v.under); if(!c) return;
         out[slot][normName(n)] = { name: n, line: c.point, fairOver: c.fairA, fairUnder: c.fairB,
-          priceOver: c.priceA, priceUnder: c.priceB, books: c.books, allBooks: c.total };
+          priceOver: c.priceA, priceUnder: c.priceB, medOver: c.medA, medUnder: c.medB, books: c.books, allBooks: c.total };
       });
     } catch {}
   });
@@ -2275,7 +2278,7 @@ async function getPitcherProps(key, events) {
 // Props de bateadores (hits, bases totales, HR): línea REAL de las casas. Varios mercados por partido.
 async function getBatterProps(key, events) {
   const MK = { batter_hits:'hits', batter_total_bases:'tb', batter_home_runs:'hr',
-               batter_walks:'bb', batter_hits_runs_rbis:'hrr' };
+               batter_walks:'bb', batter_hits_runs_rbis:'hrr', batter_singles:'1b' };
   const byBatter = {};
   await mapLimit(events, 5, async (ev) => {
     try {
@@ -2298,7 +2301,7 @@ async function getBatterProps(key, events) {
       Object.entries(agg).forEach(([k, arr]) => {
         const [nn, slot] = k.split('|');
         const c = consensus(arr, v=>v.point, v=>v.over, v=>v.under); if(!c) return;
-        (byBatter[nn] = byBatter[nn] || {})[slot] = { line: c.point, fairOver: c.fairA, fairUnder: c.fairB, priceOver: c.priceA, priceUnder: c.priceB, books: c.books, allBooks: c.total };
+        (byBatter[nn] = byBatter[nn] || {})[slot] = { line: c.point, fairOver: c.fairA, fairUnder: c.fairB, priceOver: c.priceA, priceUnder: c.priceB, medOver: c.medA, medUnder: c.medB, books: c.books, allBooks: c.total };
       });
     } catch {}
   });
@@ -4072,11 +4075,12 @@ function pmEval(p, M){
   const bOver = blend(mOver, mkt.fairOver, M.k);   // peso MEDIDO por mercado (ks=0.85)
   const eO = bOver-mkt.fairOver, eU = (1-bOver)-mkt.fairUnder, over = eO>=eU;   // lado con MÁS edge
   const prob = over?bOver:1-bOver, fair = over?mkt.fairOver:mkt.fairUnder, price = over?mkt.priceOver:mkt.priceUnder;
+  const pxMed = over ? mkt.medOver : mkt.medUnder;   // mediana del lado recomendado (§5)
   const edge = prob-fair, ev = prob*amDec(price)-1;
   // Desacuerdo crudo modelo-mercado. Si es enorme casi nunca es dinero gratis: suele ser
   // que la línea es de otra cosa (opener, salida corta, lesión, línea vieja).
   const gap = Math.abs(mOver-mkt.fairOver);
-  return {tag:M.tag, nombre:M.nombre, unidad:M.unidad, mu, line, over, prob, fair, price, edge, ev,
+  return {tag:M.tag, nombre:M.nombre, unidad:M.unidad, mu, line, over, prob, fair, price, pxMed, edge, ev,
           mRaw:mOver, gap, sospecha:gap>=.25, books:mkt.books, allBooks:mkt.allBooks,
           conf:pmConf(M, p, mkt, over), cv:PM_CV[M.k],
           mkt:true, rec:ev>=PM_MIN_EV && gap<.25, stake: (ev>=PM_MIN_EV&&gap<.25)?stakePct(prob,price):0};
@@ -4282,7 +4286,7 @@ function renderPitchers(games) {
         team:p.team, teamId:p.teamId, opp:p.opp, nombre:best.nombre, unidad:best.unidad,
         line:best.line, side:best.over?'over':'under', price:best.price, mu:+best.mu.toFixed(2),
         edge:best.edge, ev:best.ev, conf:best.conf, cv:best.cv, stake:best.stake, books:best.books,
-        gamePk:p.gamePk, mkt:best.tag, confirmed:!!(p.name&&p.name!=='TBD'), prob:best.prob, fair:best.fair,   // HAXIOM POD
+        gamePk:p.gamePk, mkt:best.tag, confirmed:!!(p.name&&p.name!=='TBD'), prob:best.prob, fair:best.fair, pxMed:best.pxMed,   // HAXIOM POD
         calidad:`ERA aj. ${p.eraAdj??'—'} · FIP ${p.fip} · K/9 ${p.k9}${p.whiff!=null?` · Whiff ${p.whiff}%`:''}`,
         matchup:`vs ${p.opp}${p.kMatchK!=null?` · K% ${p.kMatchK>=1?'+':''}${((p.kMatchK-1)*100).toFixed(0)}%`:''}`,
       });
@@ -4377,7 +4381,7 @@ function renderPitchers(games) {
 // tasa): H+R+RBI 9.2%, validado porque Hits por ese método da 8.6% vs su 10.3% limpio.
 // Ajustado a la escala del método limpio (×1.2 según Hits) → CV 11%. Ver measure-batter-cv.js.
 const BAT_MIN_EV = 0.01;
-const BAT_CV = { hit:0.103, tb:0.065, hr:0.283, bb:0.184, hrr:0.11 };
+const BAT_CV = { hit:0.103, tb:0.065, hr:0.283, bb:0.184, hrr:0.11, '1b':0.135 };   // '1b' medido: 13.5% (binomial)
 const BAT_PA = 4.2;   // apariciones al plato esperadas por juego (trials del binomial)
 const HRR_K = 2.4;    // dispersión NB de H+R+RBI (Var/μ≈1.83 medido)
 // TB TAMPOCO es Poisson. Un jonrón reparte 4 bases de golpe, así que la cola es
@@ -4419,8 +4423,9 @@ function batEval(k, mu, mkt){
   if(mkt.overOnly || mkt.fairUnder==null){ over=true; prob=bOver; fair=mkt.fairOver; price=mkt.priceOver; edge=bOver-mkt.fairOver; }
   else { const eO=bOver-mkt.fairOver, eU=(1-bOver)-mkt.fairUnder; over=eO>=eU;
     prob=over?bOver:1-bOver; fair=over?mkt.fairOver:mkt.fairUnder; price=over?mkt.priceOver:mkt.priceUnder; edge=over?eO:eU; }
+  const pxMed = over ? mkt.medOver : mkt.medUnder;   // mediana del lado recomendado (§5)
   const ev=prob*amDec(price)-1, rec=ev>=BAT_MIN_EV && gap<.25;
-  return {k, over, line, prob, fair, price, edge, ev, mRaw:mOver, gap, sospecha:gap>=.25,
+  return {k, over, line, prob, fair, price, pxMed, edge, ev, mRaw:mOver, gap, sospecha:gap>=.25,
           conf:batConf(k, mu, mkt, over), cv:BAT_CV[k], books:mkt.books, allBooks:mkt.allBooks,
           rec, stake: rec?stakePct(prob,price):0};
 }
@@ -4468,6 +4473,10 @@ function renderBatters(batData) {
       const hrbiR=expH+expR+expRBI;                        // H + R + RBI
       const expBB=rate(b.bb)*pAdj;                         // bases por bolas (no sensible al park)
       const expHR=(b.hrRate??(b.ab?b.hr/b.ab:0))*4.2*pAdj*envAdj;   // home runs (tasa regresada)
+      // Sencillos: la fracción de sus hits que son 1B (medida de temporada) × los hits
+      // esperados del día. Sin poder inflar: los sencillos NO son sensibles al park.
+      const singleShare = b.h>0 ? cl(b.s1/b.h, 0, 1) : 0.66;   // 0.66 ≈ liga si no hay muestra
+      const exp1B = expH*singleShare;
       // Comparación vs casa (props reales) si están disponibles
       const bp=allBProps[normName(b.name)];
       const evHits=bp?.hits?batEval('hit', expH,  bp.hits):null;
@@ -4475,7 +4484,8 @@ function renderBatters(batData) {
       const evHR  =bp?.hr  ?batEval('hr',  expHR, bp.hr  ):null;
       const evBB  =bp?.bb  ?batEval('bb',  expBB, bp.bb  ):null;
       const evHRR =bp?.hrr ?batEval('hrr', hrbiR, bp.hrr ):null;
-      return {id:b.id,name:b.name,pos:b.pos,pitcher:oppPitcher,oppHand,hand:b.hand,split:bs?{...bs,rel:+bsRel.toFixed(2)}:bs,bvp:b.bvp,tag,hitP,expTB,hrbiR,expBB,expHR,evHits,evTB,evHR,evBB,evHRR,
+      const ev1B  =bp?.['1b']?batEval('1b', exp1B, bp['1b']):null;
+      return {id:b.id,name:b.name,pos:b.pos,pitcher:oppPitcher,oppHand,hand:b.hand,split:bs?{...bs,rel:+bsRel.toFixed(2)}:bs,bvp:b.bvp,tag,hitP,expTB,hrbiR,expBB,expHR,exp1B,evHits,evTB,evHR,evBB,evHRR,ev1B,
               expH,ops:b.ops,ba:b.ba,slg:b.slg};   // expH y calidad: los usa el Prop del Día
     };
     // ── DISPONIBILIDAD ────────────────────────────────────────────────────────
@@ -4520,6 +4530,7 @@ function renderBatters(batData) {
     {title:'💥 Bases totales (TB)',  mkt:'TB',      nombre:'Bases totales',   unidad:'TB', metric:r=>r.expTB, mu:r=>r.expTB, fmt:r=>r.expTB.toFixed(1),         tag:r=>r.evTB},
     {title:'🔥 H + R + RBI',         mkt:'H+R+RBI', nombre:'H+R+RBI',         unidad:'',   metric:r=>r.hrbiR, mu:r=>r.hrbiR, fmt:r=>r.hrbiR.toFixed(1),         tag:r=>r.evHRR},
     {title:'🚶 Bases por bolas (BB)',mkt:'BB',      nombre:'Bases por bolas', unidad:'BB', metric:r=>r.expBB, mu:r=>r.expBB, fmt:r=>r.expBB.toFixed(2),         tag:r=>r.evBB},
+    {title:'1️⃣ Sencillos (1B)',      mkt:'1B',      nombre:'Sencillos',       unidad:'1B', metric:r=>r.exp1B, mu:r=>r.exp1B, fmt:r=>r.exp1B.toFixed(2),         tag:r=>r.ev1B},
     {title:'🏟️ Home runs (HR)',      mkt:'HR',      nombre:'Home runs',       unidad:'HR', metric:r=>r.expHR, mu:r=>r.expHR, fmt:r=>r.expHR.toFixed(2),         tag:r=>r.evHR},
   ];
   propsBatter=[];   // recolectar los top-2 de cada categoría para guardar
@@ -4581,7 +4592,7 @@ function renderBatters(batData) {
             unidad:cat.unidad, line:ev.line, side:ev.over?'over':'under', price:ev.price,
             mu:+cat.mu(r).toFixed(2), edge:ev.edge, ev:ev.ev, conf:ev.conf, cv:ev.cv,
             stake:ev.stake, books:ev.books,
-            gamePk:r.gamePk, mkt:cat.mkt, confirmed:!!r.conf, prob:ev.prob, fair:ev.fair,   // HAXIOM POD
+            gamePk:r.gamePk, mkt:ev.k, confirmed:!!r.conf, prob:ev.prob, fair:ev.fair, pxMed:ev.pxMed,   // HAXIOM POD (ev.k = clave batEval)
             calidad:`OPS ${r.ops!=null?(+r.ops).toFixed(3):'—'} · BA ${r.ba!=null?(+r.ba).toFixed(3):'—'} · SLG ${r.slg!=null?(+r.slg).toFixed(3):'—'}`,
             matchup:`vs ${(r.pitcher||'—')}${r.oppHand?` (${r.oppHand})`:''} · abridor ${r.tag.t}${r.split&&r.split.ops?` · ${r.split.ops.toFixed(3)} OPS vs ${r.oppHand}`:''}`,
           });
@@ -5906,7 +5917,7 @@ const POD_MIN = { prob:0.62, conf:0.85, edge:0.05, data:0.95, books:3, oddsLo:-1
 // walks de ABRIDOR y singles no los cotiza el proveedor actual → no producen
 // candidatos (no se inventan; §4 prohíbe estimar inputs faltantes).
 const POD_MKT_OK = { Ks:'Ponches', HA:'Hits permitidos', ER:'Carreras limpias',
-  hit:'Hits', tb:'Bases totales', hrr:'H+R+RBI', bb:'Bases por bolas' };
+  hit:'Hits', tb:'Bases totales', hrr:'H+R+RBI', bb:'Bases por bolas', '1b':'Sencillos' };
 const podDQ = c => { const g=(allGames||[]).find(x=>x.gamePk===c.gamePk); return g?.edgeRead?.dq ?? 100; };
 const podStressEdge = c => (c.prob-0.02) - c.fair;              // §12: prob −2pp vs el mismo fair no-vig
 const podReliab = (c,dq) => cl(0.55 + 0.15*(c.books>=POD_MIN.books?1:(c.books||0)/POD_MIN.books)
@@ -5926,10 +5937,19 @@ function podQualify(c){
     && c.prob>=POD_MIN.prob && (c.conf||0)>=POD_MIN.conf && c.edge>=POD_MIN.edge
     && (dq/100)>=POD_MIN.data && (c.books||0)>=POD_MIN.books
     && c.price>=POD_MIN.oddsLo && c.price<=POD_MIN.oddsHi
+    && !podPriceOutlier(c)
     && podStressEdge(c)>=POD_MIN.stress;
 }
 const podKey = c => `${c.player_id}|${c.mkt}|${c.side}`;
 const podPlayableTo = c => p2ml(c.prob - POD_MIN.stress);       // peor precio aún jugable §21
+// §5: el MEJOR precio no puede ser un outlier lejos del consenso (la mediana). Si lo
+// fuera, el edge vendría de una sola casa desalineada, no de una ventaja real. ~15
+// cents ≈ 0.03 de probabilidad implícita. Sin mediana (falta consenso) → no califica.
+const POD_PX_TOL = 0.03;
+function podPriceOutlier(c){
+  if(c.pxMed==null) return true;                    // sin consenso verificable = fuera (§4)
+  return (amProb(c.pxMed) - amProb(c.price)) > POD_PX_TOL;   // mejor precio demasiado por encima del consenso
+}
 // Desempate determinista §17 (mismo orden siempre).
 function podTie(a,b){
   return (b.conf-a.conf) || (b.prob-a.prob) || (b.stress-a.stress) || (b.dq-a.dq)

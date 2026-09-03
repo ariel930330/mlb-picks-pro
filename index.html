@@ -3565,8 +3565,8 @@ async function runAnalysis() {
     txt('s-overs',overs);
     $('run-status').textContent=`✅ ${results.length} partidos analizados`+(started?` · ${started} ya empezaron (excluidos)`:'')+
       (getOddsKey()?(oddsCount?` · 📈 cuotas reales (${oddsCount} partidos)`+(oddsRemaining!=null?` · ${oddsRemaining} req restantes`:''):` · ⚠ sin cuotas (revisa API key o fecha)`):` · sin cuotas (edge vs -110)`);
-    cacheAnalysis(date);   // guarda el análisis completo para restaurarlo al refrescar
-    refreshBoard(date);    // REFRESH LIVE BOARD: congela snapshot + histéresis + audit trail
+    refreshBoard(date);    // REFRESH LIVE BOARD: congela snapshot + histéresis + audit trail (ANTES del caché)
+    cacheAnalysis(date);   // guarda el análisis completo (incl. snapshot) para restaurarlo al refrescar
 
     // Guardado en segundo plano: por juego el pick de mayor edge, los 5 juegos con más
     // edge, el tablero de convicción completo y los props. Si falla se avisa en la
@@ -5638,7 +5638,12 @@ function applyRestored(c, src){
   else $('date-pick').value=todayLocal();
   renderPicks(allGames); renderPitchers(allGames); renderBatters(allBatters);
   // Al restaurar no bajamos datos nuevos → mostramos el snapshot congelado tal cual (RECHECK).
-  { const s=loadLatestSnapshot(c.date); renderSnapshot(s, null, 'recheck', s?(()=>{let d=0;s.rows.forEach(r=>{if(marketScore(r.edge,r.ev,r.dq)!==r.score)d++;});return d;})():0); }
+  // El snapshot puede venir DENTRO del caché de la nube (otra PC): se adopta y se guarda
+  // en local para que esta máquina también lo tenga. Si no, se usa el local que haya.
+  { let s=(c.snapshot&&Array.isArray(c.snapshot.rows))?c.snapshot:null;
+    if(s){ try{ localStorage.setItem('snap_latest_'+(c.date||s.date), JSON.stringify(s)); }catch{} }
+    else s=loadLatestSnapshot(c.date);
+    renderSnapshot(s, null, 'recheck', s?(()=>{let d=0;s.rows.forEach(r=>{if(marketScore(r.edge,r.ev,r.dq)!==r.score)d++;});return d;})():0); }
   const high=allGames.flatMap(g=>g.picks||[]).filter(p=>p.conf==='High').length;
   const med =allGames.flatMap(g=>g.picks||[]).filter(p=>p.conf==='Medium').length;
   const overs=allGames.filter(g=>g.total>g.totalLine).length;
@@ -5786,11 +5791,17 @@ function saveSnapshot(snap){
        idx.unshift({id:snap.id, at:snap.createdAt}); localStorage.setItem(k, JSON.stringify(idx.slice(0,50))); }catch(e){}
   saveSnapshotCloud(snap);
 }
+// Historial append-only en la nube (OPCIONAL): solo si existe la tabla
+// board_snapshots. El snapshot vigente ya viaja en analysis_cache (cacheAnalysis),
+// así que esto es un extra. Si la tabla no existe, se apaga tras el primer intento
+// para no disparar peticiones fallidas en cada análisis.
+let _snapTableOff = false;
 async function saveSnapshotCloud(snap){
-  if(!isOwner()) return;   // escritura solo del dueño (RLS)
-  try{ await sb.from('board_snapshots').insert({ id:snap.id, game_date:snap.date, criteria:snap.criteria,
-        created_at:new Date(snap.createdAt).toISOString(), payload:JSON.stringify(snap) }); }
-  catch(e){ console.warn('snap cloud:', e.message); }
+  if(!isOwner() || _snapTableOff) return;   // escritura solo del dueño (RLS)
+  try{ const {error} = await sb.from('board_snapshots').insert({ id:snap.id, game_date:snap.date, criteria:snap.criteria,
+        created_at:new Date(snap.createdAt).toISOString(), payload:JSON.stringify(snap) });
+    if(error){ _snapTableOff=true; }   // tabla ausente u otro rechazo: no reintentar esta sesión
+  }catch(e){ _snapTableOff=true; }
 }
 function loadLatestSnapshot(date){
   try{ const s=JSON.parse(localStorage.getItem('snap_latest_'+date)||'null'); if(s&&Array.isArray(s.rows)) return s; }catch{}
@@ -5869,7 +5880,9 @@ function renderSnapshot(snap, prev, mode, drift){
 
 function cacheAnalysis(date){
   // savedAt viene del sync entre PCs (restoreBest compara este sello con el de la nube).
-  const payload={date, games:allGames, batters:allBatters, bprops:allBProps, savedAt:Date.now()};
+  // snapshot: el tablero congelado viaja DENTRO del caché que ya sincroniza entre PCs,
+  // así el snapshot llega a las otras máquinas SIN necesidad de la tabla board_snapshots.
+  const payload={date, games:allGames, batters:allBatters, bprops:allBProps, snapshot:loadLatestSnapshot(date), savedAt:Date.now()};
   try{ localStorage.setItem('last_analysis', JSON.stringify(payload)); }catch(e){ console.warn('cache:',e.message); }
   saveAnalysisCloud(date, payload);
 }

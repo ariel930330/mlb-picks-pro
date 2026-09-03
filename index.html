@@ -482,7 +482,8 @@ body{background:radial-gradient(1100px 560px at 15% -10%,rgba(178,107,255,.10),t
     <div class="tab-pane active" id="tab-picks">
       <div class="toolbar">
         <input type="date" id="date-pick">
-        <button class="btn" id="run-btn" onclick="runAnalysis()"><i class="ti ti-refresh"></i>Analizar partidos</button>
+        <button class="btn" id="run-btn" onclick="runAnalysis()" title="REFRESH LIVE BOARD: baja datos nuevos, recalcula y EXPLICA cada cambio de señal"><i class="ti ti-refresh"></i>Analizar partidos</button>
+        <button class="btn-sm" id="recheck-btn" onclick="recheckSnapshot()" title="RECHECK SNAPSHOT: reusa el snapshot congelado y devuelve exactamente las mismas señales, sin bajar datos ni gastar cuotas">🔒 Re-verificar snapshot</button>
         <button class="btn-sm" id="sync-btn" onclick="syncCloud()" title="Jala el último análisis de la nube (de cualquier PC) sin volver a analizar ni gastar cuotas">☁ Sincronizar</button>
         <input type="password" id="odds-key" placeholder="The Odds API key" autocomplete="off"
           title="Se guarda en tu cuenta (Supabase) si iniciaste sesión, así queda fija en todos tus dispositivos. Nunca se escribe en el código, porque el repo es público."
@@ -517,6 +518,7 @@ body{background:radial-gradient(1100px 560px at 15% -10%,rgba(178,107,255,.10),t
         <span style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;margin-left:auto" title="El sistema siempre ordena por edge (valor), nunca por probabilidad">Orden: valor (edge)</span>
         <button class="btn-sm" onclick="copyPicks()"><i class="ti ti-copy"></i> Copiar</button>
       </div>
+      <div id="snapshot-area"></div>
       <div id="picks-area"><div class="empty"><i class="ti ti-trophy" style="font-size:40px;opacity:.15;display:block;margin:0 auto 12px"></i>Selecciona fecha y presiona Analizar partidos</div></div>
     </div>
 
@@ -3564,6 +3566,7 @@ async function runAnalysis() {
     $('run-status').textContent=`✅ ${results.length} partidos analizados`+(started?` · ${started} ya empezaron (excluidos)`:'')+
       (getOddsKey()?(oddsCount?` · 📈 cuotas reales (${oddsCount} partidos)`+(oddsRemaining!=null?` · ${oddsRemaining} req restantes`:''):` · ⚠ sin cuotas (revisa API key o fecha)`):` · sin cuotas (edge vs -110)`);
     cacheAnalysis(date);   // guarda el análisis completo para restaurarlo al refrescar
+    refreshBoard(date);    // REFRESH LIVE BOARD: congela snapshot + histéresis + audit trail
 
     // Guardado en segundo plano: por juego el pick de mayor edge, los 5 juegos con más
     // edge, el tablero de convicción completo y los props. Si falla se avisa en la
@@ -5634,6 +5637,8 @@ function applyRestored(c, src){
   if(c.date && c.date===todayLocal()) $('date-pick').value=c.date;
   else $('date-pick').value=todayLocal();
   renderPicks(allGames); renderPitchers(allGames); renderBatters(allBatters);
+  // Al restaurar no bajamos datos nuevos → mostramos el snapshot congelado tal cual (RECHECK).
+  { const s=loadLatestSnapshot(c.date); renderSnapshot(s, null, 'recheck', s?(()=>{let d=0;s.rows.forEach(r=>{if(marketScore(r.edge,r.ev,r.dq)!==r.score)d++;});return d;})():0); }
   const high=allGames.flatMap(g=>g.picks||[]).filter(p=>p.conf==='High').length;
   const med =allGames.flatMap(g=>g.picks||[]).filter(p=>p.conf==='Medium').length;
   const overs=allGames.filter(g=>g.total>g.totalLine).length;
@@ -5644,6 +5649,224 @@ function applyRestored(c, src){
 }
 
 // Guarda el análisis completo: en localStorage (esta PC) y en Supabase (cualquier PC)
+// ═══════════════════════════════════════════════════════════════════════════
+//  CAPA DE CONSISTENCIA — snapshot inmutable · score 0-100 · histéresis
+// ---------------------------------------------------------------------------
+//  Principio: los MISMOS datos producen SIEMPRE la misma señal. Una señal solo
+//  cambia cuando un dato documentado (cuota, alineación, abridor, clima, DQ)
+//  cruza un umbral FIJO. Nada cualitativo crea, quita, promueve ni reemplaza
+//  una señal — solo el motor numérico. El motor de picks ya es determinista
+//  (matemática pura, sin IA), así que "temperature 0" ya se cumple; esta capa
+//  agrega lo que faltaba: congelar, reproducir y frenar el parpadeo borderline.
+//
+//  Dos comandos:
+//    • REFRESH LIVE BOARD  (refreshBoard) — datos nuevos, puede cambiar señales
+//                          pero EXPLICA cada cambio (audit trail).
+//    • RECHECK SNAPSHOT    (recheckSnapshot) — reusa el snapshot congelado y
+//                          devuelve EXACTAMENTE las mismas señales, sin bajar
+//                          datos ni gastar cuotas.
+// ═══════════════════════════════════════════════════════════════════════════
+const CRITERIA_VERSION = 'MLB-EDGE-v1.0';   // versión de criterios (cambia = re-scoring)
+// Histéresis sobre el score 0-100 (spec del usuario): una jugada NUEVA entra a
+// SEÑAL con ≥80; una señal existente se mantiene mientras no baje de 75; una
+// jugada en 75–79 que no era señal NO puede volverse señal (solo watchlist).
+const SIG_ENTER = 80, SIG_STAY = 75, WATCH_FLOOR = 60;
+// Pesos/umbrales del score — FIJOS, nunca cambian entre análisis (§ fórmula fija).
+// value = wEdge·edgeScore + wEV·evScore, atenuado por Data Quality (dqFloor→100%).
+// El edge/EV entran de la matemática ya calibrada por backtest (RUN_SD, BLEND,
+// TOT_K); esta capa solo decide, con umbral fijo, si ese valor es señal.
+const SCORE_CFG = { wEdge:0.60, wEV:0.40, edgeFull:0.05, evFull:0.06, dqFloor:0.60 };
+
+// Score 0-100 de UN mercado. Determinista y con redondeo fijo. Sin precio de
+// mercado (edge/ev nulos) el llamador no debe crear fila: sin dato = sin señal.
+function marketScore(edge, ev, dq){
+  const eS = cl((edge||0)/SCORE_CFG.edgeFull)*100;      // 5.0 pp de edge = 100
+  const vS = cl((ev  ||0)/SCORE_CFG.evFull  )*100;      // 6.0% de EV     = 100
+  const value = SCORE_CFG.wEdge*eS + SCORE_CFG.wEV*vS;
+  const dqF = SCORE_CFG.dqFloor + (1-SCORE_CFG.dqFloor)*cl((dq==null?100:dq)/100);
+  return Math.round(value*dqF);
+}
+// Desempate FIJO (§ tie-breaking): edge medible ↓ · completitud de datos ↓ ·
+// incertidumbre ↑ · liquidez de mercado ↓ · orden alfabético del juego.
+function tieBreak(a,b){
+  return (b.edge-a.edge) || (b.dq-a.dq) || (a.unc-b.unc) || ((b.liq||0)-(a.liq||0)) || String(a.game).localeCompare(String(b.game));
+}
+const snapId = () => { const d=new Date(); const p=n=>String(n).padStart(2,'0');
+  return `SNAP-${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}-${Math.random().toString(36).slice(2,6)}`; };
+
+// Huella de los inputs congelados de un partido (para diferenciar qué cambió).
+function gameFP(g, bb){
+  const prices={}; (g.allPicks||[]).forEach(p=>{ if(p.mkt&&p.price!=null) prices[p.cat]=p.price; });
+  return {
+    ml:g.curLine?.mlH??null, tot:g.curLine?.tot??null, rl:g.curLine?.rlH??null, prices,
+    pa:g.pitchers?.away?.id??null, ph:g.pitchers?.home?.id??null,
+    la:(bb?.awayLineup||[]).join(','), lh:(bb?.homeLineup||[]).join(','),
+    inj:`${(bb?.awayOut||[]).length}/${(bb?.homeOut||[]).length}`,
+    wx:g.wx?`${Math.round(g.wx.temp??0)}°/${Math.round(g.wx.wind??0)}mph`:null,
+    dq:g.edgeRead?.dq??null,
+  };
+}
+const _fam = a => a==null?'—':(a>0?`+${a}`:`${a}`);
+function fpDiff(prev, cur){
+  if(!prev||!cur) return [];
+  const ch=[];
+  if(prev.ml!==cur.ml)  ch.push(`cuota ML ${_fam(prev.ml)}→${_fam(cur.ml)}`);
+  if(prev.tot!==cur.tot) ch.push(`total ${prev.tot??'—'}→${cur.tot??'—'}`);
+  if(prev.rl!==cur.rl)  ch.push(`run line ${prev.rl??'—'}→${cur.rl??'—'}`);
+  if(prev.pa!==cur.pa)  ch.push(`abridor visitante`);
+  if(prev.ph!==cur.ph)  ch.push(`abridor local`);
+  if((prev.la||'')!==(cur.la||'')) ch.push(`alineación visitante`);
+  if((prev.lh||'')!==(cur.lh||'')) ch.push(`alineación local`);
+  if(prev.inj!==cur.inj) ch.push(`lesionados ${prev.inj}→${cur.inj}`);
+  if(prev.wx!==cur.wx)  ch.push(`clima ${prev.wx||'—'}→${cur.wx||'—'}`);
+  if(prev.dq!==cur.dq)  ch.push(`data quality ${prev.dq}→${cur.dq}`);
+  return ch;
+}
+
+// Arma el snapshot: cada mercado de cada juego + cada prop, con su score 0-100.
+function buildSnapshot(date, games, batters, pPit, pBat){
+  const bbByPk={}; (batters||[]).forEach(b=>{ bbByPk[b.gamePk]=b; });
+  const gByPk={};  (games||[]).forEach(g=>{ gByPk[g.gamePk]=g; });
+  const rows=[], fps={};
+  (games||[]).forEach(g=>{
+    const dq=g.edgeRead?.dq??100;
+    fps[g.gamePk]=gameFP(g, bbByPk[g.gamePk]);
+    (g.allPicks||[]).forEach(p=>{
+      if(!p.mkt || p.price==null || p.edge==null) return;   // sin cuota real = sin fila (sin dato = sin señal)
+      const ev=p.prob*amDec(p.price)-1;
+      rows.push({ key:`${g.gamePk}|G|${p.cat}`, gamePk:g.gamePk, game:`${g.away}@${g.home}`,
+        kind:'juego', market:p.cat, label:p.main, edge:+p.edge.toFixed(4), ev:+ev.toFixed(4),
+        dq, liq:null, unc:100-dq, score:marketScore(p.edge, ev, dq) });
+    });
+  });
+  const propRow=(p, kind)=>{ const g=gByPk[p.gamePk]; const dq=g?.edgeRead?.dq??100;
+    return { key:`${p.gamePk}|P|${kind}|${p.player_id}|${p.market}`, gamePk:p.gamePk,
+      game:g?`${g.away}@${g.home}`:'', kind:`prop ${kind}`,
+      market:`${p.player_name||p.name} · ${p.market}`, label:`${String(p.side||'').toUpperCase()} ${p.target??p.line??''}`,
+      edge:+(p.edge||0).toFixed(4), ev:+(p.ev||0).toFixed(4), dq, liq:p.books??null,
+      unc:p.cv!=null?Math.round(p.cv*100):(100-dq), score:marketScore(p.edge, p.ev, dq) }; };
+  (pPit||[]).forEach(p=>rows.push(propRow(p,'abridor')));
+  (pBat||[]).forEach(p=>rows.push(propRow(p,'bateador')));
+  return { id:snapId(), date, criteria:CRITERIA_VERSION, createdAt:Date.now(), fps, rows };
+}
+
+// Aplica histéresis contra el snapshot anterior y arma el audit trail por fila.
+function applyHysteresis(snap, prev){
+  const pr={}; (prev?.rows||[]).forEach(r=>{ pr[r.key]=r; });
+  const pfps=prev?.fps||{};
+  snap.rows.forEach(r=>{
+    const p=pr[r.key];
+    const prevStatus=p?p.status:'NUEVO', prevScore=p?p.score:null, wasSig=prevStatus==='SEÑAL';
+    let status;
+    if(r.score>=SIG_ENTER) status='SEÑAL';
+    else if(wasSig && r.score>=SIG_STAY) status='SEÑAL';          // histéresis: se mantiene
+    else if(r.score>=WATCH_FLOOR) status='WATCHLIST';
+    else status='RECHAZADO';
+    const changed=fpDiff(pfps[r.gamePk], snap.fps[r.gamePk]);
+    r.prevStatus=prevStatus; r.prevScore=prevScore; r.status=status; r.changed=changed;
+    r.criteria=snap.criteria;
+    // Razón: umbral exacto cruzado + inputs que se movieron.
+    const inp = changed.length?` · cambió: ${changed.join(', ')}`:'';
+    if(status==='SEÑAL' && prevStatus!=='SEÑAL')      r.reason=`score ${r.score} ≥ ${SIG_ENTER}: entra como señal${inp}`;
+    else if(status==='SEÑAL' && r.score<SIG_ENTER)    r.reason=`score ${r.score} ≥ ${SIG_STAY}: se mantiene por histéresis (era señal)${inp}`;
+    else if(status==='SEÑAL')                          r.reason=`score ${r.score} ≥ ${SIG_ENTER}: señal`;
+    else if(prevStatus==='SEÑAL')                      r.reason=`score ${r.score} < ${SIG_STAY}: SALE de señal${inp}`;
+    else if(status==='WATCHLIST' && r.score>=SIG_STAY) r.reason=`score ${r.score} en ${SIG_STAY}–${SIG_ENTER-1}: no puede volverse señal nueva (watchlist)`;
+    else if(status==='WATCHLIST')                      r.reason=`score ${r.score} en ${WATCH_FLOOR}–${SIG_ENTER-1}: watchlist`;
+    else                                               r.reason=`score ${r.score} < ${WATCH_FLOOR}: sin valor suficiente`;
+  });
+  return snap;
+}
+
+// ── Persistencia del snapshot (localStorage + Supabase, inmutable por id) ──
+function saveSnapshot(snap){
+  try{ localStorage.setItem('snap_latest_'+snap.date, JSON.stringify(snap)); }catch(e){ console.warn('snap:',e.message); }
+  try{ localStorage.setItem('snap_'+snap.id, JSON.stringify(snap)); }catch(e){}
+  try{ const k='snap_idx_'+snap.date; const idx=JSON.parse(localStorage.getItem(k)||'[]');
+       idx.unshift({id:snap.id, at:snap.createdAt}); localStorage.setItem(k, JSON.stringify(idx.slice(0,50))); }catch(e){}
+  saveSnapshotCloud(snap);
+}
+async function saveSnapshotCloud(snap){
+  if(!isOwner()) return;   // escritura solo del dueño (RLS)
+  try{ await sb.from('board_snapshots').insert({ id:snap.id, game_date:snap.date, criteria:snap.criteria,
+        created_at:new Date(snap.createdAt).toISOString(), payload:JSON.stringify(snap) }); }
+  catch(e){ console.warn('snap cloud:', e.message); }
+}
+function loadLatestSnapshot(date){
+  try{ const s=JSON.parse(localStorage.getItem('snap_latest_'+date)||'null'); if(s&&Array.isArray(s.rows)) return s; }catch{}
+  return null;
+}
+
+// REFRESH LIVE BOARD: se llama al terminar un análisis. Construye el snapshot
+// nuevo, lo compara con el anterior (histéresis + audit), lo congela y lo pinta.
+function refreshBoard(date){
+  try{
+    const prev=loadLatestSnapshot(date);
+    const snap=applyHysteresis(buildSnapshot(date, allGames, allBatters, propsPitcher, propsBatter), prev);
+    saveSnapshot(snap);
+    renderSnapshot(snap, prev, 'refresh');
+  }catch(e){ console.warn('refreshBoard:', e.message); }
+}
+// RECHECK SNAPSHOT: reusa el snapshot congelado. Verifica reproducibilidad
+// (recomputa el score desde los datos congelados y confirma que es idéntico).
+function recheckSnapshot(){
+  const date=$('date-pick')?.value || todayLocal();
+  const snap=loadLatestSnapshot(date);
+  if(!snap){ $('run-status').textContent='🔒 No hay snapshot para esta fecha — corre "Refrescar (vivo)" primero.'; return; }
+  let drift=0;
+  snap.rows.forEach(r=>{ if(marketScore(r.edge, r.ev, r.dq)!==r.score) drift++; });
+  renderSnapshot(snap, null, 'recheck', drift);
+}
+
+// ── Render del tablero congelado + audit trail ──
+const _statusColor = s => s==='SEÑAL'?'var(--green)':s==='WATCHLIST'?'var(--amber)':s==='RECHAZADO'?'var(--text3)':'var(--blue)';
+const _statusPill = s => `<span style="background:${_statusColor(s)};color:#05050c;font-size:9px;font-weight:800;padding:2px 7px;border-radius:5px;letter-spacing:.3px;white-space:nowrap">${esc(s)}</span>`;
+function renderSnapshot(snap, prev, mode, drift){
+  const el=$('snapshot-area'); if(!el) return;
+  if(!snap){ el.innerHTML=''; return; }
+  const sigs =snap.rows.filter(r=>r.status==='SEÑAL').sort((a,b)=>b.score-a.score||tieBreak(a,b));
+  const watch=snap.rows.filter(r=>r.status==='WATCHLIST').sort((a,b)=>b.score-a.score||tieBreak(a,b));
+  // Audit: señales, watchlist y cualquier fila que ANTES era señal (para ver salidas).
+  const audit=snap.rows.filter(r=>r.status!=='RECHAZADO'||r.prevStatus==='SEÑAL')
+    .sort((a,b)=>b.score-a.score||tieBreak(a,b));
+  const when=new Date(snap.createdAt).toLocaleString('es-MX',{hour12:false});
+  const modeNote = mode==='recheck'
+    ? (drift ? `<span style="color:var(--rtx)">⚠ ${drift} fila(s) no reprodujeron el score congelado — ¿cambió la versión de criterios?</span>`
+             : `<span style="color:var(--gtx)">✓ Reproducido idéntico al snapshot congelado — mismos datos, mismas señales</span>`)
+    : (prev ? `🔄 Refresco vivo · comparado contra el snapshot anterior (${new Date(prev.createdAt).toLocaleTimeString('es-MX',{hour12:false})})`
+            : `🆕 Primer snapshot del día`);
+  const chg = (a,b)=> a===b ? _statusPill(b) : `${_statusPill(a)} <span style="color:var(--text3)">→</span> ${_statusPill(b)}`;
+  const sigRow = r => `<div style="display:flex;align-items:center;gap:9px;padding:7px 12px;border-top:1px solid var(--border)">
+      <span style="font-variant-numeric:tabular-nums;font-weight:800;font-size:15px;color:${_statusColor(r.status)};min-width:34px">${r.score}</span>
+      <span style="flex:1;min-width:0"><b style="font-size:12px">${esc(r.label)}</b>
+        <span style="color:var(--text3);font-size:10px"> · ${esc(r.game)} · ${esc(r.kind)}</span></span>
+      <span style="font-size:10px;color:var(--text2);font-variant-numeric:tabular-nums">edge ${(r.edge*100).toFixed(1)}pp · EV ${(r.ev*100).toFixed(1)}%</span>
+    </div>`;
+  const auditRows = audit.map(r=>`<tr>
+      <td>${esc(r.market)}<div style="font-size:9px;color:var(--text3)">${esc(r.game)}</div></td>
+      <td class="num">${chg(r.prevStatus, r.status)}</td>
+      <td class="num" style="font-variant-numeric:tabular-nums">${r.prevScore==null?'—':r.prevScore} → <b>${r.score}</b></td>
+      <td style="font-size:10px;color:var(--text2)">${r.changed.length?esc(r.changed.join(', ')):'<span style="color:var(--text3)">—</span>'}</td>
+      <td style="font-size:10px;color:var(--text2)">${esc(r.reason)}</td>
+    </tr>`).join('');
+  el.innerHTML = `
+   <div class="board" style="border:1px solid var(--purple);box-shadow:0 0 18px rgba(178,107,255,.12)">
+     <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:11px 13px;border-bottom:1px solid var(--border);background:var(--bg3)">
+       <div style="font-size:12px;font-weight:800;letter-spacing:.3px">🔒 TABLERO CONGELADO · <span style="color:var(--purple)">${esc(snap.id)}</span></div>
+       <div style="font-size:10px;color:var(--text3);font-variant-numeric:tabular-nums">${esc(snap.criteria)} · ${esc(when)}</div>
+     </div>
+     <div style="padding:8px 13px;font-size:11px;color:var(--text2);border-bottom:1px solid var(--border)">${modeNote}
+       <span style="color:var(--text3)"> · umbral: entra ≥${SIG_ENTER} · se mantiene ≥${SIG_STAY} · histéresis anti-parpadeo</span></div>
+     <div style="padding:6px 13px;font-size:10px;font-weight:800;letter-spacing:.4px;color:var(--gtx);text-transform:uppercase">Señales activas (${sigs.length})</div>
+     ${sigs.length?sigs.map(sigRow).join(''):`<div style="padding:8px 13px;font-size:11px;color:var(--text3)">Ningún mercado cruzó el umbral de ${SIG_ENTER}. Sin señal ≠ sin edge: significa que ninguna jugada llegó al filtro "muy exigente".</div>`}
+     ${watch.length?`<details style="border-top:1px solid var(--border)"><summary style="cursor:pointer;padding:7px 13px;font-size:10px;font-weight:800;letter-spacing:.4px;color:var(--atx);text-transform:uppercase;list-style:none">▸ Watchlist (${watch.length}) — 60–79, no son señal</summary>${watch.map(sigRow).join('')}</details>`:''}
+     <details style="border-top:1px solid var(--border)"><summary style="cursor:pointer;padding:7px 13px;font-size:10px;font-weight:800;letter-spacing:.4px;color:var(--text2);text-transform:uppercase;list-style:none">▸ Auditoría de cambios (${audit.length}) · ${esc(snap.criteria)}</summary>
+       <div style="overflow-x:auto;padding:0 6px 8px"><table class="htable" style="min-width:640px">
+         <thead><tr><th>Mercado</th><th class="num">Status previo → nuevo</th><th class="num">Score</th><th>Inputs que cambiaron</th><th>Regla (umbral cruzado)</th></tr></thead>
+         <tbody>${auditRows}</tbody></table></div></details>
+   </div>`;
+}
+
 function cacheAnalysis(date){
   // savedAt viene del sync entre PCs (restoreBest compara este sello con el de la nube).
   const payload={date, games:allGames, batters:allBatters, bprops:allBProps, savedAt:Date.now()};

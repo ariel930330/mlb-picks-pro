@@ -5230,9 +5230,13 @@ async function autoGradeSignals(){
   }
   const pred = await gradePredictions();   // mantiene viva la Validación
   $('sig-grading')?.remove();
-  alert(`✅ ${graded} señales calificadas`+(pending?` · ${pending} aún sin marcador final`:'')+
+  // En modo automático no se interrumpe con un alert (el navegador headless lo
+  // descartaría igual); solo el uso manual muestra el aviso.
+  if(new URLSearchParams(location.search).get('auto')!=='grade')
+    alert(`✅ ${graded} señales calificadas`+(pending?` · ${pending} aún sin marcador final`:'')+
         `\n📊 ${pred.graded} predicciones calificadas (pestaña Validación)`);
   loadSignals();
+  return {graded, pending};
 }
 
 // ── Historial de Props ──────────────────────────────────────────────────────
@@ -5453,7 +5457,9 @@ async function autoGradeProps(){
   const donde = document.querySelector('#tab-batters.active') ? 'batters-hist' : 'pitchers-hist';
   $(donde)?.insertAdjacentHTML('afterbegin','<div class="loading" id="pg-msg"><div class="spin"></div>Calificando props desde boxscores…</div>');
   const {data:rows}=await sb.from('prop_picks').select('*').is('result',null);
-  if(!rows?.length){ $('pg-msg')?.remove(); alert('No hay props sin calificar.'); return; }
+  if(!rows?.length){ $('pg-msg')?.remove();
+    if(new URLSearchParams(location.search).get('auto')!=='grade') alert('No hay props sin calificar.');
+    return {graded:0, pending:0}; }
   // Solo juegos FINALES
   const finals=new Set();
   for(const d of [...new Set(rows.map(r=>r.game_date))]){
@@ -5468,9 +5474,11 @@ async function autoGradeProps(){
       if(error){ fallos++; console.warn('gradeProp:',error.message); } else graded++; }
   }
   $('pg-msg')?.remove();
-  alert(`✅ ${graded} props calificados`+(fallos?`\n⚠ ${fallos} no se pudieron guardar (revisa permisos/RLS)`:'')
+  if(new URLSearchParams(location.search).get('auto')!=='grade')
+    alert(`✅ ${graded} props calificados`+(fallos?`\n⚠ ${fallos} no se pudieron guardar (revisa permisos/RLS)`:'')
         +(rows.length-graded-fallos?` · ${rows.length-graded-fallos} aún sin marcador final o sin datos`:''));
   loadPropHist('pitcher'); loadPropHist('batter');
+  return {graded, pending: rows.length-graded-fallos};
 }
 
 // ── Model tab ─────────────────────────────────────────────────────────────────
@@ -5598,7 +5606,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 // service worker no aporta nada y sí puede servir una copia vieja, así que se salta.
 function registrarSW(){
   if(!('serviceWorker' in navigator)) return;
-  if(new URLSearchParams(location.search).get('auto')==='1') return;
+  if(['1','grade'].includes(new URLSearchParams(location.search).get('auto'))) return;
   navigator.serviceWorker.register('sw.js').catch(e=>console.warn('sw:', e.message));
 }
 
@@ -5614,13 +5622,16 @@ function registrarSW(){
 // dispara solo cuando ya hay sesión.
 window.__auto = { listo:false, done:false, ok:false, msg:'', guardado:false, guardadoPromesa:null };
 function autoArranca(){
-  if(new URLSearchParams(location.search).get('auto') !== '1') return;
+  const modo = new URLSearchParams(location.search).get('auto');
+  if(modo!=='1' && modo!=='grade') return;
   let lanzado = false;
   const intenta = async () => {
     if(lanzado || !isOwner()) return;
     lanzado = true;
     window.__auto.listo = true;
+    window.__auto.modo = modo;
     try{
+      if(modo==='grade'){ await runGradeFlow(); } else {
       // La jornada de MLB se cuenta en HORA DEL ESTE, no en UTC ni en la hora del
       // servidor de Actions: un partido de las 9pm ET ya es "mañana" en UTC, y
       // analizar esa fecha traería la jornada equivocada.
@@ -5647,6 +5658,7 @@ function autoArranca(){
           edge: b.edge, conf: b.conf, stake: b.stake, proy: b.mu, casas: b.books,
         } : null,
       };
+      }   // fin del análisis (modo '1')
     }catch(e){
       window.__auto.ok  = false;
       window.__auto.msg = e?.message || String(e);
@@ -5656,6 +5668,55 @@ function autoArranca(){
   };
   sb.auth.onAuthStateChange(() => setTimeout(intenta, 400));
   setTimeout(intenta, 1500);   // por si la sesión ya estaba guardada
+}
+
+// ── MODO CALIFICAR (auto=grade) ──────────────────────────────────────────────
+// Lo dispara el robot después de la medianoche del Este, cuando los juegos del día
+// que cerró ya están finales. Califica automáticamente señales y props (marcador
+// final de la MLB, GRATIS — no gasta créditos de The Odds API) y arma el resumen
+// de resultados de AYER para el aviso de Telegram.
+async function runGradeFlow(){
+  // "Ayer" en hora del Este: a las 12–3 AM ET, la jornada que acaba de terminar es
+  // la de la fecha anterior. Se calcula al mediodía UTC para no tropezar con el DST.
+  const hoyET = new Date().toLocaleDateString('en-CA',{timeZone:'America/New_York'});
+  const ay = new Date(hoyET+'T12:00:00Z'); ay.setUTCDate(ay.getUTCDate()-1);
+  const ayerET = ay.toISOString().slice(0,10);
+  window.__auto.fecha = ayerET;
+
+  // Califica TODO lo pendiente que ya esté final (incluye ayer). Cada función deja
+  // como 'pendiente' lo que aún no tiene marcador, así que nunca califica de más.
+  let cSig=0, cProp=0;
+  try{ const r=await autoGradeSignals(); cSig=r?.graded||0; }catch(e){ console.warn('gradeSig:',e.message); }
+  try{ const r=await autoGradeProps();   cProp=r?.graded||0; }catch(e){ console.warn('gradeProp:',e.message); }
+
+  // Récord de AYER (win/loss; los push y pendientes no cuentan).
+  const rec = async (tabla) => {
+    try{ const {data}=await sb.from(tabla).select('result').eq('game_date',ayerET).in('result',['win','loss']);
+      const w=(data||[]).filter(x=>x.result==='win').length, n=(data||[]).length; return {w, l:n-w, n};
+    }catch{ return {w:0,l:0,n:0}; }
+  };
+  const sig=await rec('signals'), prop=await rec('prop_picks');
+
+  // Prop del Día de ayer (best-effort): sale del snapshot guardado en analysis_cache;
+  // su resultado se busca en prop_picks por jugador+lado.
+  let pod=null;
+  try{
+    const {data}=await sb.from('analysis_cache').select('payload').eq('game_date',ayerET).limit(1);
+    const snap=data?.[0]?JSON.parse(data[0].payload)?.snapshot:null;
+    const off=(snap?.pod?.status==='Official')?snap.pod.official:null;
+    if(off){
+      const {data:pr}=await sb.from('prop_picks').select('result,actual,side').eq('game_date',ayerET).eq('player_id',off.player_id);
+      const m=(pr||[]).find(x=>x.side===off.side)||pr?.[0]||null;
+      pod={ nombre:off.name, mercado:off.mktName, lado:off.side, linea:off.line, unidad:off.unidad||'',
+            precio:off.price, result:m?.result||null, actual:(m&&m.actual!=null)?m.actual:null };
+    }
+  }catch(e){ console.warn('pod grade:',e.message); }
+
+  window.__auto.resumen = { modo:'grade', fecha:ayerET,
+    calificadas:{ senales:cSig, props:cProp }, senales:sig, props:prop, pod };
+  window.__auto.ok = true;
+  window.__auto.guardado = true;   // "guardar" aquí = calificación escrita en Supabase
+  window.__auto.msg = `calificado ${ayerET}: señales ${sig.w}-${sig.l} · props ${prop.w}-${prop.l}`;
 }
 
 // Aplica un análisis restaurado a todas las pestañas

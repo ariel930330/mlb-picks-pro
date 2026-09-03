@@ -20,6 +20,9 @@ import { chromium } from 'playwright';
 const URL   = process.env.APP_URL || 'https://ariel930330.github.io/mlb-picks-pro/index.html';
 const EMAIL = process.env.BOT_EMAIL;
 const PASS  = process.env.BOT_PASSWORD;
+// MODO=grade abre la página en modo calificar (auto=grade): califica el día que
+// cerró y arma el resumen de resultados. Cualquier otro valor = análisis normal.
+const MODO  = process.env.MODO === 'grade' ? 'grade' : '1';
 const TIMEOUT_MS = 9 * 60 * 1000;   // un análisis completo ronda los 6 s, pero la
                                      // primera carga en frío del runner es lenta
 
@@ -39,8 +42,8 @@ pg.on('pageerror', e => console.log(`  [navegador] ERROR ${e.message}`));
 
 let codigo = 0;
 try {
-  const url = `${URL}?auto=1&cb=${Date.now()}`;   // cb: evita la caché de Pages
-  console.log(`Abriendo ${URL}?auto=1`);
+  const url = `${URL}?auto=${MODO}&cb=${Date.now()}`;   // cb: evita la caché de Pages
+  console.log(`Abriendo ${URL}?auto=${MODO}${MODO==='grade'?' (calificar)':''}`);
   await pg.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
 
   // Login. El modal puede estar oculto: se abre con el botón de sesión si hace falta.

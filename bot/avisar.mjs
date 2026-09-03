@@ -45,9 +45,29 @@ const esc  = s => String(s ?? '').replace(/[<>&]/g, c => ({ '<': '&lt;', '>': '&
 const hora = new Date().toLocaleTimeString('es-MX',
   { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' }) + ' ET';
 
+const rec = (o) => o && o.n ? `${o.w}-${o.l}` : '0-0';
+const marca = (o) => o && o.n ? (o.w/o.n>=0.6?'🟢':o.w/o.n>=0.5?'🟡':'🔴') : '⚪';
+
 let txt;
 if (!r.ok) {
-  txt = `⚠️ <b>El análisis falló</b>\n<code>${esc(r.msg)}</code>\n\n<i>${hora}</i>`;
+  const que = (r.resumen && r.resumen.modo === 'grade') ? 'La calificación falló' : 'El análisis falló';
+  txt = `⚠️ <b>${que}</b>\n<code>${esc(r.msg)}</code>\n\n<i>${hora}</i>`;
+} else if (r.resumen && r.resumen.modo === 'grade') {
+  // Resumen de RESULTADOS de ayer (job de medianoche ET).
+  const s = r.resumen;
+  const sig = s.senales || {}, pr = s.props || {};
+  const p = s.pod;
+  txt = `<b>Resultados MLB</b> · ${esc(s.fecha || '')} · ${hora}\n\n`
+      + `${marca(sig)} <b>Señales</b> ${rec(sig)}${sig.n ? ` <i>(${Math.round(sig.w / sig.n * 100)}%)</i>` : ''}\n`
+      + `${marca(pr)} <b>Props</b> ${rec(pr)}${pr.n ? ` <i>(${Math.round(pr.w / pr.n * 100)}%)</i>` : ''}\n`;
+  if (p) {
+    const ico = p.result === 'win' ? '✅' : p.result === 'loss' ? '❌' : p.result === 'push' ? '➖' : '⏳';
+    txt += `\n⭐ <b>Prop del Día</b> ${ico}\n`
+         + `${esc(p.nombre)} · <b>${p.lado === 'over' ? 'OVER' : 'UNDER'} ${p.linea}${esc(p.unidad)}</b> <code>${am(p.precio)}</code>`
+         + (p.actual != null ? ` · real <b>${p.actual}</b>` : '') + `\n<i>${esc(p.mercado)}</i>\n`;
+  }
+  if (!sig.n && !pr.n) txt += `\n<i>No había señales ni props que calificar de ayer.</i>`;
+  txt += `\n\n<i>Calificadas: ${s.calificadas?.senales || 0} señales · ${s.calificadas?.props || 0} props</i>`;
 } else {
   const s = r.resumen || {};
   const p = s.pod;

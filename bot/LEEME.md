@@ -170,3 +170,33 @@ Edge +6.4% · Confianza 78% · Stake 2.1%
 
 Si una corrida no deja picks, también avisa y dice por qué. Así sabes que el robot
 está vivo aunque no haya nada que apostar.
+
+---
+
+## Calificación automática (después de medianoche ET)
+
+Aparte del análisis, hay un segundo robot que **califica solo** el día que cerró y
+manda por Telegram el récord de resultados.
+
+- Workflow: `.github/workflows/calificar-auto.yml`
+- Runner en modo calificar: `MODO=grade node bot/correr-analisis.mjs` (abre la app
+  con `?auto=grade`). Califica señales y props contra el marcador final de la MLB.
+  **No gasta créditos de The Odds API** (la MLB API es gratis).
+- Disparo: Supabase pg_cron a las **2 AM ET** (06:00 UTC en temporada). Corre
+  `cron-calificar.sql` UNA vez en el SQL Editor (reusa el token de `cron-supabase.sql`).
+- Secretos: los MISMOS que el análisis (BOT_EMAIL, BOT_PASSWORD, TG_TOKEN, TG_CHAT).
+
+El aviso de resultados se ve así:
+
+```
+Resultados MLB · 2026-09-02 · 2:10 AM ET
+
+🟢 Señales 4-2 (67%)
+🟢 Props 3-1 (75%)
+
+⭐ Prop del Día ✅
+Logan Gilbert · OVER 5.5K -130 · real 7
+Ponches
+
+Calificadas: 6 señales · 4 props
+```

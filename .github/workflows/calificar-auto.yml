@@ -1,0 +1,68 @@
+# ============================================================================
+#  Calificación automática, después de medianoche del Este
+# ----------------------------------------------------------------------------
+#  Lo dispara Supabase pg_cron (ver cron-supabase.sql · función lanzar_calificar)
+#  a las ~2 AM ET, cuando los juegos del día que cerró ya están finales.
+#
+#  Abre la app en modo calificar (?auto=grade): califica señales y props contra
+#  el marcador final de la MLB (GRATIS, no gasta créditos de The Odds API) y
+#  manda por Telegram el récord de resultados de AYER.
+#
+#  Usa los MISMOS secretos que el análisis: BOT_EMAIL, BOT_PASSWORD, TG_TOKEN,
+#  TG_CHAT. No hace falta crear nada nuevo aparte del token de GitHub del cron.
+# ============================================================================
+name: Calificación automática
+
+on:
+  workflow_dispatch:      # lo dispara Supabase pg_cron (o a mano para probar)
+  schedule:
+    # Respaldo por si el cron de Supabase falla: 06:10 UTC = 2:10 AM EDT (temporada).
+    # GitHub descarta muchos disparos, pero para una vez al día basta con que caiga uno.
+    - cron: '10 6 * * *'
+
+concurrency:
+  group: calificar-auto
+  cancel-in-progress: false
+
+jobs:
+  calificar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Instalar Chromium
+        run: |
+          npm init -y >/dev/null 2>&1
+          npm i --no-save playwright@1.47.2
+          npx playwright install --with-deps chromium
+
+      - name: Calificar el día cerrado
+        env:
+          MODO:         grade
+          BOT_EMAIL:    ${{ secrets.BOT_EMAIL }}
+          BOT_PASSWORD: ${{ secrets.BOT_PASSWORD }}
+          APP_URL:      https://ariel930330.github.io/mlb-picks-pro/index.html
+        run: node bot/correr-analisis.mjs
+
+      # El aviso va aunque la calificación se queje: si algo se calificó, el récord
+      # ya vale, y un aviso perdido no debe tumbar el trabajo bueno.
+      - name: Avisar por Telegram
+        if: always()
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT:  ${{ secrets.TG_CHAT }}
+        run: node bot/avisar.mjs || true
+
+      - name: Guardar captura del fallo
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fallo-calificar-${{ github.run_id }}
+          path: bot/fallo.png
+          if-no-files-found: ignore
+          retention-days: 7

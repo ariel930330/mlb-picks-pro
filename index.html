@@ -518,6 +518,7 @@ body{background:radial-gradient(1100px 560px at 15% -10%,rgba(178,107,255,.10),t
         <span style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;margin-left:auto" title="El sistema siempre ordena por edge (valor), nunca por probabilidad">Orden: valor (edge)</span>
         <button class="btn-sm" onclick="copyPicks()"><i class="ti ti-copy"></i> Copiar</button>
       </div>
+      <div id="pod-area"></div>
       <div id="snapshot-area"></div>
       <div id="picks-area"><div class="empty"><i class="ti ti-trophy" style="font-size:40px;opacity:.15;display:block;margin:0 auto 12px"></i>Selecciona fecha y presiona Analizar partidos</div></div>
     </div>
@@ -4281,6 +4282,7 @@ function renderPitchers(games) {
         team:p.team, teamId:p.teamId, opp:p.opp, nombre:best.nombre, unidad:best.unidad,
         line:best.line, side:best.over?'over':'under', price:best.price, mu:+best.mu.toFixed(2),
         edge:best.edge, ev:best.ev, conf:best.conf, cv:best.cv, stake:best.stake, books:best.books,
+        gamePk:p.gamePk, mkt:best.tag, confirmed:!!(p.name&&p.name!=='TBD'), prob:best.prob, fair:best.fair,   // HAXIOM POD
         calidad:`ERA aj. ${p.eraAdj??'—'} · FIP ${p.fip} · K/9 ${p.k9}${p.whiff!=null?` · Whiff ${p.whiff}%`:''}`,
         matchup:`vs ${p.opp}${p.kMatchK!=null?` · K% ${p.kMatchK>=1?'+':''}${((p.kMatchK-1)*100).toFixed(0)}%`:''}`,
       });
@@ -4579,6 +4581,7 @@ function renderBatters(batData) {
             unidad:cat.unidad, line:ev.line, side:ev.over?'over':'under', price:ev.price,
             mu:+cat.mu(r).toFixed(2), edge:ev.edge, ev:ev.ev, conf:ev.conf, cv:ev.cv,
             stake:ev.stake, books:ev.books,
+            gamePk:r.gamePk, mkt:cat.mkt, confirmed:!!r.conf, prob:ev.prob, fair:ev.fair,   // HAXIOM POD
             calidad:`OPS ${r.ops!=null?(+r.ops).toFixed(3):'—'} · BA ${r.ba!=null?(+r.ba).toFixed(3):'—'} · SLG ${r.slg!=null?(+r.slg).toFixed(3):'—'}`,
             matchup:`vs ${(r.pitcher||'—')}${r.oppHand?` (${r.oppHand})`:''} · abridor ${r.tag.t}${r.split&&r.split.ops?` · ${r.split.ops.toFixed(3)} OPS vs ${r.oppHand}`:''}`,
           });
@@ -5643,7 +5646,8 @@ function applyRestored(c, src){
   { let s=(c.snapshot&&Array.isArray(c.snapshot.rows))?c.snapshot:null;
     if(s){ try{ localStorage.setItem('snap_latest_'+(c.date||s.date), JSON.stringify(s)); }catch{} }
     else s=loadLatestSnapshot(c.date);
-    renderSnapshot(s, null, 'recheck', s?(()=>{let d=0;s.rows.forEach(r=>{if(marketScore(r.edge,r.ev,r.dq)!==r.score)d++;});return d;})():0); }
+    renderSnapshot(s, null, 'recheck', s?(()=>{let d=0;s.rows.forEach(r=>{if(marketScore(r.edge,r.ev,r.dq)!==r.score)d++;});return d;})():0);
+    renderHaxiomPOD(s?s.pod:null, s?s.id:''); }
   const high=allGames.flatMap(g=>g.picks||[]).filter(p=>p.conf==='High').length;
   const med =allGames.flatMap(g=>g.picks||[]).filter(p=>p.conf==='Medium').length;
   const overs=allGames.filter(g=>g.total>g.totalLine).length;
@@ -5814,8 +5818,15 @@ function refreshBoard(date){
   try{
     const prev=loadLatestSnapshot(date);
     const snap=applyHysteresis(buildSnapshot(date, allGames, allBatters, propsPitcher, propsBatter), prev);
+    // HAXIOM Prop del Día: se mantiene el oficial anterior salvo invalidación (§19/§20).
+    // official queda seteado exactamente cuando hay uno bloqueado (Official/Pass, o el
+    // reemplazo de un Invalidated); en None/TooClose es null → arranca selección fresca.
+    const prevOfficial=prev?.pod?.official || null;
+    const pod=haxiomSelect(prevOfficial);
+    snap.pod=podTrim(pod);
     saveSnapshot(snap);
     renderSnapshot(snap, prev, 'refresh');
+    renderHaxiomPOD(snap.pod, snap.id);
   }catch(e){ console.warn('refreshBoard:', e.message); }
 }
 // RECHECK SNAPSHOT: reusa el snapshot congelado. Verifica reproducibilidad
@@ -5827,6 +5838,7 @@ function recheckSnapshot(){
   let drift=0;
   snap.rows.forEach(r=>{ if(marketScore(r.edge, r.ev, r.dq)!==r.score) drift++; });
   renderSnapshot(snap, null, 'recheck', drift);
+  renderHaxiomPOD(snap.pod, snap.id);
 }
 
 // ── Render del tablero congelado + audit trail ──
@@ -5876,6 +5888,167 @@ function renderSnapshot(snap, prev, mode, drift){
          <thead><tr><th>Mercado</th><th class="num">Status previo → nuevo</th><th class="num">Score</th><th>Inputs que cambiaron</th><th>Regla (umbral cruzado)</th></tr></thead>
          <tbody>${auditRows}</tbody></table></div></details>
    </div>`;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  HAXIOM EDGE · Prop of the Day — protocolo de selección determinista (§1-23)
+// ---------------------------------------------------------------------------
+//  Elige UN solo prop: la mejor combinación de probabilidad calibrada, edge
+//  medible, confianza, fiabilidad de mercado y estabilidad de rol/precio. No
+//  el edge más grande, sino el más DEPENDABLE. Nunca fuerza una selección:
+//  si nada pasa todos los mínimos, no hay Prop del Día. Mismo snapshot →
+//  mismo resultado; un oficial solo se reemplaza por invalidación DOCUMENTADA.
+// ═══════════════════════════════════════════════════════════════════════════
+const POD_CRITERIA = 'HAXIOM-POD-v1.0';
+// Mínimos §10 (fijos, nunca cambian entre análisis).
+const POD_MIN = { prob:0.62, conf:0.85, edge:0.05, data:0.95, books:3, oddsLo:-175, oddsHi:125, stress:0.03, sep:3 };
+// Mercados elegibles §2. Excluidos: HR y outs-recorded (§2/§3). Nota honesta:
+// walks de ABRIDOR y singles no los cotiza el proveedor actual → no producen
+// candidatos (no se inventan; §4 prohíbe estimar inputs faltantes).
+const POD_MKT_OK = { Ks:'Ponches', HA:'Hits permitidos', ER:'Carreras limpias',
+  hit:'Hits', tb:'Bases totales', hrr:'H+R+RBI', bb:'Bases por bolas' };
+const podDQ = c => { const g=(allGames||[]).find(x=>x.gamePk===c.gamePk); return g?.edgeRead?.dq ?? 100; };
+const podStressEdge = c => (c.prob-0.02) - c.fair;              // §12: prob −2pp vs el mismo fair no-vig
+const podReliab = (c,dq) => cl(0.55 + 0.15*(c.books>=POD_MIN.books?1:(c.books||0)/POD_MIN.books)
+  + 0.15*(dq/100) + 0.15*(1-Math.min(c.cv||0,0.25)/0.25), 0, 1);
+// Solid Prop Score 0-100 §11. Pesos FIJOS. Confianza pesa más que el edge crudo;
+// el edge entra como CALIDAD (atenuado por fiabilidad) para que un edge grande
+// pero poco fiable no le gane a uno con más prob y confianza.
+function podSolid(c,dq){
+  const probScore=cl((c.prob-0.50)/0.20)*100, confScore=(c.conf||0)*100;
+  const edgeScore=cl(((c.edge*100)*podReliab(c,dq))/8)*100;    // 8pp de edge fiable = 100
+  return +(0.40*confScore + 0.35*probScore + 0.25*edgeScore).toFixed(2);
+}
+// ¿Pasa TODOS los mínimos §10? Fallar uno elimina el candidato.
+function podQualify(c){
+  const dq=podDQ(c);
+  return !!POD_MKT_OK[c.mkt] && !!c.confirmed
+    && c.prob>=POD_MIN.prob && (c.conf||0)>=POD_MIN.conf && c.edge>=POD_MIN.edge
+    && (dq/100)>=POD_MIN.data && (c.books||0)>=POD_MIN.books
+    && c.price>=POD_MIN.oddsLo && c.price<=POD_MIN.oddsHi
+    && podStressEdge(c)>=POD_MIN.stress;
+}
+const podKey = c => `${c.player_id}|${c.mkt}|${c.side}`;
+const podPlayableTo = c => p2ml(c.prob - POD_MIN.stress);       // peor precio aún jugable §21
+// Desempate determinista §17 (mismo orden siempre).
+function podTie(a,b){
+  return (b.conf-a.conf) || (b.prob-a.prob) || (b.stress-a.stress) || (b.dq-a.dq)
+    || ((b.confirmed?1:0)-(a.confirmed?1:0)) || ((b.books||0)-(a.books||0)) || String(a.name).localeCompare(String(b.name));
+}
+function podRecord(c){
+  return { key:podKey(c), player_id:c.player_id, name:c.name, team:c.team, opp:c.opp, kind:c.kind,
+    mkt:c.mkt, mktName:POD_MKT_OK[c.mkt], side:c.side, line:c.line, unidad:c.unidad||'', price:c.price,
+    prob:+c.prob.toFixed(4), fair:+c.fair.toFixed(4), edge:+c.edge.toFixed(4), conf:+(c.conf||0).toFixed(4),
+    solid:c.solid, stress:+podStressEdge(c).toFixed(4), books:c.books, dq:podDQ(c), playableTo:podPlayableTo(c),
+    calidad:c.calidad||'', matchup:c.matchup||'', gamePk:c.gamePk, criteria:POD_CRITERIA };
+}
+// Riesgo principal §22: el factor más débil que sobrevive.
+function podRisk(c){
+  if((c.books||0)<=3) return 'Disponibilidad limitada (solo 3 casas cuelgan la línea)';
+  if(podStressEdge(c) < POD_MIN.stress+0.01) return 'El edge se adelgaza bajo estrés (prob −2pp lo deja cerca del mínimo)';
+  if((c.cv||0) >= 0.20) return 'Mercado con proyección de mayor varianza';
+  if(!c.confirmed) return 'Participación/rol no confirmado del todo';
+  return 'Sin riesgo material detectado más allá de la varianza normal';
+}
+
+// Motor: puntúa todo, aplica mínimos, separación §16, bloqueo §19 y reemplazo §20.
+function haxiomSelect(prevOfficial){
+  const all=[...(podCands.pitcher||[]), ...(podCands.batter||[])]
+    .filter(c=>c && c.prob!=null && c.fair!=null && c.conf!=null && c.edge!=null)
+    .map(c=>{ const dq=podDQ(c); return {...c, dq, solid:podSolid(c,dq), stress:podStressEdge(c), qualifies:podQualify(c), playableTo:podPlayableTo(c)}; });
+  const qual=all.filter(c=>c.qualifies).sort((a,b)=>b.solid-a.solid || podTie(a,b));
+  const res={ criteria:POD_CRITERIA, at:Date.now(), nCand:all.length, nQual:qual.length };
+  const runnerOk = () => !qual[1] || (qual[0].solid-qual[1].solid)>=POD_MIN.sep;
+
+  // §19/§20 — bloqueo: un oficial se mantiene salvo invalidación material.
+  if(prevOfficial){
+    const cur=all.find(c=>podKey(c)===prevOfficial.key);
+    if(!cur){ res.status='Invalidated'; res.prevOfficial=prevOfficial;
+      res.invalidReason='El jugador/mercado ya no está en el slate (scratch, cambio de alineación o mercado retirado)'; }
+    else if(amProb(cur.price) > cur.prob - POD_MIN.stress){ res.status='Pass'; res.official=prevOfficial; res.current=podRecord(cur);
+      res.passReason=`Precio ${amFmt(cur.price)} peor que el playable-to ${amFmt(prevOfficial.playableTo)} — se conserva el oficial, no se reemplaza en silencio`; }
+    else if(!cur.qualifies){ res.status='Invalidated'; res.prevOfficial=prevOfficial; res.current=podRecord(cur);
+      res.invalidReason='Dejó de cumplir un mínimo (la línea, el precio o el rol cambiaron)'; }
+    else { res.status='Official'; res.official={...prevOfficial, price:cur.price, prob:+cur.prob.toFixed(4), edge:+cur.edge.toFixed(4), conf:+cur.conf.toFixed(4), solid:cur.solid, playableTo:podPlayableTo(cur)}; res.current=res.official; res.risk=podRisk(cur); }
+    // Si se invalidó, ¿hay reemplazo que califique y separe? (§20). El reemplazo
+    // queda como nuevo oficial (se bloquea a futuro); el estado sigue 'Invalidated'
+    // solo para DISPLAY (mostrar qué pasó esta vez).
+    if(res.status==='Invalidated' && qual.length && runnerOk()){
+      res.replacement=podRecord(qual[0]); res.official=res.replacement; res.risk=podRisk(qual[0]); }
+    return res;
+  }
+
+  // Sin oficial previo.
+  if(!qual.length){ res.status='None'; return res; }
+  res.leader=podRecord(qual[0]); if(qual[1]) res.runnerUp=podRecord(qual[1]);
+  if(!runnerOk()){ res.status='TooClose'; return res; }
+  res.status='Official'; res.official=res.leader; res.risk=podRisk(qual[0]);
+  return res;
+}
+// Versión ligera para guardar en el snapshot (sin los arrays completos de candidatos).
+function podTrim(p){
+  return { status:p.status, criteria:p.criteria, at:p.at, nCand:p.nCand, nQual:p.nQual,
+    official:p.official||null, leader:p.leader||null, runnerUp:p.runnerUp||null, current:p.current||null,
+    prevOfficial:p.prevOfficial||null, replacement:p.replacement||null,
+    invalidReason:p.invalidReason||null, passReason:p.passReason||null, risk:p.risk||null };
+}
+
+// ── Render del Prop del Día HAXIOM (card §22) ──
+const _podStatusColor = s => ({Official:'var(--green)', Pass:'var(--amber)', Invalidated:'var(--red)', TooClose:'var(--amber)', None:'var(--text3)'}[s]||'var(--text3)');
+const _podStatusEs = { Official:'OFICIAL', Pass:'PASS · PRECIO ACTUAL PEOR', Invalidated:'INVALIDADO', TooClose:'AÚN NO OFICIAL', None:'SIN PROP DEL DÍA' };
+function podBlock(lb, val, tip){ return `<div style="background:var(--bg3);border-radius:var(--rs);padding:7px 9px;min-width:0">
+  <div style="font-size:8.5px;font-weight:800;letter-spacing:.4px;color:var(--text3);text-transform:uppercase" title="${esc(tip||'')}">${esc(lb)}</div>
+  <div style="font-size:13px;font-weight:800;font-variant-numeric:tabular-nums">${val}</div></div>`; }
+function podCardHTML(r, snapId){
+  const c=r; const color=_podStatusColor(r._st);
+  const opp = c.opp?` vs ${esc(c.opp)}`:'';
+  const risk = r._risk||podRisk(c);
+  return `<div style="border-top:1px solid var(--border);padding:11px 13px">
+    <div style="font-size:16px;font-weight:800;margin-bottom:2px">${esc(c.name)} <span style="color:var(--text3);font-size:12px;font-weight:600">(${esc(c.team||'')})${opp}</span></div>
+    <div style="font-size:14px;font-weight:800;color:${color};margin-bottom:9px">${esc((c.side||'').toUpperCase())} ${c.line}${esc(c.unidad||'')} · ${esc(c.mktName||c.mkt)} · <span style="font-variant-numeric:tabular-nums">${amFmt(c.price)}</span></div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:6px;margin-bottom:9px">
+      ${podBlock('Prob calibrada', (c.prob*100).toFixed(1)+'%','Probabilidad del modelo para ESTA línea (§6)')}
+      ${podBlock('No-vig mercado', (c.fair*100).toFixed(1)+'%','Probabilidad justa del mercado sin comisión (§7)')}
+      ${podBlock('Edge gap', '+'+(c.edge*100).toFixed(1)+'pp','Modelo − no-vig (§8). Mín 5.0pp')}
+      ${podBlock('Confianza', Math.round(c.conf*100)+'/100','Formula-driven, mín 85 (§9)')}
+      ${podBlock('Solid Score', c.solid,'Puntaje sólido §11: 0.40 conf + 0.35 prob + 0.25 calidad-de-edge')}
+      ${podBlock('Stress edge', '+'+(c.stress*100).toFixed(1)+'pp','Edge con prob −2pp (§12). Mín 3.0pp')}
+      ${podBlock('Casas', c.books,'Sportsbooks que cuelgan la línea (§5). Mín 3')}
+      ${podBlock('Playable-to', amFmt(c.playableTo),'Peor precio aún jugable (§21)')}
+    </div>
+    ${c.calidad||c.matchup?`<div style="font-size:10.5px;color:var(--text2);line-height:1.5;margin-bottom:5px"><b style="color:var(--gtx)">Factores a favor:</b> ${esc([c.calidad,c.matchup].filter(Boolean).join(' · '))}</div>`:''}
+    <div style="font-size:10.5px;color:var(--atx);line-height:1.5"><b>Riesgo principal:</b> ${esc(risk)}</div>
+    <div style="font-size:9px;color:var(--text3);margin-top:7px;font-variant-numeric:tabular-nums">${esc(snapId||'')} · ${esc(c.criteria||POD_CRITERIA)}</div>
+  </div>`;
+}
+function renderHaxiomPOD(p, snapId){
+  const el=$('pod-area'); if(!el) return;
+  if(!p){ el.innerHTML=''; return; }
+  const st=p.status, color=_podStatusColor(st);
+  const head=`<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:11px 13px;border-bottom:1px solid var(--border);background:var(--bg3)">
+      <div style="font-size:13px;font-weight:800;letter-spacing:.3px">⭐ PROP DEL DÍA <span style="color:var(--text3);font-weight:600">· HAXIOM EDGE</span></div>
+      <span style="background:${color};color:#05050c;font-size:10px;font-weight:800;padding:3px 9px;border-radius:6px;letter-spacing:.4px">${_podStatusEs[st]||st}</span>
+    </div>`;
+  let body='';
+  if(st==='Official'){ const r={...(p.official), _st:st, _risk:p.risk}; body=podCardHTML(r, snapId); }
+  else if(st==='Pass'){ const r={...(p.official), _st:st, _risk:p.risk};
+    body=`<div style="padding:9px 13px;font-size:11px;color:var(--atx);border-bottom:1px solid var(--border)">⚠ ${esc(p.passReason||'')}</div>`+podCardHTML(r, snapId); }
+  else if(st==='Invalidated'){
+    body=`<div style="padding:10px 13px;font-size:11px;color:var(--rtx)"><b>Selección invalidada.</b> ${esc(p.invalidReason||'')}<div style="font-size:9px;color:var(--text3);margin-top:4px">Original: ${esc(p.prevOfficial?.name||'')} ${esc((p.prevOfficial?.side||'').toUpperCase())} ${p.prevOfficial?.line??''} · ${esc(p.prevOfficial?.criteria||'')}</div></div>`;
+    if(p.replacement){ body+=`<div style="padding:7px 13px 0;font-size:10px;font-weight:800;color:var(--gtx);letter-spacing:.4px">REEMPLAZO</div>`+podCardHTML({...p.replacement,_st:'Official',_risk:p.risk}, snapId); }
+    else body+=`<div style="padding:0 13px 12px;font-size:11px;color:var(--text3)">Ningún reemplazo califica → hoy no hay Prop del Día.</div>`;
+  }
+  else if(st==='TooClose'){
+    body=`<div style="padding:11px 13px;font-size:12px;color:var(--atx);font-weight:700">NO OFFICIAL PROP OF THE DAY YET</div>
+      <div style="padding:0 13px 10px;font-size:11px;color:var(--text2)">Los dos mejores candidatos están a menos de ${POD_MIN.sep} puntos de Solid Score — demasiado parejos para declarar uno claramente superior (§16).</div>
+      <div style="padding:0 13px 12px;font-size:10.5px;color:var(--text2);font-variant-numeric:tabular-nums">
+        1) ${esc(p.leader?.name)} ${esc((p.leader?.side||'').toUpperCase())} ${p.leader?.line} — Solid ${p.leader?.solid}<br>
+        2) ${esc(p.runnerUp?.name)} ${esc((p.runnerUp?.side||'').toUpperCase())} ${p.runnerUp?.line} — Solid ${p.runnerUp?.solid}</div>`;
+  }
+  else { // None
+    body=`<div style="padding:12px 13px;font-size:12px;color:var(--text2);line-height:1.55"><b>NO QUALIFYING PROP OF THE DAY</b><br>El slate actual no contiene una oportunidad suficientemente fuerte y confiable (${p.nCand||0} candidatos evaluados, 0 pasaron los mínimos §10). No se fuerza una selección en un slate débil (§23).</div>`;
+  }
+  el.innerHTML=`<div class="board" style="border:1px solid ${color};box-shadow:0 0 18px ${color==='var(--green)'?'rgba(0,227,154,.14)':'rgba(178,107,255,.10)'}">${head}${body}</div>`;
 }
 
 function cacheAnalysis(date){

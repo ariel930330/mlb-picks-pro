@@ -4147,19 +4147,31 @@ async function podCopiar(kind, btn){
   if(btn){ btn.textContent = ok ? '✓ Copiado' : '✗ No se pudo';
     setTimeout(()=>{ btn.textContent = '📋 Copiar'; }, 1800); }
 }
+// El "Prop del Día" oficial lo decide HAXIOM (todos los gates §10), NO el edge×conf
+// suelto de la pestaña. La pestaña solo CORONA al que HAXIOM declaró oficial; si
+// HAXIOM no tiene oficial, ninguna pestaña corona nada — muestra su mejor candidato
+// como "mejor de la pestaña" y avisa por qué no hay oficial. Así el dashboard y las
+// pestañas nunca se contradicen.
+let haxPod = null;
+const podStatusMotivo = { None:'ningún candidato pasa todos los mínimos HAXIOM', TooClose:'los dos mejores están demasiado parejos (<3 pts)', Pass:'el oficial quedó a un precio no jugable', Invalidated:'el oficial se invalidó y no hay reemplazo' };
 function renderPOD(){
   // edge>0 para entrar; el piso de EV ya lo aplicó rec al construir los candidatos.
   const vivos = k => podCands[k].filter(c=>podScore(c)!=null && c.edge>0)
                                 .sort((a,b)=>podScore(b)-podScore(a));
   const pit = vivos('pitcher'), bat = vivos('batter');
   const nTot = pit.length + bat.length;
-  const todos = [...pit, ...bat].sort((a,b)=>podScore(b)-podScore(a));
-  podBest = todos[0] || null;
+  const official = (haxPod && haxPod.status==='Official') ? haxPod.official : null;
+  const isKing = c => !!official && c.player_id===official.player_id && c.mkt===official.mkt && c.side===official.side;
+  podBest = null;
   podShown = { pitcher: pit[0]||null, batter: bat[0]||null };
   [['pod-pitcher','pitcher'],['pod-batter','batter']].forEach(([id,kind])=>{
     const el = $(id); if(!el) return;
-    const mio = podShown[kind];
-    el.innerHTML = mio ? podCard(mio, nTot, mio===podBest, mio===podBest?null:podBest) : '';
+    let mio = podShown[kind];
+    // Si el oficial HAXIOM es de esta pestaña, es la carta coronada (aunque no sea el
+    // top por edge×conf — HAXIOM usa el Solid Score, no ese producto).
+    if(official && official.kind===kind){ const found=podCands[kind].find(isKing); if(found){ mio=found; podShown[kind]=found; } }
+    if(isKing(mio)) podBest=mio;
+    el.innerHTML = mio ? podCard(mio, nTot, isKing(mio), official) : '';
   });
 }
 // Aviso de cobertura. Elegir "el mejor de todos" es honesto solo si "todos" son todos.
@@ -4178,8 +4190,9 @@ function podAviso(){
     Los abridores no dependen de esto.
   </div>`;
 }
-// esRey: este es el mejor de TODO el día. otro: el ganador global, si no es este.
-function podCard(c, nCand, esRey, otro){
+// esRey: HAXIOM lo declaró Prop del Día oficial. official: el oficial HAXIOM (o null).
+function podCard(c, nCand, esRey, official){
+  const POD_TAB = { pitcher:"Pitcher's Model", batter:'Bateadores' };
   const pct  = v => `${v>=0?'+':''}${(v*100).toFixed(1)}%`;
   const conf = Math.round(c.conf*100);
   const cCol = conf>=75?'var(--gtx)':conf>=60?'var(--atx)':'var(--rtx)';
@@ -4191,11 +4204,13 @@ function podCard(c, nCand, esRey, otro){
     <div class="pod-hdr">
       <span class="pod-tag">${esRey?'⭐ PROP DEL DÍA':`★ MEJOR DE ${POD_LBL[c.kind].toUpperCase()}`}</span>
       <span class="pod-sub">${esRey
-        ? `el mejor entre ${nCand} props con valor, abridores y bateadores · por edge × confianza`
-        : `el mejor de esta pestaña · por edge × confianza`}</span>
+        ? `oficial HAXIOM · pasa todos los mínimos §10${official?` · Solid ${official.solid}`:''}`
+        : `el mejor de esta pestaña · por edge × confianza · NO es el oficial`}</span>
       <button class="btn-sm pod-copy" onclick="podCopiar('${c.kind}', this)">📋 Copiar</button>
     </div>
-    ${otro?`<div class="pod-otro">El <b>Prop del Día</b> de hoy no es este: es <b>${esc(otro.name)}</b> ${otro.side==='over'?'OVER':'UNDER'} ${otro.line}${otro.unidad} ${amFmt(otro.price)}, en la pestaña <b>${POD_LBL[otro.kind]==='abridores'?"Pitcher's Model":'Bateadores'}</b>.</div>`:''}
+    ${esRey ? '' : (official
+      ? `<div class="pod-otro">El <b>Prop del Día oficial</b> de hoy es <b>${esc(official.name)}</b> ${official.side==='over'?'OVER':'UNDER'} ${official.line}${esc(official.unidad||'')} ${amFmt(official.price)}, en <b>${POD_TAB[official.kind]}</b>. Esta es solo la mejor de la pestaña.</div>`
+      : `<div class="pod-otro pod-cober-mal">Hoy <b>no hay Prop del Día oficial</b> (HAXIOM): ${podStatusMotivo[haxPod?.status]||'ningún candidato pasa todos los mínimos'}. Esta es solo la mejor de la pestaña — no pasa todos los mínimos §10.</div>`)}
     ${podAviso()}
     <div class="pod-body">
       <img class="pod-img" src="${playerImg(c.player_id)}" onerror="${IMG_FALLBACK}">
@@ -5658,7 +5673,8 @@ function applyRestored(c, src){
     if(s){ try{ localStorage.setItem('snap_latest_'+(c.date||s.date), JSON.stringify(s)); }catch{} }
     else s=loadLatestSnapshot(c.date);
     renderSnapshot(s, null, 'recheck', s?(()=>{let d=0;s.rows.forEach(r=>{if(marketScore(r.edge,r.ev,r.dq)!==r.score)d++;});return d;})():0);
-    renderHaxiomPOD(s?s.pod:null, s?s.id:''); }
+    renderHaxiomPOD(s?s.pod:null, s?s.id:'');
+    haxPod=s?s.pod:null; renderPOD(); }
   const high=allGames.flatMap(g=>g.picks||[]).filter(p=>p.conf==='High').length;
   const med =allGames.flatMap(g=>g.picks||[]).filter(p=>p.conf==='Medium').length;
   const overs=allGames.filter(g=>g.total>g.totalLine).length;
@@ -5838,6 +5854,7 @@ function refreshBoard(date){
     saveSnapshot(snap);
     renderSnapshot(snap, prev, 'refresh');
     renderHaxiomPOD(snap.pod, snap.id);
+    haxPod=snap.pod; renderPOD();   // las pestañas coronan solo lo que HAXIOM declaró oficial
   }catch(e){ console.warn('refreshBoard:', e.message); }
 }
 // RECHECK SNAPSHOT: reusa el snapshot congelado. Verifica reproducibilidad
@@ -5850,6 +5867,7 @@ function recheckSnapshot(){
   snap.rows.forEach(r=>{ if(marketScore(r.edge, r.ev, r.dq)!==r.score) drift++; });
   renderSnapshot(snap, null, 'recheck', drift);
   renderHaxiomPOD(snap.pod, snap.id);
+  haxPod=snap.pod; renderPOD();
 }
 
 // ── Render del tablero congelado + audit trail ──

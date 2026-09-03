@@ -5855,11 +5855,53 @@ function recheckSnapshot(){
 // ── Render del tablero congelado + audit trail ──
 const _statusColor = s => s==='SEÑAL'?'var(--green)':s==='WATCHLIST'?'var(--amber)':s==='RECHAZADO'?'var(--text3)':'var(--blue)';
 const _statusPill = s => `<span style="background:${_statusColor(s)};color:#05050c;font-size:9px;font-weight:800;padding:2px 7px;border-radius:5px;letter-spacing:.3px;white-space:nowrap">${esc(s)}</span>`;
+// ── HAXIOM Signal Board · categorías §11-15 + estado de publicación §21 ──
+// Sobre el mismo score 0-100 y la misma histéresis: las señales (≥80) se parten
+// en Elite/Strong/Lean; la watchlist (60-79) es "Signal Detected" (monitoreo, no
+// oficial). Orden de asignación fijo §11. Una jugada ocupa solo su categoría más
+// alta §16. Estado de publicación derivado del diff de histéresis §21.
+const SIG_ELITE=90, SIG_STRONG=82;   // Elite ≥90 · Strong ≥82 · Lean 80–81
+const SIG_CATS=[
+  {k:'Elite',           ic:'🏆', color:'var(--green)', sub:'≥90'},
+  {k:'Strong',          ic:'💪', color:'var(--gold)',  sub:'82–89'},
+  {k:'Lean',            ic:'📈', color:'var(--blue)',  sub:'80–81'},
+  {k:'Signal Detected', ic:'📡', color:'var(--amber)', sub:'60–79 · monitoreo'},
+];
+const catRankN = { 'Elite':3, 'Strong':2, 'Lean':1, 'Signal Detected':0, 'Rejected':-1 };
+function sigCategory(r){
+  if(r.status==='SEÑAL')    return r.score>=SIG_ELITE?'Elite':r.score>=SIG_STRONG?'Strong':'Lean';
+  if(r.status==='WATCHLIST') return 'Signal Detected';
+  return 'Rejected';
+}
+const prevCategory = r => r.prevStatus==='SEÑAL'
+  ? (r.prevScore>=SIG_ELITE?'Elite':r.prevScore>=SIG_STRONG?'Strong':'Lean')
+  : (r.prevStatus==='WATCHLIST'?'Signal Detected':(r.prevStatus==='NUEVO'?'—':'Rejected'));
+// §21: Publish / Hold / Downgrade / Reject / Invalidated
+function sigPubStatus(r){
+  const cat=sigCategory(r), pcat=prevCategory(r);
+  if(r.status==='SEÑAL')     return (r.prevStatus==='SEÑAL' && catRankN[cat]<catRankN[pcat]) ? 'Downgrade' : 'Publish';
+  if(r.status==='WATCHLIST') return r.prevStatus==='SEÑAL' ? 'Downgrade' : 'Hold';
+  return r.prevStatus==='SEÑAL' ? 'Invalidated' : 'Reject';
+}
+// No-duplicados §16: la misma jugada ocupa solo su categoría más alta (mayor score).
+function dedupSignals(rows){
+  const best={};
+  rows.forEach(r=>{ const id=`${r.gamePk}|${r.pid||'G'}|${r.market}|${r.side||r.label}`;
+    if(!best[id] || r.score>best[id].score) best[id]=r; });
+  return Object.values(best);
+}
+const _pubColor = s => ({Publish:'var(--green)', Hold:'var(--amber)', Downgrade:'var(--amber)', Reject:'var(--text3)', Invalidated:'var(--red)'}[s]||'var(--text3)');
+const _pubPill  = s => `<span style="background:${_pubColor(s)};color:#05050c;font-size:8.5px;font-weight:800;padding:2px 6px;border-radius:5px;letter-spacing:.3px;white-space:nowrap">${esc(s.toUpperCase())}</span>`;
+
 function renderSnapshot(snap, prev, mode, drift){
   const el=$('snapshot-area'); if(!el) return;
   if(!snap){ el.innerHTML=''; return; }
-  const sigs =snap.rows.filter(r=>r.status==='SEÑAL').sort((a,b)=>b.score-a.score||tieBreak(a,b));
-  const watch=snap.rows.filter(r=>r.status==='WATCHLIST').sort((a,b)=>b.score-a.score||tieBreak(a,b));
+  // No-duplicados §16, luego categorización §11-15.
+  const deduped=dedupSignals(snap.rows);
+  const byCat={}; SIG_CATS.forEach(c=>byCat[c.k]=[]);
+  deduped.forEach(r=>{ const cat=sigCategory(r); if(byCat[cat]) byCat[cat].push(r); });
+  Object.values(byCat).forEach(a=>a.sort((x,y)=>y.score-x.score||tieBreak(x,y)));
+  const nSig = byCat.Elite.length+byCat.Strong.length+byCat.Lean.length;
   // Audit: señales, watchlist y cualquier fila que ANTES era señal (para ver salidas).
   const audit=snap.rows.filter(r=>r.status!=='RECHAZADO'||r.prevStatus==='SEÑAL')
     .sort((a,b)=>b.score-a.score||tieBreak(a,b));
@@ -5870,12 +5912,17 @@ function renderSnapshot(snap, prev, mode, drift){
     : (prev ? `🔄 Refresco vivo · comparado contra el snapshot anterior (${new Date(prev.createdAt).toLocaleTimeString('es-MX',{hour12:false})})`
             : `🆕 Primer snapshot del día`);
   const chg = (a,b)=> a===b ? _statusPill(b) : `${_statusPill(a)} <span style="color:var(--text3)">→</span> ${_statusPill(b)}`;
-  const sigRow = r => `<div style="display:flex;align-items:center;gap:9px;padding:7px 12px;border-top:1px solid var(--border)">
-      <span style="font-variant-numeric:tabular-nums;font-weight:800;font-size:15px;color:${_statusColor(r.status)};min-width:34px">${r.score}</span>
+  const sigRow = (r,color) => `<div style="display:flex;align-items:center;gap:9px;padding:7px 12px;border-top:1px solid var(--border)">
+      <span style="font-variant-numeric:tabular-nums;font-weight:800;font-size:15px;color:${color||_statusColor(r.status)};min-width:34px">${r.score}</span>
       <span style="flex:1;min-width:0"><b style="font-size:12px">${esc(r.label)}</b>
         <span style="color:var(--text3);font-size:10px"> · ${esc(r.game)} · ${esc(r.kind)}</span></span>
-      <span style="font-size:10px;color:var(--text2);font-variant-numeric:tabular-nums">edge ${(r.edge*100).toFixed(1)}pp · EV ${(r.ev*100).toFixed(1)}%</span>
+      ${_pubPill(sigPubStatus(r))}
+      <span style="font-size:10px;color:var(--text2);font-variant-numeric:tabular-nums;min-width:96px;text-align:right">edge ${(r.edge*100).toFixed(1)}pp · EV ${(r.ev*100).toFixed(1)}%</span>
     </div>`;
+  // Board por categoría, en el orden de asignación fijo §11 (Elite→Strong→Lean→Detected).
+  const catBlock = c => { const rows=byCat[c.k]; if(!rows.length) return '';
+    return `<div style="padding:6px 13px;font-size:10px;font-weight:800;letter-spacing:.4px;color:${c.color};text-transform:uppercase;border-top:1px solid var(--border)">${c.ic} ${esc(c.k)} <span style="color:var(--text3);font-weight:600">${c.sub} · ${rows.length}</span></div>`
+      + rows.map(r=>sigRow(r,c.color)).join(''); };
   const auditRows = audit.map(r=>`<tr>
       <td>${esc(r.market)}<div style="font-size:9px;color:var(--text3)">${esc(r.game)}</div></td>
       <td class="num">${chg(r.prevStatus, r.status)}</td>
@@ -5891,9 +5938,9 @@ function renderSnapshot(snap, prev, mode, drift){
      </div>
      <div style="padding:8px 13px;font-size:11px;color:var(--text2);border-bottom:1px solid var(--border)">${modeNote}
        <span style="color:var(--text3)"> · umbral: entra ≥${SIG_ENTER} · se mantiene ≥${SIG_STAY} · histéresis anti-parpadeo</span></div>
-     <div style="padding:6px 13px;font-size:10px;font-weight:800;letter-spacing:.4px;color:var(--gtx);text-transform:uppercase">Señales activas (${sigs.length})</div>
-     ${sigs.length?sigs.map(sigRow).join(''):`<div style="padding:8px 13px;font-size:11px;color:var(--text3)">Ningún mercado cruzó el umbral de ${SIG_ENTER}. Sin señal ≠ sin edge: significa que ninguna jugada llegó al filtro "muy exigente".</div>`}
-     ${watch.length?`<details style="border-top:1px solid var(--border)"><summary style="cursor:pointer;padding:7px 13px;font-size:10px;font-weight:800;letter-spacing:.4px;color:var(--atx);text-transform:uppercase;list-style:none">▸ Watchlist (${watch.length}) — 60–79, no son señal</summary>${watch.map(sigRow).join('')}</details>`:''}
+     <div style="padding:7px 13px;font-size:10px;font-weight:800;letter-spacing:.4px;color:var(--text2);text-transform:uppercase;background:var(--bg3)">📋 Signal Board · ${nSig} señal${nSig===1?'':'es'} oficial${nSig===1?'':'es'} <span style="color:var(--text3);font-weight:600">(Elite→Strong→Lean · asignación fija §11)</span></div>
+     ${nSig?SIG_CATS.slice(0,3).map(catBlock).join(''):`<div style="padding:8px 13px;font-size:11px;color:var(--text3)">NO QUALIFIED SIGNALS AVAILABLE FOR THIS BOARD — ningún mercado cruzó el umbral de ${SIG_ENTER}. Sin señal ≠ sin edge: ninguna jugada pasó el filtro "muy exigente" (§9).</div>`}
+     ${byCat['Signal Detected'].length?`<details style="border-top:1px solid var(--border)"><summary style="cursor:pointer;padding:7px 13px;font-size:10px;font-weight:800;letter-spacing:.4px;color:var(--atx);text-transform:uppercase;list-style:none">📡 Signal Detected (${byCat['Signal Detected'].length}) — 60–79, monitoreo, no oficial §15</summary>${byCat['Signal Detected'].map(r=>sigRow(r,'var(--atx)')).join('')}</details>`:''}
      <details style="border-top:1px solid var(--border)"><summary style="cursor:pointer;padding:7px 13px;font-size:10px;font-weight:800;letter-spacing:.4px;color:var(--text2);text-transform:uppercase;list-style:none">▸ Auditoría de cambios (${audit.length}) · ${esc(snap.criteria)}</summary>
        <div style="overflow-x:auto;padding:0 6px 8px"><table class="htable" style="min-width:640px">
          <thead><tr><th>Mercado</th><th class="num">Status previo → nuevo</th><th class="num">Score</th><th>Inputs que cambiaron</th><th>Regla (umbral cruzado)</th></tr></thead>

@@ -5775,6 +5775,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('app').style.display='flex';
   const today=new Date();
   $('date-pick').value=todayLocal(today);
+  // Fútbol: el selector arranca en HOY (antes arrancaba vacío = "próximos días").
+  { const sd=$('soccer-date'); if(sd && !sd.value) sd.value=todayLocal(today); }
   $('hdr-date').textContent=today.toLocaleDateString('es-MX',{weekday:'short',month:'short',day:'numeric'});
   $('odds-key').value=getOddsKey();
   $('kprops-chk').checked=getKProps();

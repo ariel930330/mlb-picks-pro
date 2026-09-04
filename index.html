@@ -2993,8 +2993,35 @@ async function getSoccerOddsIO(compKeys, dateStr){
 // en vez de esperar a cosechar 30 partidos de odds-api.io. CORS abierto (allow-*),
 // header x-apisports-key. Mercados: bet id 1 = 1X2, bet id 5 = Goals Over/Under.
 const AF_BASE = 'https://v3.football.api-sports.io';
-const getAfKey  = () => localStorage.getItem('af_key') || '';
-const saveAfKey = v => { v=(v||'').trim(); v?localStorage.setItem('af_key',v):localStorage.removeItem('af_key'); };
+// Igual que la key de MLB: se guarda en Supabase (app_config.af_key, RLS por
+// auth.uid) y se jala al iniciar sesión → queda fija en TODOS tus dispositivos.
+// localStorage es el caché local. Requiere la columna af_key en app_config.
+let remoteAfKey = null;
+const getAfKey  = () => remoteAfKey || localStorage.getItem('af_key') || '';
+const saveAfKey = v => { v=(v||'').trim(); v?localStorage.setItem('af_key',v):localStorage.removeItem('af_key');
+  remoteAfKey=null; syncAfKeyToCloud(v).then(ok=>{ if(ok&&v) remoteAfKey=v; }); };
+async function syncAfKeyToCloud(v){
+  if(!isOwner()) return false;
+  try{ const uid=session.user.id;
+    const {error} = v ? await sb.from('app_config').upsert({user_id:uid, af_key:v},{onConflict:'user_id'})
+                      : await sb.from('app_config').update({af_key:null}).eq('user_id',uid);
+    if(error){ console.warn('sync af key:', error.message); return false; }
+    return true;
+  }catch(e){ console.warn('sync af key:', e.message); return false; }
+}
+async function loadAfKeyFromCloud(){
+  if(!isOwner()){ remoteAfKey=null; return; }
+  try{
+    const {data,error} = await sb.from('app_config').select('af_key').eq('user_id', session.user.id).maybeSingle();
+    if(error) return;   // columna ausente u otro error → se queda con la local
+    if(data?.af_key){
+      remoteAfKey = data.af_key; localStorage.setItem('af_key', remoteAfKey);
+      const el=document.getElementById('af-key'); if(el) el.value=remoteAfKey;
+    } else if(localStorage.getItem('af_key')){
+      await syncAfKeyToCloud(localStorage.getItem('af_key'));   // primera vez: sube la local
+    }
+  }catch(e){ console.warn('load af key:', e.message); }
+}
 async function afGet(path){
   const key=getAfKey(); if(!key) throw new Error('sin key API-Football');
   const r=await fetch(`${AF_BASE}${path}`, {headers:{'x-apisports-key':key}});
@@ -3165,15 +3192,15 @@ function buildSlate(matches){
 // Se guarda la MEJOR jugada de cada partido que califique (tier distinto de NO BET).
 // Igual que en props: si el mismo pick reaparece con mejor EV se actualiza en su
 // lugar, y nunca se toca uno ya calificado.
-let scSaveMsg = null;
+let scSaveMsg = null, scSaveKind = 'err';   // 'err' = falla real (rojo) · 'info' = normal (neutro)
 const SC_FALTA = 'Falta la tabla <code>soccer_picks</code>. Corre el bloque correspondiente de '+
   '<code>supabase-setup.sql</code> en Supabase → SQL Editor.';
 const scErr = e => { if(!e) return false;
   scSaveMsg = /soccer_picks|schema cache|does not exist|relation/i.test(e.message||'') ? SC_FALTA : esc(e.message||'error');
-  console.warn('soccer picks:', e.message); return true; };
+  scSaveKind='err'; console.warn('soccer picks:', e.message); return true; };
 
 async function saveSoccerPicks(matches){
-  scSaveMsg = null;
+  scSaveMsg = null; scSaveKind = 'info';
   if(!isOwner()){ scSaveMsg='Inicia sesión para que los picks de fútbol se guarden.'; return; }
   const filas = matches.filter(m=>m.eventId && m.bestBet && scQualifies(m.bestBet.tier) && m.bestBet.ev>0)
     .map(m=>{ const c=m.bestBet;
@@ -3183,14 +3210,15 @@ async function saveSoccerPicks(matches){
         price:c.best, ev:c.ev, edge_pp:c.edgePP, dq:c.dq, tier:c.tier,
         rank:c.rank, units:c.units, has_model:!!c.hasModel }; });
   if(!filas.length){
-    // Si vienen partidos pero ninguno trae eventId, es que el análisis salió por
-    // odds-api.io: sus IDs no cruzan con /scores de The Odds API, así que esos picks
-    // nunca se podrían calificar. Se dice, en vez de guardar basura sin calificar.
+    // NO es un error: es un día sin apuesta. Se distingue el caso odds-api.io (IDs
+    // que no cruzan con los marcadores) de "no hubo partidos" y "hubo pero sin valor".
     const sinId = matches.length && !matches.some(m=>m.eventId);
     scSaveMsg = sinId
       ? 'El análisis salió por <b>odds-api.io</b>, cuyos IDs no cruzan con los marcadores de The Odds API. '+
-        'Para que el historial se pueda calificar, quita la key de odds-api.io de esta pestaña y usa solo The Odds API.'
-      : 'Ninguna jugada calificó en este análisis, así que no se guardó nada.';
+        'Para calificar el historial, usa la key de <b>API-Football</b> (recomendada) o quita la de odds-api.io.'
+      : !matches.length
+        ? 'No hubo partidos con cuotas en esta fecha (revisa si hay parón de selecciones o elige otra jornada).'
+        : `Se analizaron ${matches.length} partido(s), pero ninguno cruzó el umbral de valor (OFFICIAL PLAY / STRONG LEAN con EV&gt;0). Día sin apuesta.`;
     return;
   }
   try{
@@ -3280,8 +3308,10 @@ async function loadSoccerHist(){
 function renderSoccerHist(){
   const el=document.getElementById('soccer-hist'); if(!el) return;
   const rows=scHistRows;
-  const aviso = scSaveMsg
-    ? `<div class="error-box" style="margin-bottom:10px"><b>⚠ El último análisis no se guardó</b><br>${scSaveMsg}</div>` : '';
+  const aviso = !scSaveMsg ? ''
+    : scSaveKind==='err'
+      ? `<div class="error-box" style="margin-bottom:10px"><b>⚠ El último análisis no se guardó</b><br>${scSaveMsg}</div>`
+      : `<div style="margin-bottom:10px;padding:9px 12px;background:var(--bg3);border:1px solid var(--border);border-radius:var(--rs);font-size:12px;color:var(--text2)">ℹ ${scSaveMsg}</div>`;
   if(!rows.length){ el.innerHTML=aviso+'<div class="empty">Sin picks guardados todavía.<br>Analiza una jornada con sesión iniciada.</div>'; return; }
 
   const rec = a => { const g=a.filter(r=>r.result==='win'||r.result==='loss');
@@ -5894,9 +5924,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   session = sd?.session || null;
   // Al entrar o salir se vuelve a resolver la key: con sesión manda la de Supabase,
   // sin sesión solo queda la de este navegador.
-  sb.auth.onAuthStateChange((_e,s)=>{ session=s; updateAuthUI(); loadOddsKeyFromCloud().then(updateKeyState); });
+  sb.auth.onAuthStateChange((_e,s)=>{ session=s; updateAuthUI(); loadOddsKeyFromCloud().then(updateKeyState); loadAfKeyFromCloud(); });
   updateAuthUI();
   await loadOddsKeyFromCloud();
+  await loadAfKeyFromCloud();
   updateKeyState();
 
   // Test Supabase connection

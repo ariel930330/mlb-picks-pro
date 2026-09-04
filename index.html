@@ -3093,23 +3093,25 @@ async function getSoccerOddsAF(compKeys, dateStr){
   if(!getAfKey()) return {matches:[], noKey:true};
   const wanted=SOCCER_LEAGUES.filter(l=>l.afId && (!compKeys?.length||compKeys.includes(l.key)));
   const season=soccerSeason(), date=dateStr || todayLocal();
-  const matches=[], unresolved=[];
+  const matches=[], unresolved=[]; let finished=0, scheduled=0;
+  const DONE=['FT','AET','PEN','PST','CANC','ABD','SUSP','INT','LIVE','1H','2H','HT','ET','BT','P'];
   for(const comp of wanted){
     try{
       const str=await getStrengthsAF(comp);   // modelo real de la temporada (o null si hay pocos partidos)
       const fxr=await afGet(`/fixtures?league=${comp.afId}&season=${season}&date=${date}`);
-      const fmap={}; (fxr.response||[]).forEach(f=>{ fmap[f.fixture.id]={
-        home:f.teams.home.name, away:f.teams.away.name, date:f.fixture.date, status:f.fixture.status.short }; });
+      const fmap={}; (fxr.response||[]).forEach(f=>{ const st=f.fixture.status.short;
+        if(st==='NS'||st==='TBD') scheduled++; else finished++;
+        fmap[f.fixture.id]={ home:f.teams.home.name, away:f.teams.away.name, date:f.fixture.date, status:st }; });
       if(!Object.keys(fmap).length) continue;   // esta liga no juega este día
       const odds=await afGetAll(`/odds?league=${comp.afId}&season=${season}&date=${date}`);
       for(const o of odds){ const f=fmap[o.fixture.id]; if(!f) continue;
-        if(['FT','AET','PEN','PST','CANC','ABD','SUSP','INT'].includes(f.status)) continue;   // no jugar finales/cancelados
+        if(DONE.includes(f.status)) continue;   // ya terminó / en juego / cancelado → no se apuesta
         const m=computeSoccerMatchAF(f.home, f.away, f.date, o.bookmakers, comp, str);
         if(m){ m.eventId=String(o.fixture.id); m.afFixture=o.fixture.id; matches.push(m); } }
     }catch(e){ console.warn('af '+comp.short+':', e.message); unresolved.push(comp.short); }
   }
   matches.sort((a,b)=>new Date(a.commence)-new Date(b.commence));
-  return {matches, unresolved};
+  return {matches, unresolved, finished, scheduled};
 }
 
 // Cuotas MLB: SOLO The Odds API. El respaldo de odds-api.io se quitó porque su
@@ -3121,7 +3123,7 @@ async function getMlbOdds(date){
 }
 
 // ── Fútbol: UI (switch de deporte, análisis, render) ──────────────────────────
-let SPORT='mlb', soccerMatches=[];
+let SPORT='mlb', soccerMatches=[], scMeta={finished:0,scheduled:0};
 function setSport(s){
   SPORT=s;
   document.getElementById('sport-mlb').classList.toggle('active',s==='mlb');
@@ -3167,6 +3169,7 @@ async function analyzeSoccer(){
     const res = useAF ? await getSoccerOddsAF(getSoccerLeagueSel(), dateStr)
               : useIO ? await getSoccerOddsIO(getSoccerLeagueSel(), dateStr)
               :         await getSoccerOdds(getSoccerLeagueSel());
+    scMeta = { finished: res.finished||0, scheduled: res.scheduled||0 };
     let matches=res.matches;
     if(dateStr) matches=matches.filter(m=>soccerDay(m.commence)===dateStr);   // solo la fecha elegida
     soccerMatches=matches;
@@ -3216,9 +3219,11 @@ async function saveSoccerPicks(matches){
     scSaveMsg = sinId
       ? 'El análisis salió por <b>odds-api.io</b>, cuyos IDs no cruzan con los marcadores de The Odds API. '+
         'Para calificar el historial, usa la key de <b>API-Football</b> (recomendada) o quita la de odds-api.io.'
+      : (!matches.length && scMeta.finished>0 && scMeta.scheduled===0)
+        ? `Los ${scMeta.finished} partido(s) de esta fecha <b>ya terminaron</b> — no se apuesta un juego jugado. Elige una fecha <b>futura</b> (ej. mañana) para ver jugadas.`
       : !matches.length
-        ? 'No hubo partidos con cuotas en esta fecha (revisa si hay parón de selecciones o elige otra jornada).'
-        : `Se analizaron ${matches.length} partido(s), pero ninguno cruzó el umbral de valor (OFFICIAL PLAY / STRONG LEAN con EV&gt;0). Día sin apuesta.`;
+        ? 'No hay partidos <b>por jugar</b> con cuotas en esta fecha. Elige otra jornada.'
+        : `Se analizaron ${matches.length} partido(s) por jugar, pero ninguno cruzó el umbral de valor (OFFICIAL PLAY / STRONG LEAN con EV&gt;0). Día sin apuesta.`;
     return;
   }
   try{
@@ -3410,7 +3415,12 @@ function renderSoccer(matches, unresolved, dateStr){
   const area=document.getElementById('soccer-area');
   const dLabel = dateStr ? new Date(dateStr+'T12:00:00').toLocaleDateString('es-MX',{weekday:'long',day:'numeric',month:'long'}) : '';
   const warn = unresolved&&unresolved.length ? `<div style="font-size:10px;color:var(--rtx);margin-bottom:8px">⚠ No se pudo resolver la liga: ${unresolved.join(', ')} (dímelo y ajusto el slug).</div>` : '';
-  if(!matches.length){ area.innerHTML=warn+`<div class="empty">${dateStr?`No hay partidos con cuotas para <b>${dLabel}</b> en las ligas elegidas (las cuotas suelen aparecer ~1 semana antes; para fechas pasadas ya se jugaron).`:'No hay partidos con cuotas ahora mismo en las ligas elegidas (quizá no hay jornada próxima).'}</div>`; return; }
+  if(!matches.length){
+    const yaJugaron = scMeta.finished>0 && scMeta.scheduled===0
+      ? `Los <b>${scMeta.finished} partido(s)</b> de ${dLabel||'esta fecha'} <b>ya terminaron</b> — no se apuesta un juego jugado. Elige una fecha <b>futura</b> (ej. mañana).`
+      : dateStr?`No hay partidos <b>por jugar</b> con cuotas para <b>${dLabel}</b> en las ligas elegidas (las cuotas aparecen ~1 semana antes; las fechas pasadas ya se jugaron).`
+              :'No hay partidos con cuotas ahora mismo en las ligas elegidas (quizá no hay jornada próxima).';
+    area.innerHTML=warn+`<div class="empty">${yaJugaron}</div>`; return; }
   const fmtEv=v=>`${v>=0?'+':''}${(v*100).toFixed(1)}%`;
   const p1=x=>Math.round(x*100)+'%', d2=x=>(+x).toFixed(2), pp=v=>`${v>=0?'+':''}${v.toFixed(1)}`;
   const slate=buildSlate(matches);

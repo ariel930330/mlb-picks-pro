@@ -626,13 +626,17 @@ body{background:radial-gradient(1100px 560px at 15% -10%,rgba(178,107,255,.10),t
           style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:6px 9px;font-size:12px;color:var(--text);font-family:inherit;outline:none">
         <button class="btn-ghost" id="soccer-date-clear" onclick="clearSoccerDate()" title="Volver a próximos días"
           style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--rs);padding:6px 10px;font-size:11px;color:var(--text2);cursor:pointer">Próximos</button>
-        <input type="password" id="oddsio-key" placeholder="odds-api.io key (cuotas, 500/día)" autocomplete="off"
-          style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:7px 10px;font-size:12px;color:var(--text);font-family:inherit;outline:none;min-width:190px"
+        <input type="password" id="af-key" placeholder="API-Football key (odds + modelo)" autocomplete="off"
+          title="Cuotas + fixtures + resultados de la temporada ACTUAL (api-football.com). Es la fuente principal si está puesta. Se guarda en tu navegador, nunca en el código."
+          style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:7px 10px;font-size:12px;color:var(--text);font-family:inherit;outline:none;min-width:200px"
+          onchange="saveAfKey(this.value)">
+        <input type="password" id="oddsio-key" placeholder="odds-api.io key (respaldo)" autocomplete="off"
+          style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:7px 10px;font-size:12px;color:var(--text);font-family:inherit;outline:none;min-width:170px"
           onchange="saveOddsIoKey(this.value)">
         <span id="soccer-leagues" class="lg-chks"></span>
         <span id="soccer-remaining" style="font-size:11px;color:var(--text3);margin-left:auto"></span>
       </div>
-      <div style="font-size:10px;color:var(--text3);margin-bottom:10px"><b>Cuotas</b> (odds-api.io, Bet365+1xbet): consenso de-vig vs. mejor precio. <b>Modelo</b>: cada análisis guarda los resultados finales en Supabase y, al juntar ≥30 partidos de la temporada por liga, se enciende el <b>Dixon-Coles</b> (fuerzas ataque/defensa → <b>edge de modelo</b> del spec). Hasta entonces, solo valor de línea.</div>
+      <div style="font-size:10px;color:var(--text3);margin-bottom:10px"><b>API-Football</b> (principal): cuotas de varias casas + fixtures + resultados de la temporada ACTUAL → el <b>Dixon-Coles</b> arranca con datos reales al juntar ≥30 partidos por liga (fuerzas ataque/defensa → <b>edge de modelo</b> del spec). <b>odds-api.io</b> queda de respaldo. Consenso de-vig (Shin) vs. mejor precio; sin key, solo valor de línea.</div>
       <div id="soccer-area"><div class="empty">Elige las ligas y dale a <b>Analizar jornada</b>.</div></div>
       <div class="ph-hdr">
         <div>
@@ -2983,6 +2987,104 @@ async function getSoccerOddsIO(compKeys, dateStr){
   return {matches, unresolved};
 }
 
+// ── Proveedor API-Football (api-sports.io, plan Pro) ─────────────────────────
+// Fuente PRINCIPAL de fútbol cuando hay key: da cuotas (varias casas), fixtures y
+// RESULTADOS de la temporada ACTUAL — así el Dixon-Coles arranca con datos reales
+// en vez de esperar a cosechar 30 partidos de odds-api.io. CORS abierto (allow-*),
+// header x-apisports-key. Mercados: bet id 1 = 1X2, bet id 5 = Goals Over/Under.
+const AF_BASE = 'https://v3.football.api-sports.io';
+const getAfKey  = () => localStorage.getItem('af_key') || '';
+const saveAfKey = v => { v=(v||'').trim(); v?localStorage.setItem('af_key',v):localStorage.removeItem('af_key'); };
+async function afGet(path){
+  const key=getAfKey(); if(!key) throw new Error('sin key API-Football');
+  const r=await fetch(`${AF_BASE}${path}`, {headers:{'x-apisports-key':key}});
+  if(!r.ok) throw new Error('AF HTTP '+r.status);
+  const j=await r.json();
+  const errs=j.errors; const nErr=Array.isArray(errs)?errs.length:(errs?Object.keys(errs).length:0);
+  if(nErr) throw new Error('AF: '+JSON.stringify(errs));
+  // La cuota diaria restante viene en el header; se muestra igual que las otras.
+  const rem=r.headers.get('x-ratelimit-requests-remaining'); if(rem!=null) oddsRemaining=rem;
+  return j;
+}
+// Junta todas las páginas (el endpoint pagina de 10 en 10 en odds).
+async function afGetAll(path){
+  let page=1, out=[], total=1;
+  do{ const j=await afGet(`${path}${path.includes('?')?'&':'?'}page=${page}`);
+    out=out.concat(j.response||[]); total=j.paging?.total||1; page++;
+  }while(page<=total && page<=30);
+  return out;
+}
+// Fuerzas Dixon-Coles desde los resultados REALES de la temporada actual.
+let _afStrCache={};
+async function getStrengthsAF(comp){
+  if(!comp.afId) return null;
+  const season=soccerSeason(), ck='af-'+comp.afId+'-'+season;
+  if(ck in _afStrCache) return _afStrCache[ck];
+  try{
+    const fx=await afGetAll(`/fixtures?league=${comp.afId}&season=${season}&status=FT`);
+    const T={}, get=n=>T[n]||(T[n]={name:n,hp:0,hf:0,ha:0,ap:0,af:0,aa:0});
+    let n=0;
+    fx.forEach(f=>{ const hg=f.goals?.home, ag=f.goals?.away; if(hg==null||ag==null) return;
+      const h=get(f.teams.home.name), a=get(f.teams.away.name);
+      h.hp++; h.hf+=hg; h.ha+=ag; a.ap++; a.af+=ag; a.aa+=hg; n++; });
+    if(n < SC_MINGAMES) return _afStrCache[ck]=null;   // pocos partidos aún → solo valor de línea
+    const str=buildStrengths(Object.values(T)); str.games=n;
+    return _afStrCache[ck]=str;
+  }catch(e){ console.warn('af strengths '+comp.short+':', e.message); return _afStrCache[ck]=null; }
+}
+// Parsea las cuotas de un fixture (bookmakers[].bets[]) a los arrays que espera la
+// matemática compartida: h2hBooks=[[H,D,A],…] y ouBooks=[{point,over,under},…].
+function afParseOdds(bookmakers){
+  const h2hBooks=[], ouBooks=[];
+  for(const bk of bookmakers||[]){
+    for(const bet of bk.bets||[]){
+      if(bet.id===1 || bet.name==='Match Winner'){
+        let h,d,a; for(const v of bet.values||[]){ const o=+v.odd;
+          if(v.value==='Home')h=o; else if(v.value==='Draw')d=o; else if(v.value==='Away')a=o; }
+        if(h>1&&d>1&&a>1) h2hBooks.push([h,d,a]);
+      } else if(bet.id===5 || bet.name==='Goals Over/Under'){
+        const byPt={};
+        for(const v of bet.values||[]){ const m=/^(Over|Under)\s+([\d.]+)$/.exec(v.value); if(!m) continue;
+          (byPt[m[2]]=byPt[m[2]]||{})[m[1]==='Over'?'over':'under']=+v.odd; }
+        for(const pt in byPt){ const e=byPt[pt]; if(e.over>1&&e.under>1) ouBooks.push({point:+pt,over:e.over,under:e.under}); }
+      }
+    }
+  }
+  return {h2hBooks, ouBooks};
+}
+function computeSoccerMatchAF(home, away, date, bookmakers, lg, str){
+  const {h2hBooks, ouBooks}=afParseOdds(bookmakers);
+  if(!h2hBooks.length) return null;
+  let model=null;
+  if(str){ const lam=matchLambdas(str, home, away);
+    if(lam){ const lines=ouBooks.length?[...new Set(ouBooks.map(b=>b.point))]:[2.5];
+      model=dcModel(lam.lh, lam.la, lines); model.played=lam.played; } }
+  return finalizeSoccerMatch(home, away, date, lg, h2hBooks, ouBooks, model);
+}
+// Trae fixtures + cuotas del día por liga (2 requests/liga) y arma los partidos.
+async function getSoccerOddsAF(compKeys, dateStr){
+  if(!getAfKey()) return {matches:[], noKey:true};
+  const wanted=SOCCER_LEAGUES.filter(l=>l.afId && (!compKeys?.length||compKeys.includes(l.key)));
+  const season=soccerSeason(), date=dateStr || todayLocal();
+  const matches=[], unresolved=[];
+  for(const comp of wanted){
+    try{
+      const str=await getStrengthsAF(comp);   // modelo real de la temporada (o null si hay pocos partidos)
+      const fxr=await afGet(`/fixtures?league=${comp.afId}&season=${season}&date=${date}`);
+      const fmap={}; (fxr.response||[]).forEach(f=>{ fmap[f.fixture.id]={
+        home:f.teams.home.name, away:f.teams.away.name, date:f.fixture.date, status:f.fixture.status.short }; });
+      if(!Object.keys(fmap).length) continue;   // esta liga no juega este día
+      const odds=await afGetAll(`/odds?league=${comp.afId}&season=${season}&date=${date}`);
+      for(const o of odds){ const f=fmap[o.fixture.id]; if(!f) continue;
+        if(['FT','AET','PEN','PST','CANC','ABD','SUSP','INT'].includes(f.status)) continue;   // no jugar finales/cancelados
+        const m=computeSoccerMatchAF(f.home, f.away, f.date, o.bookmakers, comp, str);
+        if(m){ m.eventId=String(o.fixture.id); m.afFixture=o.fixture.id; matches.push(m); } }
+    }catch(e){ console.warn('af '+comp.short+':', e.message); unresolved.push(comp.short); }
+  }
+  matches.sort((a,b)=>new Date(a.commence)-new Date(b.commence));
+  return {matches, unresolved};
+}
+
 // Cuotas MLB: SOLO The Odds API. El respaldo de odds-api.io se quitó porque su
 // cobertura era delgada (sin Total Bases, F5 incompleto) y mezclarlas producía
 // jornadas con la mitad de los mercados. odds-api.io sigue vivo para FÚTBOL, que es
@@ -3025,16 +3127,19 @@ function setupSoccerLeagues(){
   el.innerHTML=SOCCER_LEAGUES.map(l=>`<label class="lg-chk"><input type="checkbox" value="${l.key}" ${sel.includes(l.key)?'checked':''} onchange="saveSoccerLeagues()"> ${l.flag} ${l.short}</label>`).join('');
   el.dataset.done='1';
   const kin=document.getElementById('oddsio-key'); if(kin) kin.value=getOddsIoKey();
+  const afin=document.getElementById('af-key'); if(afin) afin.value=getAfKey();
 }
 async function analyzeSoccer(){
   const area=document.getElementById('soccer-area');
-  const useIO=!!getOddsIoKey();
-  if(!useIO && !getOddsKey()){ area.innerHTML='<div class="empty">Falta tu <b>API key</b>. Pon la de <b>odds-api.io</b> (500/día) en el campo de esta pestaña, o la de The Odds API en ⚾ MLB.</div>'; return; }
+  const useAF=!!getAfKey(), useIO=!!getOddsIoKey();
+  if(!useAF && !useIO && !getOddsKey()){ area.innerHTML='<div class="empty">Falta tu <b>API key</b>. Pon la de <b>API-Football</b> (recomendada) o la de <b>odds-api.io</b> en esta pestaña, o la de The Odds API en ⚾ MLB.</div>'; return; }
   const btn=document.getElementById('soccer-run-btn'); if(btn) btn.disabled=true;
   const dateStr=getSoccerDate();
   area.innerHTML='<div class="loading"><div class="spin"></div>Trayendo cuotas de las ligas…</div>';
   try{
-    const res = useIO ? await getSoccerOddsIO(getSoccerLeagueSel(), dateStr) : await getSoccerOdds(getSoccerLeagueSel());
+    const res = useAF ? await getSoccerOddsAF(getSoccerLeagueSel(), dateStr)
+              : useIO ? await getSoccerOddsIO(getSoccerLeagueSel(), dateStr)
+              :         await getSoccerOdds(getSoccerLeagueSel());
     let matches=res.matches;
     if(dateStr) matches=matches.filter(m=>soccerDay(m.commence)===dateStr);   // solo la fecha elegida
     soccerMatches=matches;

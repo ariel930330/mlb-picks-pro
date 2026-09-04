@@ -3282,6 +3282,21 @@ function afBalancedAhLineId(bms, id, lines){
 }
 const afAhLines = bms => afAhLinesId(bms,4);
 const afBalancedAhLine = (bms,lines) => afBalancedAhLineId(bms,4,lines);
+// Hasta n líneas O/U a cada lado de la principal (para evaluar varias líneas, no solo la balanceada).
+function afLinesNear(bms, id, n=2){
+  const all=new Set();
+  for(const bk of bms||[]) for(const bet of (bk.bets||[])) if(bet.id===id)
+    for(const v of bet.values||[]){ const m=/^(?:Over|Under)\s+([\d.]+)$/.exec(v.value); if(m) all.add(+m[1]); }
+  const lines=[...all].sort((a,b)=>a-b); if(!lines.length) return [];
+  const main=afBestOULine(bms,id), mi=main==null?0:lines.indexOf(main);
+  return lines.slice(Math.max(0,mi-n), mi+n+1);
+}
+// Líneas AH a cada lado de la balanceada.
+function afAhLinesNear(bms, id, n=1){
+  const lines=afAhLinesId(bms,id); if(!lines.length) return [];
+  const bal=afBalancedAhLineId(bms,id,lines), bi=bal==null?0:lines.indexOf(bal);
+  return lines.slice(Math.max(0,bi-n), bi+n+1);
+}
 // EV two-way/settlement con retorno = ret>0 ? ret*(d-1) : ret (media apuesta incluida).
 const _evGrid = (G, valOf, side, line) => b => { let ev=0;
   for(let x=0;x<G.length;x++) for(let y=0;y<G.length;y++){ const r=scSettle(side,line,valOf(x,y)); ev+=G[x][y]*(r>0?r*(b-1):r); } return ev; };
@@ -3314,13 +3329,20 @@ function afDerivedCands(bms, gridF, gridH1){
     if(rows.length>=2){ const pH=gridF?gSum(gridF,(x,y)=>x>y):0, pA=gridF?gSum(gridF,(x,y)=>x<y):0, noDraw=pH+pA;
       push('DNB','Draw No Bet · Local', noDraw>0?pH/noDraw:0.5, perSel,0,rows, b=> pH*(b-1)-pA);
       push('DNB','Draw No Bet · Visita', noDraw>0?pA/noDraw:0.5, perSel,1,rows, b=> pA*(b-1)-pH); } }
-  // Team Totals: Local (16) / Visita (17)
+  // Total del partido — LÍNEAS EXTRA (la principal ya la puso finalizeSoccerMatch)
+  if(gridF){ const main=afBestOULine(bms,5);
+    afLinesNear(bms,5,2).filter(L=>L!==main).forEach(L=>{
+      const {rows,perSel}=afPairRows(bms,5,[v=>v===`Over ${L}`,v=>v===`Under ${L}`]); if(rows.length<2) return;
+      const pO=gTotOver(gridF,L);
+      push('O',`Total · Over ${L}`, pO, perSel,0,rows, _evGrid(gridF,(x,y)=>x+y,'over',L));
+      push('U',`Total · Under ${L}`, 1-pO, perSel,1,rows, _evGrid(gridF,(x,y)=>x+y,'under',L)); }); }
+  // Team Totals: Local (16) / Visita (17) — varias líneas
   [[16,true,'local'],[17,false,'visita']].forEach(([id,home,who])=>{
-    const L=afBestOULine(bms,id); if(L==null) return;
-    const {rows,perSel}=afPairRows(bms,id,[v=>v===`Over ${L}`,v=>v===`Under ${L}`]);
-    if(rows.length<2) return; const pO=gridF?gTeamOver(gridF,home,L):0;
-    push('TT',`Total ${who} · Over ${L}`, pO, perSel,0,rows, gridF?_evGrid(gridF,(x,y)=>home?x:y,'over',L):null);
-    push('TT',`Total ${who} · Under ${L}`, 1-pO, perSel,1,rows, gridF?_evGrid(gridF,(x,y)=>home?x:y,'under',L):null);
+    afLinesNear(bms,id,1).forEach(L=>{
+      const {rows,perSel}=afPairRows(bms,id,[v=>v===`Over ${L}`,v=>v===`Under ${L}`]);
+      if(rows.length<2) return; const pO=gridF?gTeamOver(gridF,home,L):0;
+      push('TT',`Total ${who} · Over ${L}`, pO, perSel,0,rows, gridF?_evGrid(gridF,(x,y)=>home?x:y,'over',L):null);
+      push('TT',`Total ${who} · Under ${L}`, 1-pO, perSel,1,rows, gridF?_evGrid(gridF,(x,y)=>home?x:y,'under',L):null); });
   });
   // Goles 1ª mitad O/U (6)
   { const L=afBestOULine(bms,6); if(L!=null){
@@ -3328,13 +3350,13 @@ function afDerivedCands(bms, gridF, gridH1){
       if(rows.length>=2){ const pO=gridH1?gTotOver(gridH1,L):0;
         push('1H',`1ª mitad · Over ${L}`, pO, perSel,0,rows, gridH1?_evGrid(gridH1,(x,y)=>x+y,'over',L):null);
         push('1H',`1ª mitad · Under ${L}`, 1-pO, perSel,1,rows, gridH1?_evGrid(gridH1,(x,y)=>x+y,'under',L):null); } } }
-  // Hándicap Asiático (4) — línea principal, ambos lados (settlement de cuartos §3).
-  // Solo con modelo: el EV de settlement necesita la rejilla; sin ella sería adivinar.
-  if(gridF){ const L=afBalancedAhLine(bms, afAhLines(bms));
-    if(L!=null){ const {rows,perSel}=afPairRows(bms,4,[v=>v===`Home ${_ahLbl(L)}`,v=>v===`Away ${_ahLbl(L)}`]);
-      if(rows.length>=2){ const nov=devigMulti(rows);
-        if(nov){ if(perSel[0].length>=2) C.push(scCand('AH',`Asiático Local ${_ahLbl(L)}`, gAhCover(gridF,true,L), nov[0], perSel[0], perSel[0].length, true, true, b=>gAhEV(gridF,true,L,b)));
-          if(perSel[1].length>=2) C.push(scCand('AH',`Asiático Visita ${_ahLbl(L)}`, gAhCover(gridF,false,-L), nov[1], perSel[1], perSel[1].length, true, true, b=>gAhEV(gridF,false,-L,b))); } } } }
+  // Hándicap Asiático (4) — varias líneas alrededor de la balanceada (settlement §3).
+  // Solo con modelo: el EV de settlement necesita la rejilla.
+  if(gridF){ afAhLinesNear(bms,4,1).forEach(L=>{
+    const {rows,perSel}=afPairRows(bms,4,[v=>v===`Home ${_ahLbl(L)}`,v=>v===`Away ${_ahLbl(L)}`]);
+    if(rows.length<2) return; const nov=devigMulti(rows); if(!nov) return;
+    if(perSel[0].length>=2) C.push(scCand('AH',`Asiático Local ${_ahLbl(L)}`, gAhCover(gridF,true,L), nov[0], perSel[0], perSel[0].length, true, true, b=>gAhEV(gridF,true,L,b)));
+    if(perSel[1].length>=2) C.push(scCand('AH',`Asiático Visita ${_ahLbl(L)}`, gAhCover(gridF,false,-L), nov[1], perSel[1], perSel[1].length, true, true, b=>gAhEV(gridF,false,-L,b))); }); }
   return C;
 }
 

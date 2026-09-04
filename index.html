@@ -2474,6 +2474,9 @@ const SOCCER_LEAGUES = [
 ];
 const decProb = d => (d>1 ? 1/d : null);            // prob implícita de una cuota decimal (con vig)
 const bestDec = arr => Math.max(...arr);            // mejor precio = cuota decimal más alta (line shopping)
+// Cuota decimal → americana. En fútbol TODO se muestra en americana; la matemática
+// (EV, Kelly, de-vig) y lo guardado en Supabase siguen en decimal.
+const dAm = d => { d=+d; if(!(d>1)) return '—'; const a = d>=2 ? Math.round((d-1)*100) : -Math.round(100/(d-1)); return a>0?'+'+a:String(a); };
 // ╔══════════════════════════════════════════════════════════════════════════╗
 // ║  HAXIOM EDGE · Capa de precificación (spec §1.1.1 y §3)                  ║
 // ╚══════════════════════════════════════════════════════════════════════════╝
@@ -2568,13 +2571,19 @@ const SC_DEVIG = 'shin';
 // De-vig completo de un mercado. Quita el margen CASA POR CASA y luego promedia:
 // mezclar casas antes de quitar el margen contamina las probabilidades con los
 // márgenes ajenos. books = [[d1,d2,...], ...] en cuota decimal.
+const _renorm = p => { const t=_sum(p); return t>0 ? p.map(x=>x/t) : p; };
+// CONSENSO ROBUSTO. Con ≥3 casas la referencia es la MEDIANA por salida, no la media:
+// una o dos casas que muevan su línea no arrastran el consenso (medido 4-sep-2026: una
+// casa se aparta de la mediana 0.5pp p50 / 1.3pp p90 / 3pp máx). Si una fila trae
+// .pin=true (Pinnacle, id 4 en API-Football, la casa más "sharp"), la referencia es
+// mitad Pinnacle y mitad mediana del resto.
 function devigAll(books){
   if(!books || !books.length) return null;
   const n=books[0].length;
   const met={prop:devigProp, add:devigAdd, power:devigPower, shin:q=>devigShin(q).p};
-  const out={}; let usadas=0, ovAcc=0, zAcc=0;
+  const out={}; let usadas=0, ovAcc=0, zAcc=0, pinP=null;
   for(const k in met){
-    const acc=new Array(n).fill(0); let m=0;
+    const per=[];                                  // de-vig de CADA casa por separado
     for(const b of books){
       if(!b || b.length!==n || b.some(d=>!(d>1))) continue;
       const q=b.map(d=>1/d), s=_sum(q);
@@ -2583,17 +2592,22 @@ function devigAll(books){
       // recibiría null donde antes siempre recibía números. Los cuatro métodos
       // aguantan suma<1: Shin cae solo al proporcional cuando no hay margen.
       if(!isFinite(s) || !(s>0)) continue;       // dato roto de verdad
-      met[k](q).forEach((v,i)=>acc[i]+=v); m++;
+      const p=met[k](q); per.push(p);
       if(k==='prop'){ ovAcc+=s-1; zAcc+=devigShin(q).z; }
+      if(k===SC_DEVIG && b.pin) pinP=p;
     }
-    out[k]= m ? acc.map(x=>x/m) : null;
-    if(k==='prop') usadas=m;
+    out[k]= per.length
+      ? _renorm([...Array(n)].map((_,i)=> per.length>=3 ? median(per.map(p=>p[i])) : avg(per.map(p=>p[i]))))
+      : null;
+    if(k==='prop') usadas=per.length;
   }
   if(!usadas) return null;
   const ok=Object.values(out).filter(Boolean);
   let spread=0;
   for(let i=0;i<n;i++){ const v=ok.map(p=>p[i]); spread=Math.max(spread, Math.max(...v)-Math.min(...v)); }
-  return { ...out, ref:out[SC_DEVIG]||out.prop, spread:+spread.toFixed(4),
+  let ref=out[SC_DEVIG]||out.prop;
+  if(pinP) ref=_renorm(ref.map((v,i)=>0.5*pinP[i]+0.5*v));
+  return { ...out, ref, pin:!!pinP, spread:+spread.toFixed(4),
            overround:+(ovAcc/usadas).toFixed(4), z:+(zAcc/usadas).toFixed(4), libros:usadas };
 }
 // Compatibilidad: todo lo que ya llamaba a devigMulti sigue funcionando, pero
@@ -2678,40 +2692,84 @@ function scPruebas(){
   console.log(fallos ? '\n'+fallos+' PRUEBAS FALLARON' : '\nTODAS LAS PRUEBAS PASAN');
   return !fallos;
 }
-// ── Motor de disciplina Baker's Picks (spec §6-8,11-15) ──────────────────────
-const SC_CFG = { evOfficial:.05, evLean:.025, edgeOfficial:.03, edgeLean:.02,
-                 dqOfficial:80, dqLean:70, kellyFrac:.25, targetEV:.05, minProbNoModel:.15 };
+// ── Motor de disciplina Baker's Picks / HAXIOM fútbol (spec §6-8,11-15) ──────
+// UMBRALES PROPIOS DE FÚTBOL (no los de MLB). Medidos el 4-sep-2026 con cuotas reales
+// de API-Football: 60 partidos, 6-13 casas, Pinnacle en todos.
+//   · Ruido entre casas: una casa se aparta de la mediana 0.5pp (p50) / 1.3pp (p90) /
+//     3pp (máx) → un edge < 1.5pp no se distingue de "una casa movió su línea".
+//   · Valor de línea sin modelo: p95 = +0.2% al precio robusto → sin modelo casi no hay edge.
+//   · Modelo Dixon-Coles con 3-6 partidos/equipo: discrepa del mercado 8.7pp (p50), 14pp
+//     (sd) → es ruido. Por eso pesa por MADUREZ (SC_MODEL_W) y cada nivel exige un
+//     mínimo de partidos jugados.
+// ENTRAR y MANTENER son distintos (histéresis): una señal publicada no cae por un
+// micro-movimiento de precio; cae si la cuota ya no alcanza el umbral de MANTENER, o
+// se reconsidera desde cero si hay noticia (baja nueva) o TODO el consenso se movió ≥3pp.
+const SC_CRITERIA = 'HAXIOM-SOCCER-v1.0';
+const SC_CFG = {
+  official:{ edge:2.5, ev:.035, dq:80, games:10, books:4, lo:1.40, hi:3.50, stayEdge:2.0, stayEv:.025 },
+  lean:    { edge:1.5, ev:.020, dq:70, games:6,  books:3, lo:1.33, hi:4.00, stayEdge:1.2, stayEv:.012 },
+  line:    { ev:.020, evMinor:.010, minProb:.20, dq:58 },   // sin modelo: solo valor de precio
+  kellyFrac:.25, targetEV:.035,
+  newsMove:.03,   // el CONSENSO (no una casa) se movió ≥3pp → se reconsidera
+  pxTol:.03,      // casa fuera de consenso: paga >3pp (o >12% relativo) más que la mediana → se ignora
+};
+// Peso del modelo frente al consenso por madurez: w = cap · g/(g+K), g = partidos jugados
+// (mínimo de los dos equipos). 3 pj → 0.07 · 10 → 0.17 · 20 → 0.25 · 34 → 0.31.
+// Un modelo de goles nunca merece más de ~1/3 del peso frente a un consenso con Pinnacle
+// (el error del mercado de cierre ronda 3-4pp; el del modelo maduro, 6-7pp).
+const SC_MODEL_W = { K:20, cap:0.5 };
+const scModelW = g => SC_MODEL_W.cap * g/(g+SC_MODEL_W.K);
+const SC_CTX = { played:null };   // partidos jugados del partido en curso (lo fija finalizeSoccerMatch)
 const kellyDec = (p,dec)=>{ const b=dec-1; return b<=0?0:Math.max(0,(p*dec-1)/b); };
-// Calidad de dato 0-100 de una selección (§8): consenso de casas, acuerdo, línea, modelo.
-function scDQ(nBooks, disp, hasOU, hasModel){
+// Calidad de dato 0-100 (§8): consenso de casas, acuerdo, línea, modelo (por madurez).
+function scDQ(nBooks, disp, hasOU, hasModel, g){
   let dq = 46;
   dq += Math.min(22,(nBooks-1)*4.5);                     // consenso: 6+ casas ≈ +22
   dq += disp<=.04?12 : disp<=.08?7 : disp<=.14?2 : -4;   // acuerdo entre casas
   dq += hasOU?5:0;
-  dq += hasModel?18:-6;                                   // modelo independiente conectado
+  dq += hasModel ? Math.round(-6+24*Math.min(1,(g||0)/20)) : -6;   // modelo maduro (≥20 pj) ≈ +18
   return Math.max(0,Math.min(100,Math.round(dq)));
 }
-// Clasifica una selección: con modelo → umbrales de edge (§11); sin modelo → valor de línea.
-function scClassify(edgePP, ev, dq, hasModel, prob){
-  if(hasModel){
-    if(edgePP>=SC_CFG.edgeOfficial*100 && ev>=SC_CFG.evOfficial && dq>=SC_CFG.dqOfficial) return 'OFFICIAL PLAY';
-    if(edgePP>=SC_CFG.edgeLean*100    && ev>=SC_CFG.evLean    && dq>=SC_CFG.dqLean)     return 'STRONG LEAN';
-    return 'NO BET';
+// Precio ROBUSTO: ignora casas que pagan claramente más que el consenso (línea vieja o
+// error). Así una sola casa no fabrica una señal ni la tumba. El EV se calcula a este precio.
+function scRobustBest(prices){
+  const imps=prices.map(d=>1/d), med=median(imps), tol=Math.min(SC_CFG.pxTol, 0.12*med);
+  const ok=prices.filter(d=>med-1/d<=tol);
+  const raw=Math.max(...prices), best=ok.length?Math.max(...ok):raw;
+  return { best, raw, outliers:prices.length-ok.length };
+}
+// Clasifica con umbrales de ENTRAR (o de MANTENER si ya era señal). Devuelve {tier, fail}
+// con la PRIMERA condición que falló, para explicarlo en pantalla.
+function scClassify(c, stay=false){
+  if(c.hasModel){
+    const chk=T=>{
+      const eMin=stay?T.stayEdge:T.edge, vMin=stay?T.stayEv:T.ev;
+      if((c.played||0)<T.games) return `modelo con ${c.played||0} pj (mín ${T.games})`;
+      if(c.nBooks<T.books) return `${c.nBooks} casa(s) (mín ${T.books})`;
+      if(c.best<T.lo||c.best>T.hi) return `cuota fuera de rango ${dAm(T.lo)}…${dAm(T.hi)}`;
+      if(c.edgePP<eMin) return `edge ${c.edgePP.toFixed(1)}pp < ${eMin}pp`;
+      if(c.ev<vMin) return `EV ${(c.ev*100).toFixed(1)}% < ${(vMin*100).toFixed(1)}%`;
+      if(c.dq<T.dq) return `DQ ${c.dq} < ${T.dq}`;
+      return null; };
+    const fO=chk(SC_CFG.official); if(!fO) return {tier:'OFFICIAL PLAY', fail:null};
+    const fL=chk(SC_CFG.lean);     if(!fL) return {tier:'STRONG LEAN', fail:fO};
+    return {tier:'NO BET', fail:fL};
   }
   // Sin modelo: solo valor de línea. Piso de probabilidad para no perseguir longshots
-  // (con pocas casas el +EV en cuotas altas es ruido de de-vig / sesgo favorito-longshot).
-  if(prob<SC_CFG.minProbNoModel) return 'NO BET';
-  if(ev>=SC_CFG.evOfficial && dq>=58) return 'VALOR DE LÍNEA';
-  if(ev>=SC_CFG.evLean) return 'VALOR MENOR';
-  return 'NO BET';
+  // (el +EV en cuotas altas es ruido de de-vig / sesgo favorito-longshot).
+  const L=SC_CFG.line;
+  if(c.adjP<L.minProb) return {tier:'NO BET', fail:`prob ${Math.round(c.adjP*100)}% < ${L.minProb*100}% (sin modelo)`};
+  if(c.ev>=L.ev && c.dq>=L.dq) return {tier:'VALOR DE LÍNEA', fail:null};
+  if(c.ev>=L.evMinor) return {tier:'VALOR MENOR', fail:`EV ${(c.ev*100).toFixed(1)}% < ${L.ev*100}%`};
+  return {tier:'NO BET', fail:`EV ${(c.ev*100).toFixed(1)}% < ${L.evMinor*100}% (sin modelo)`};
 }
 const scQualifies = t => t!=='NO BET';
 // Unidades sugeridas (§15) sin bankroll: rating por fuerza del edge.
 function scUnits(ev, dq){
-  if(ev<SC_CFG.evLean) return 0;
-  if(ev>=.12 && dq>=82) return 1.0;
-  if(ev>=.08 && dq>=76) return .75;
-  if(ev>=.05) return .5;
+  if(ev<SC_CFG.lean.ev) return 0;
+  if(ev>=.10 && dq>=82) return 1.0;
+  if(ev>=.06 && dq>=76) return .75;
+  if(ev>=.035) return .5;
   return .25;
 }
 // Puntaje de ranking 0-100 (§12, con los insumos disponibles).
@@ -2721,26 +2779,80 @@ function scRank(c){
   return Math.round(100*(.40*evS+.25*edgeS+.20*dqS+.10*liqS+.05*pS));
 }
 // Construye una selección con toda la métrica del spec (§7-8,12,14-15).
-// evFn(best): EV con settlement (asiático/DNB con push); si falta, EV two-way estándar.
+// evFn(b): EV del MODELO con settlement (asiático/DNB/push). Se linealiza EV(b)=A·b−B y
+// se mezcla con el mercado con el MISMO peso que la probabilidad, para que edge y EV no
+// se contradigan (antes el EV asiático salía de la rejilla cruda, sin shrinkage).
 function scCand(mkt, label, modelP, noVig, prices, nBooks, hasOU, hasModel, evFn){
-  const best=bestDec(prices), cons=avg(prices);
+  const rb=scRobustBest(prices), best=rb.best, cons=avg(prices);
   const imps=prices.map(d=>1/d), mean=avg(imps);
   const disp=mean>0?(Math.max(...imps)-Math.min(...imps))/mean:1;
-  let dq=scDQ(nBooks, disp, hasOU, hasModel);
+  const g=hasModel ? (SC_CTX.played ?? SC_MODEL_W.K) : 0;
+  let dq=scDQ(nBooks, disp, hasOU, hasModel, g);
   // §9: castiga discrepancias grandes modelo-mercado (probable error del modelo, no edge)
   if(hasModel){ const dis=Math.abs(modelP-noVig); if(dis>.08) dq=Math.max(35, dq-Math.round((dis-.08)*120)); }
-  const qw=dq/100;
-  const adjP=qw*modelP+(1-qw)*noVig;                     // §8 shrinkage al mercado
-  const edgePP=+((adjP-noVig)*100).toFixed(2);           // §7 edge de modelo (pp)
-  const ev=+((evFn?evFn(best):adjP*best-1)).toFixed(4);  // §7 EV (settlement-aware si aplica)
+  const w = hasModel ? (dq/100)*scModelW(g) : 0;       // peso TOTAL del modelo: §8 × madurez
+  const adjP = noVig + w*(modelP-noVig);               // juicio propio, anclado al consenso
+  let mA=modelP, mB=1;                                 // EV del modelo: A·b − B
+  if(evFn){ const e1=evFn(1), e2=evFn(2); mA=e2-e1; mB=mA-e1; }
+  const pA=w*mA+(1-w)*noVig, pB=w*mB+(1-w);            // mezclado con el mercado (A=noVig, B=1)
+  const edgePP=+((adjP-noVig)*100).toFixed(2);         // §7 edge ajustado (pp)
+  const ev=+(pA*best-pB).toFixed(4);                   // §7 EV al precio ROBUSTO
   const priceQ=cons>0?best/cons-1:0;
-  const c={mkt,label,modelP,noVig,adjP,best,cons,
+  const c={mkt,label,modelP,noVig,adjP,best,bestRaw:rb.raw,outliers:rb.outliers,cons,pA,pB,w:+w.toFixed(3),played:g,
     edgePP, ev, fairOdds:modelP>0?+(1/modelP).toFixed(2):null,
-    breakeven:+(1/best).toFixed(4), minOdds:adjP>0?+((1+SC_CFG.targetEV)/adjP).toFixed(2):null,
+    breakeven:+(1/best).toFixed(4), minOdds:pA>0?+((pB+SC_CFG.targetEV)/pA).toFixed(2):null,
     priceQ, dq, units:scUnits(ev,dq), kelly:+(SC_CFG.kellyFrac*kellyDec(adjP,best)).toFixed(3),
     nBooks, hasModel, price:best};
-  c.rank=scRank(c); c.tier=scClassify(edgePP,ev,dq,hasModel,adjP);
+  c.rank=scRank(c); const cl=scClassify(c); c.tier=cl.tier; c.fail=cl.fail;
   return c;
+}
+// Cuota hasta la que una señal sigue viva (umbral de MANTENER) y desde la que una
+// selección entraría (umbral de ENTRAR). Ambas en decimal; se muestran en americana.
+const scStayPx  = c => { const T=c.tier==='OFFICIAL PLAY'?SC_CFG.official:SC_CFG.lean; return c.pA>0?(c.pB+T.stayEv)/c.pA:null; };
+const scEnterPx = c => c.pA>0?(c.pB+(c.hasModel?SC_CFG.lean.ev:SC_CFG.line.ev))/c.pA:null;
+
+// ── Memoria de decisiones por jornada: el criterio es del sistema, no de las casas ──
+// Guarda por selección la probabilidad AJUSTADA (el juicio propio) y el nivel publicado.
+// Al reanalizar, ese juicio se MANTIENE y solo se reprecia contra la cuota de hoy. Se
+// reconsidera desde cero únicamente si (a) API-Football reporta una baja nueva, (b) el
+// CONSENSO se movió ≥3pp (todo el mercado, no una casa) o (c) el modelo cambió porque
+// entraron resultados nuevos.
+const scMemKey = d => 'sc_mem_'+(d||'prox');
+function scMemLoad(d){ try{ return JSON.parse(localStorage.getItem(scMemKey(d))||'{}'); }catch{ return {}; } }
+function scMemSave(d, matches){
+  const mem={ _ts:Date.now(), _crit:SC_CRITERIA };
+  matches.forEach(m=>{ if(!m.eventId) return;
+    const inj=(m.injuries||[]).map(i=>i.player).sort().join('|');
+    m.cand.forEach(c=>{ mem[`${m.eventId}|${c.mkt}|${c.label}`]={ adjP:c.adjP, noVig:c.noVig, modelP:c.modelP,
+      pA:c.pA, pB:c.pB, w:c.w, tier:c.tier, ev:c.ev, best:c.best, inj }; }); });
+  try{ localStorage.setItem(scMemKey(d), JSON.stringify(mem)); }catch{}
+}
+const SC_TIER_RANK={ 'OFFICIAL PLAY':3,'VALOR DE LÍNEA':3,'STRONG LEAN':2,'VALOR MENOR':2,'NO BET':0 };
+function scApplyMemory(matches, d){
+  const mem=scMemLoad(d); if(!mem||mem._crit!==SC_CRITERIA) return 0;
+  let held=0;
+  matches.forEach(m=>{ if(!m.eventId) return;
+    const injNow=(m.injuries||[]).map(i=>i.player).sort().join('|');
+    m.cand.forEach(c=>{ const p=mem[`${m.eventId}|${c.mkt}|${c.label}`]; if(!p) return;
+      c.prevTier=p.tier; const injPrev=p.inj||'';
+      // Noticia → se reconsidera desde cero (queda el cálculo fresco) y se dice por qué.
+      if(injNow!==injPrev){ const nuevas=injNow.split('|').filter(x=>x&&!injPrev.split('|').includes(x));
+        c.note='⚠ reconsiderada: baja nueva'+(nuevas.length?' ('+nuevas.slice(0,2).join(', ')+')':''); return; }
+      if(Math.abs(c.noVig-p.noVig)>=SC_CFG.newsMove){ c.note=`⚠ reconsiderada: el consenso se movió ${((c.noVig-p.noVig)*100).toFixed(1)}pp`; return; }
+      if(c.hasModel && Math.abs(c.modelP-(p.modelP??c.modelP))>=SC_CFG.newsMove){ c.note='⚠ reconsiderada: el modelo cambió (resultados nuevos)'; return; }
+      // Sin noticias: se MANTIENE el juicio previo y solo se reprecia a la cuota de hoy.
+      c.adjP=p.adjP; c.pA=p.pA; c.pB=p.pB; c.w=p.w;
+      c.edgePP=+((c.adjP-c.noVig)*100).toFixed(2); c.ev=+(c.pA*c.best-c.pB).toFixed(4);
+      c.minOdds=c.pA>0?+((c.pB+SC_CFG.targetEV)/c.pA).toFixed(2):null; c.units=scUnits(c.ev,c.dq); c.rank=scRank(c);
+      const enter=scClassify(c,false), hold=scClassify(c,true), pr=SC_TIER_RANK[p.tier]||0;
+      if(SC_TIER_RANK[enter.tier]>=pr){ c.tier=enter.tier; c.fail=enter.fail; if(pr>0&&enter.tier===p.tier){ c.held=true; held++; } }
+      else if(SC_TIER_RANK[hold.tier]>=pr){ c.tier=p.tier; c.fail=null; c.held=true; held++;
+        c.note=`mantenida: la cuota bajó a ${dAm(c.best)} pero sigue sobre el mínimo de mantener (${dAm(scStayPx(c))})`; }
+      else { c.tier=hold.tier; c.fail=hold.fail; c.note=`bajó de ${p.tier}: ${hold.fail}`; }
+    });
+    m.cand.sort((a,b)=>b.rank-a.rank||b.ev-a.ev); m.bestBet=m.cand[0];
+  });
+  return held;
 }
 // ── Modelo independiente Dixon-Coles de goles (spec §4.1) ────────────────────
 const _fact = n => { let r=1; for(let i=2;i<=n;i++) r*=i; return r; };
@@ -2892,12 +3004,15 @@ async function getSoccerOdds(leagueKeys){
 }
 // Matemática COMPARTIDA (cualquier proveedor): de-vig 1X2 + O/U, mejor precio y VALUE EV.
 // h2hBooks = [[dHome,dDraw,dAway], …] · ouBooks = [{point,over,under}, …]
+const _ouRows = arr => arr.map(b=>{ const r=[b.over,b.under]; if(b.pin) r.pin=true; return r; });
 function finalizeSoccerMatch(home, away, commence, lg, h2hBooks, ouBooks, model=null){
   if(!h2hBooks.length) return null;
   const nB=h2hBooks.length, hasModel=!!model;
+  SC_CTX.played = hasModel ? (model.played ?? null) : null;   // madurez del modelo para scCand
   // 1X2 — de-vig del mercado (prob sin margen) = prob de referencia (§6)
-  const fair=devigMulti(h2hBooks);   // [fH,fD,fA] no-vig del mercado (Shin, §3)
+  const _fr=devigAll(h2hBooks), fair=_fr?_fr.ref:null;   // [fH,fD,fA] consenso robusto sin vig (Shin, §3)
   if(!fair) return null;             // sin probabilidad de referencia no se publica (§1.3)
+  const pin=!!_fr.pin;               // ¿Pinnacle cotiza este partido? (ancla del consenso)
   const best=[0,1,2].map(i=>bestDec(h2hBooks.map(b=>b[i])));
   const mp=[0,1,2].map(i=> hasModel && model.p1x2 ? model.p1x2[i] : fair[i]);   // prob de modelo (o mercado)
   // Over/Under — elige la línea PRINCIPAL (la más equilibrada ~ even), no la mediana de alternas
@@ -2905,10 +3020,10 @@ function finalizeSoccerMatch(home, away, commence, lg, h2hBooks, ouBooks, model=
   if(ouBooks.length){
     const byPt={}; ouBooks.forEach(b=>(byPt[b.point]=byPt[b.point]||[]).push(b));
     let line=null,bal=2;
-    for(const pt in byPt){ const f=devigMulti(byPt[pt].map(b=>[b.over,b.under])); const d=Math.abs(f[0]-0.5); if(d<bal){bal=d;line=+pt;} }
+    for(const pt in byPt){ const f=devigMulti(_ouRows(byPt[pt])); const d=Math.abs(f[0]-0.5); if(d<bal){bal=d;line=+pt;} }
     const atLine=byPt[line];
     if(atLine&&atLine.length){
-      const f=devigMulti(atLine.map(b=>[b.over,b.under]));   // [fOver,fUnder]
+      const f=devigMulti(_ouRows(atLine));   // [fOver,fUnder]
       const mo = hasModel && model.ou && model.ou[line] ? model.ou[line] : f;
       ou={line, fairOver:f[0], fairUnder:f[1],
           bestOver:bestDec(atLine.map(b=>b.over)), bestUnder:bestDec(atLine.map(b=>b.under))};
@@ -2929,7 +3044,7 @@ function finalizeSoccerMatch(home, away, commence, lg, h2hBooks, ouBooks, model=
   const byMkt=m=>cand.find(c=>c.mkt===m);
   const ev1x2=['1','X','2'].map(m=>byMkt(m)?.ev ?? 0);
   cand.sort((a,b)=> b.rank-a.rank || b.ev-a.ev);
-  return { league:lg, home, away, commence, nBooks:nB, hasModel, model,
+  return { league:lg, home, away, commence, nBooks:nB, hasModel, model, pin,
            fair, best, ev1x2, ou, bestBet:cand[0], cand };
 }
 // The Odds API: parsea el evento y delega la matemática.
@@ -3103,11 +3218,14 @@ async function afGet(path){
   return j;
 }
 // Junta todas las páginas (el endpoint pagina de 10 en 10 en odds).
+// OJO: solo /odds pagina. /fixtures RECHAZA el parámetro page ("The Page field do not
+// exist") — y como getStrengthsAF lo mandaba siempre, el error se tragaba en silencio y
+// el modelo Dixon-Coles NUNCA se encendía vía API-Football (DQ se quedaba en ~74, el
+// valor "sin modelo"). Por eso la 1ª llamada va sin page y solo se piden más si las hay.
 async function afGetAll(path){
-  let page=1, out=[], total=1;
-  do{ const j=await afGet(`${path}${path.includes('?')?'&':'?'}page=${page}`);
-    out=out.concat(j.response||[]); total=j.paging?.total||1; page++;
-  }while(page<=total && page<=30);
+  const first=await afGet(path); let out=first.response||[]; const total=first.paging?.total||1;
+  for(let page=2; page<=total && page<=30; page++){
+    const j=await afGet(`${path}${path.includes('?')?'&':'?'}page=${page}`); out=out.concat(j.response||[]); }
   return out;
 }
 // Fuerzas Dixon-Coles desde los resultados REALES de la temporada actual.
@@ -3231,12 +3349,12 @@ function afParseOdds(bookmakers){
       if(bet.id===1 || bet.name==='Match Winner'){
         let h,d,a; for(const v of bet.values||[]){ const o=+v.odd;
           if(v.value==='Home')h=o; else if(v.value==='Draw')d=o; else if(v.value==='Away')a=o; }
-        if(h>1&&d>1&&a>1) h2hBooks.push([h,d,a]);
+        if(h>1&&d>1&&a>1){ const row=[h,d,a]; if(bk.id===AF_PINNACLE) row.pin=true; h2hBooks.push(row); }
       } else if(bet.id===5 || bet.name==='Goals Over/Under'){
         const byPt={};
         for(const v of bet.values||[]){ const m=/^(Over|Under)\s+([\d.]+)$/.exec(v.value); if(!m) continue;
           (byPt[m[2]]=byPt[m[2]]||{})[m[1]==='Over'?'over':'under']=+v.odd; }
-        for(const pt in byPt){ const e=byPt[pt]; if(e.over>1&&e.under>1) ouBooks.push({point:+pt,over:e.over,under:e.under}); }
+        for(const pt in byPt){ const e=byPt[pt]; if(e.over>1&&e.under>1) ouBooks.push({point:+pt,over:e.over,under:e.under,pin:bk.id===AF_PINNACLE}); }
       }
     }
   }
@@ -3248,11 +3366,12 @@ function afParseOdds(bookmakers){
 const SC_H1_SHARE = 0.45;   // ~45% de los goles ocurren en la 1ª mitad (aprox. de liga)
 const _ahLbl = L => (L>=0?'+':'')+L;   // formato AF: "+0","+0.5","-1","-1.25"
 // Filas por-casa alineadas a un conjunto de resultados (solo casas que cotizan todos).
+const AF_PINNACLE = 4;   // id de Pinnacle en API-Football: ancla del consenso (ver devigAll)
 function afPairRows(bms, betId, matchers){
   const rows=[], perSel=matchers.map(()=>[]);
   for(const bk of bms||[]){ const bet=(bk.bets||[]).find(b=>b.id===betId); if(!bet) continue;
     const o=matchers.map(m=>{ const v=(bet.values||[]).find(x=>m(x.value)); return v?+v.odd:null; });
-    if(o.every(x=>x>1)){ rows.push(o); o.forEach((x,i)=>perSel[i].push(x)); } }
+    if(o.every(x=>x>1)){ if(bk.id===AF_PINNACLE) o.pin=true; rows.push(o); o.forEach((x,i)=>perSel[i].push(x)); } }
   return {rows, perSel};
 }
 // Línea O/U principal (la más equilibrada ~50/50) de un mercado con líneas.
@@ -3396,11 +3515,18 @@ async function getSoccerOddsAF(compKeys, dateStr){
       if(!jugables.length) continue;
       const str=await getStrengthsAF(comp);   // modelo real de la temporada (o null si hay pocos partidos)
       const evtStr=wantEvt ? await getEventStrengthsAF(comp) : null;   // córners/tarjetas/… (caro, tras toggle)
+      // Bajas reportadas para los partidos de la fecha (1 llamada por liga). Es la
+      // "noticia" que hace reconsiderar una señal ya publicada (ver scApplyMemory).
+      const injBy={};
+      try{ const ij=await afGet(`/injuries?league=${comp.afId}&season=${season}&date=${date}`);
+        (ij.response||[]).forEach(r=>{ (injBy[r.fixture.id]=injBy[r.fixture.id]||[]).push(
+          { player:r.player.name, team:r.team.name, reason:r.player.reason||'', type:r.player.type||'' }); });
+      }catch(e){ console.warn('af injuries '+comp.short+':', e.message); }
       const odds=await afGetAll(`/odds?league=${comp.afId}&season=${season}&date=${date}`);
       for(const o of odds){ const f=fmap[o.fixture.id]; if(!f) continue;
         if(DONE.includes(f.status)) continue;   // ya terminó / en juego / cancelado → no se apuesta
         const m=computeSoccerMatchAF(f.home, f.away, f.date, o.bookmakers, comp, str, evtStr);
-        if(m){ m.eventId=String(o.fixture.id); m.afFixture=o.fixture.id; matches.push(m); } }
+        if(m){ m.eventId=String(o.fixture.id); m.afFixture=o.fixture.id; m.injuries=injBy[o.fixture.id]||[]; matches.push(m); } }
     }catch(e){ console.warn('af '+comp.short+':', e.message); unresolved.push(comp.short); }
   }
   matches.sort((a,b)=>new Date(a.commence)-new Date(b.commence));
@@ -3416,7 +3542,7 @@ async function getMlbOdds(date){
 }
 
 // ── Fútbol: UI (switch de deporte, análisis, render) ──────────────────────────
-let SPORT='mlb', soccerMatches=[], scMeta={finished:0,scheduled:0};
+let SPORT='mlb', soccerMatches=[], scMeta={finished:0,scheduled:0}, scHeld=0;
 function setSport(s){
   SPORT=s;
   document.getElementById('sport-mlb').classList.toggle('active',s==='mlb');
@@ -3466,6 +3592,10 @@ async function analyzeSoccer(){
     scMeta = { finished: res.finished||0, scheduled: res.scheduled||0 };
     let matches=res.matches;
     if(dateStr) matches=matches.filter(m=>soccerDay(m.commence)===dateStr);   // solo la fecha elegida
+    // Criterio propio: las señales ya publicadas hoy se mantienen (salvo noticia) y se
+    // reprecian a la cuota actual; luego se guarda el juicio para la próxima corrida.
+    scHeld = scApplyMemory(matches, dateStr);
+    scMemSave(dateStr, matches);
     soccerMatches=matches;
     const rem=document.getElementById('soccer-remaining'); if(rem&&oddsRemaining!=null) rem.textContent=`${oddsRemaining} peticiones restantes${useIO?'/día':''}`;
     renderSoccer(matches, res.unresolved, dateStr);
@@ -3645,7 +3775,7 @@ function renderSoccerHist(){
     const filas=arr.map(x=>`<tr>
       <td style="white-space:nowrap"><b>${esc(x.home)}</b> <span style="color:var(--text3)">v</span> ${esc(x.away)}</td>
       <td style="font-weight:700">${esc(x.label||'')}${x.line!=null?` ${x.line}`:''}</td>
-      <td class="num">@${(+x.price).toFixed(2)}</td>
+      <td class="num">${dAm(x.price)}</td>
       <td class="num">${evTxt(x.ev)}</td>
       <td class="num">${x.dq??'—'}</td>
       <td class="num">${x.home_goals!=null?`<b>${x.home_goals}-${x.away_goals}</b>`:'—'}</td>
@@ -3719,19 +3849,30 @@ function renderSoccer(matches, unresolved, dateStr){
   const p1=x=>Math.round(x*100)+'%', d2=x=>(+x).toFixed(2), pp=v=>`${v>=0?'+':''}${v.toFixed(1)}`;
   const slate=buildSlate(matches);
   const stamp=new Date().toLocaleString('es-MX',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
-  // Aviso del estado del modelo (edge real vs. solo valor de línea)
+  // Aviso del estado del modelo (edge real vs. solo valor de línea) + madurez
+  const pjs=matches.filter(m=>m.hasModel&&m.model?.played!=null).map(m=>m.model.played);
+  const pjMed=pjs.length?median(pjs):null;
   const modelNote = slate.hasModel
-    ? `<span style="color:var(--gtx)">✓ modelo Dixon-Coles activo (fuerzas de la temporada actual)</span>`
-    : `<span style="color:var(--gold)">⚠ modelo aún juntando datos — cada análisis guarda resultados; al llegar a ≥30 partidos por liga se enciende. Por ahora el número es <b>valor de línea</b> (mejor precio vs. consenso), no edge de modelo</span>`;
+    ? `<span style="color:var(--gtx)">✓ modelo Dixon-Coles activo</span> · peso del modelo según partidos jugados${pjMed!=null?` (mediana ${pjMed} pj → ${Math.round(scModelW(pjMed)*100)}% del juicio; el resto es el consenso con Pinnacle)`:''}`
+    : `<span style="color:var(--gold)">⚠ modelo apagado en estas ligas (menos de ${SC_MINGAMES} partidos jugados en la temporada). Por ahora el número es <b>valor de línea</b> (mejor precio vs. consenso), no edge de modelo</span>`;
+  const O=SC_CFG.official, Ln=SC_CFG.lean;
+  const legend=`<div class="bp-model" style="margin-top:4px">
+    <b>${SC_CRITERIA}</b> · <span style="color:var(--gtx)">OFFICIAL</span>: edge ≥${O.edge}pp · EV ≥+${O.ev*100}% · DQ ≥${O.dq} · ≥${O.games} pj · ≥${O.books} casas · cuota ${dAm(O.lo)}…${dAm(O.hi)}
+    &nbsp;·&nbsp; <span style="color:var(--gold)">STRONG LEAN</span>: edge ≥${Ln.edge}pp · EV ≥+${Ln.ev*100}% · DQ ≥${Ln.dq} · ≥${Ln.games} pj · ≥${Ln.books} casas · cuota ${dAm(Ln.lo)}…${dAm(Ln.hi)}
+    &nbsp;·&nbsp; se mantiene mientras EV ≥+${Ln.stayEv*100}% (LEAN) / +${O.stayEv*100}% (OFFICIAL)${scHeld?` · <b style="color:var(--gtx)">${scHeld} mantenida(s)</b> de la corrida anterior`:''}
+  </div>`;
   // Un renglón "por qué" y "riesgos" a partir de la métrica disponible
   const whyOf=x=>{ const c=x.c, L=[];
-    if(c.priceQ>.01) L.push(`Mejor precio @${d2(c.best)} supera el consenso @${d2(c.cons)} (+${(c.priceQ*100).toFixed(1)}% de precio)`);
-    if(c.nBooks>=4) L.push(`${c.nBooks} casas de acuerdo → consenso confiable`);
-    if(c.hasModel) L.push(`Modelo asigna ${p1(c.modelP)} vs mercado ${p1(c.noVig)} (edge ${pp(c.edgePP)} pp)`);
+    if(c.hasModel) L.push(`Modelo asigna ${p1(c.modelP)} vs consenso ${p1(c.noVig)}; con ${Math.round(c.w*100)}% de peso (${c.played} pj) queda ${p1(c.adjP)} → edge ${pp(c.edgePP)} pp`);
     else L.push(`EV positivo por diferencia de precio; sin modelo de stats el edge de modelo es 0`);
+    if(c.priceQ>.01) L.push(`Mejor precio ${dAm(c.best)} supera el consenso ${dAm(c.cons)} (+${(c.priceQ*100).toFixed(1)}% de precio)${c.outliers?` · ${c.outliers} casa(s) fuera de consenso ignorada(s)`:''}`);
+    if(c.nBooks>=4) L.push(`${c.nBooks} casas → consenso robusto (mediana${x.m.pin?' + ancla Pinnacle':''})`);
     return L.slice(0,3); };
-  const riskOf=x=>{ const c=x.c, L=['Alineaciones sin confirmar (no hay feed de titulares)'];
+  const riskOf=x=>{ const c=x.c, m=x.m, L=[];
+    const inj=m.injuries||[];
+    L.push(inj.length ? `Bajas reportadas: ${inj.slice(0,4).map(i=>i.player).join(', ')}${inj.length>4?` +${inj.length-4}`:''}` : 'Sin bajas reportadas por API-Football (alineaciones ~40 min antes)');
     if(!c.hasModel) L.push('Modelo estadístico no conectado — solo se mide precio');
+    else if(c.played<10) L.push(`Modelo joven (${c.played} pj por equipo): el edge sale casi todo del consenso`);
     if(c.nBooks<3) L.push('Pocas casas → consenso débil');
     if(c.dq<70) L.push('Calidad de dato baja');
     return L.slice(0,3); };
@@ -3740,16 +3881,17 @@ function renderSoccer(matches, unresolved, dateStr){
     : c.dq>=80 ? 'BET NOW' : 'Espera alineación confirmada';
   // ── BEST PLAY (§18) ──
   let hero;
-  if(slate.best){ const {c,m}=slate.best;
+  if(slate.best){ const {c,m}=slate.best; const stay=scStayPx(c);
     hero=`<div class="bp-card" style="border-color:${tierColor(c.tier)}">
-      <div class="bp-hd"><span class="bp-tag" style="background:${tierColor(c.tier)}">⭐ MEJOR JUGADA</span><span class="bp-cls" style="color:${tierColor(c.tier)}">${c.tier}</span></div>
-      <div class="bp-sel">${m.league.flag} <b>${c.label}</b> <span class="bp-mkt">${c.mkt==='O'||c.mkt==='U'?'Total goles':c.mkt==='X'?'Empate (1X2)':'Ganador (1X2)'}</span></div>
+      <div class="bp-hd"><span class="bp-tag" style="background:${tierColor(c.tier)}">⭐ MEJOR JUGADA</span><span class="bp-cls" style="color:${tierColor(c.tier)}">${c.tier}${c.held?' · MANTENIDA':''}</span></div>
+      <div class="bp-sel">${m.league.flag} <b>${c.label}</b> <span class="bp-mkt">${scMktName(c.mkt)}</span></div>
       <div class="bp-mu">${m.home} <span style="color:var(--text3)">v</span> ${m.away} · ${m.league.short} · ${kickoff(m.commence)}</div>
+      ${c.note?`<div class="bp-mu" style="color:var(--gold)">${esc(c.note)}</div>`:''}
       <div class="bp-grid">
-        <div class="bp-cell"><span>Mejor cuota</span><b>@${d2(c.best)}</b></div>
-        <div class="bp-cell"><span>Cuota justa</span><b>${c.fairOdds?'@'+d2(c.fairOdds):'—'}</b></div>
-        <div class="bp-cell"><span>Consenso</span><b>@${d2(c.cons)}</b></div>
-        <div class="bp-cell"><span>Cuota mínima</span><b>${c.minOdds?'@'+d2(c.minOdds):'—'}</b></div>
+        <div class="bp-cell"><span>Mejor cuota</span><b>${dAm(c.best)}</b></div>
+        <div class="bp-cell"><span>Cuota justa</span><b>${c.fairOdds?dAm(c.fairOdds):'—'}</b></div>
+        <div class="bp-cell"><span>Consenso</span><b>${dAm(c.cons)}</b></div>
+        <div class="bp-cell"><span>Válida hasta</span><b>${stay?dAm(stay):'—'}</b></div>
         <div class="bp-cell"><span>Prob. modelo</span><b>${p1(c.modelP)}</b></div>
         <div class="bp-cell"><span>Prob. ajustada</span><b>${p1(c.adjP)}</b></div>
         <div class="bp-cell"><span>Mercado s/vig</span><b>${p1(c.noVig)}</b></div>
@@ -3764,13 +3906,13 @@ function renderSoccer(matches, unresolved, dateStr){
       <div class="bp-why"><b>Riesgos</b><ol>${riskOf(slate.best).map(t=>`<li>${t}</li>`).join('')}</ol></div>
     </div>`;
   } else {
-    const near=slate.near.map(x=>{const c=x.c,m=x.m; const failEV=c.ev<SC_CFG.evLean, failDQ=c.dq<58;
-      const need=(c.adjP>0?((1+SC_CFG.evOfficial)/c.adjP):null);
+    const near=slate.near.map(x=>{const c=x.c,m=x.m;
+      const need=(c.fail||'').startsWith('EV') ? scEnterPx(c) : null;   // solo si lo que faltó fue precio
       return `<div class="bp-near"><div class="bp-near-mu">${m.league.flag} <b>${c.label}</b> · ${m.home} v ${m.away}</div>
-        <div class="bp-near-m">@${d2(c.best)} · EV ${fmtEv(c.ev)} · DQ ${c.dq}/100 · <span style="color:var(--rtx)">falló: ${failEV?'EV<'+(SC_CFG.evLean*100)+'%':failDQ?'DQ<58':'sin valor'}</span>${need?` · reconsiderar desde @${d2(need)}`:''}</div></div>`;}).join('');
+        <div class="bp-near-m">${dAm(c.best)} · EV ${fmtEv(c.ev)} · edge ${c.hasModel?pp(c.edgePP)+'pp':'n/d'} · DQ ${c.dq}/100 · <span style="color:var(--rtx)">falló: ${esc(c.fail||'sin valor')}</span>${need?` · reconsiderar desde ${dAm(need)}`:''}</div></div>`;}).join('');
     hero=`<div class="bp-card" style="border-color:var(--text3)">
       <div class="bp-hd"><span class="bp-tag" style="background:var(--text3)">NO OFFICIAL PLAY FOUND</span></div>
-      <div class="bp-mu">Ninguna selección superó los umbrales del spec (§11). No se fuerza una jugada.</div>
+      <div class="bp-mu">Ninguna selección cruzó los umbrales de fútbol (${SC_CRITERIA}). No se fuerza una jugada: un edge menor a ${Ln.edge}pp no se distingue del ruido entre casas.</div>
       ${near?`<div class="bp-near-hd">Las que estuvieron más cerca</div>${near}`:''}
     </div>`;
   }
@@ -3795,7 +3937,7 @@ function renderSoccer(matches, unresolved, dateStr){
 
   const scopeLbl = dateStr ? `📅 ${dLabel}` : `próximos días`;
   const head=`<div class="bp-head"><span>🍞 Baker's Picks · ${scopeLbl} · ${matches.length} partidos</span><span>${stamp}</span></div>
-    <div class="bp-model">${modelNote}</div>`;
+    <div class="bp-model">${modelNote}</div>${legend}`;
   area.innerHTML=warn+head+hero+gridHtml;
 }
 
@@ -3808,12 +3950,14 @@ function scCardHTML(m,i){
   const c=m.bestBet, tc=tierColor(c.tier);
   const ev=`${c.ev>=0?'+':''}${(c.ev*100).toFixed(1)}%`;
   const mkt = scMktName(c.mkt);
+  const inj=(m.injuries||[]).length;
   return `<div class="sc-card" onclick="openSoccerMatch(${i})">
     <div class="sc-card-top"><span>${m.league.flag} ${m.league.short}</span><span>${kickoff(m.commence)}</span></div>
     <div class="sc-teams">${esc(m.home)}<br><span class="vs">vs</span>${esc(m.away)}</div>
     <div class="sc-pick" style="border-left-color:${tc}">
-      <div class="sc-pick-row"><span class="sc-pick-lbl">${esc(c.label)}</span><span class="sc-tier" style="background:${tc}">${c.tier}</span></div>
-      <div class="sc-pick-meta">${mkt} @${(+c.best).toFixed(2)} · <span style="color:${evColor(c.ev)};font-weight:700">${ev} EV</span>${c.hasModel?` · edge ${c.edgePP>=0?'+':''}${c.edgePP}pp`:''}</div>
+      <div class="sc-pick-row"><span class="sc-pick-lbl">${esc(c.label)}</span><span class="sc-tier" style="background:${tc}" title="${esc(c.fail||'')}">${c.tier}${c.held?' ✓':''}</span></div>
+      <div class="sc-pick-meta">${mkt} <b>${dAm(c.best)}</b> · <span style="color:${evColor(c.ev)};font-weight:700">${ev} EV</span>${c.hasModel?` · edge ${c.edgePP>=0?'+':''}${c.edgePP}pp`:''}${inj?` · 🩹 ${inj}`:''}</div>
+      ${c.note?`<div class="sc-pick-meta" style="color:var(--gold)">${esc(c.note)}</div>`:c.fail&&c.tier==='NO BET'?`<div class="sc-pick-meta" style="color:var(--text3)">falló: ${esc(c.fail)}</div>`:''}
     </div>
     <div class="sc-card-hint">clic para ver todas las apuestas →</div>
   </div>`;
@@ -3835,17 +3979,23 @@ function scDetailHTML(m){
   const CAP=Math.max(36, conValor+6);
   const cands=allC.slice(0,CAP), oculto=allC.length-cands.length;
   const rows=cands.map(c=>{ const isBest=c===m.bestBet;
-    return `<div class="sc-brow${isBest?' best':''}">
-      <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${isBest?'⭐ ':''}<b>${esc(c.label)}</b> <span style="color:var(--text3);font-size:9px">${mktN(c)}</span></span>
+    const tip=[c.note, c.fail?('falló: '+c.fail):null, c.outliers?`${c.outliers} casa(s) fuera de consenso ignorada(s) (mejor cruda ${dAm(c.bestRaw)})`:null].filter(Boolean).join(' · ');
+    return `<div class="sc-brow${isBest?' best':''}" title="${esc(tip)}">
+      <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${isBest?'⭐ ':''}<b>${esc(c.label)}</b> <span style="color:var(--text3);font-size:9px">${mktN(c)}${c.held?' · mantenida':''}${c.note&&!c.held?' · ⚠':''}</span></span>
       <span class="col-fair" style="color:var(--text2)">${p1(c.noVig)}</span>
-      <span>@${d2(c.best)}</span>
+      <span>${dAm(c.best)}${c.outliers?'<span style="color:var(--text3)" title="casa fuera de consenso ignorada">°</span>':''}</span>
       <span style="color:${evColor(c.ev)};font-weight:700">${fmtEv(c.ev)}</span>
       <span class="sc-tier" style="background:${tierColor(c.tier)};justify-self:start">${c.tier}</span>
     </div>`; }).join('')
     + (oculto>0?`<div style="padding:8px 15px;font-size:10px;color:var(--text3);border-top:1px solid var(--border)">+${oculto} apuesta(s) más sin valor (ocultas)</div>`:'');
   const bb=m.bestBet;
-  const modelLine = m.hasModel ? `<span style="color:var(--gtx)">✓ modelo Dixon-Coles</span>`
+  const modelLine = m.hasModel ? `<span style="color:var(--gtx)">✓ modelo Dixon-Coles</span>${m.model?.played!=null?` (${m.model.played} pj · peso ${Math.round(scModelW(m.model.played)*100)}%)`:''}`
                                : `<span style="color:var(--gold)">⚠ valor de línea</span>`;
+  const inj=m.injuries||[];
+  const injHtml = inj.length
+    ? `🩹 <b>Bajas reportadas (API-Football):</b> ${[...new Set(inj.map(i=>i.team))].map(t=>`<b>${esc(t)}</b>: ${inj.filter(i=>i.team===t).map(i=>esc(i.player)+(i.reason?` <span style="color:var(--text3)">(${esc(i.reason)})</span>`:'')).join(', ')}`).join(' · ')}`
+    : `Sin bajas reportadas por API-Football para este partido.`;
+  const stay=scQualifies(bb.tier)?scStayPx(bb):null;
   return `<div class="sc-modal" onclick="if(event.target===this)closeSoccerModal()">
     <div class="sc-mbox">
       <div class="sc-mhd">
@@ -3856,11 +4006,13 @@ function scDetailHTML(m){
       <div class="sc-brow h"><span>Selección</span><span class="col-fair">Justa</span><span>Cuota</span><span>EV</span><span>Nivel</span></div>
       ${rows}
       <div style="padding:12px 15px;border-top:1px solid var(--border);font-size:11px;color:var(--text2);line-height:1.55">
-        <b style="color:var(--gold)">⭐ Mejor jugada:</b> ${esc(bb.label)} @${d2(bb.best)} · <span style="color:${evColor(bb.ev)};font-weight:700">${fmtEv(bb.ev)} EV</span> · ${bb.tier}
+        <b style="color:var(--gold)">⭐ Mejor jugada:</b> ${esc(bb.label)} <b>${dAm(bb.best)}</b> · <span style="color:${evColor(bb.ev)};font-weight:700">${fmtEv(bb.ev)} EV</span> · ${bb.tier}${bb.held?' · mantenida':''}${stay?` · válida hasta <b>${dAm(stay)}</b>`:''}
+        ${bb.note?`<br><span style="color:var(--gold)">${esc(bb.note)}</span>`:bb.fail?`<br><span style="color:var(--text3)">No califica: ${esc(bb.fail)}</span>`:''}
         <br><span style="color:var(--text3)">${bb.hasModel
-          ? `Modelo ${p1(bb.modelP)} vs mercado sin vig ${p1(bb.noVig)} · edge ${pp(bb.edgePP)}pp · ${bb.units.toFixed(2)}u${bb.kelly>0?` · Kelly ${(bb.kelly*100).toFixed(1)}%`:''}`
+          ? `Modelo ${p1(bb.modelP)} vs consenso ${p1(bb.noVig)} → ajustada ${p1(bb.adjP)} (peso ${Math.round(bb.w*100)}%) · edge ${pp(bb.edgePP)}pp · ${bb.units.toFixed(2)}u${bb.kelly>0?` · Kelly ${(bb.kelly*100).toFixed(1)}%`:''}`
           : `Sin modelo de stats: es valor de precio (mejor cuota vs consenso), edge de modelo = 0`}</span>
-        <br><span style="color:var(--text3);font-size:10px">Alineaciones sin confirmar · "Justa" = probabilidad del mercado sin comisión.</span>
+        <br><span style="font-size:10px">${injHtml}</span>
+        <br><span style="color:var(--text3);font-size:10px">"Justa" = consenso sin comisión (mediana de casas, ancla Pinnacle) · ° = se ignoró una casa fuera de consenso · cuotas en formato americano.</span>
       </div>
     </div></div>`;
 }

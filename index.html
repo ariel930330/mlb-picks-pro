@@ -658,6 +658,9 @@ body{background:radial-gradient(1100px 560px at 15% -10%,rgba(178,107,255,.10),t
           style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:7px 10px;font-size:12px;color:var(--text);font-family:inherit;outline:none;min-width:170px"
           onchange="saveOddsIoKey(this.value)">
         <span id="soccer-leagues" class="lg-chks"></span>
+        <label title="Añade córners, tarjetas, faltas, tiros, SOT y offsides (modelo binomial negativo desde /fixtures/statistics de API-Football). Es MÁS LENTO: ~1 llamada por partido jugado de cada liga." style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer">
+          <input type="checkbox" id="sc-events" onchange="saveScEvents(this.checked)" style="accent-color:var(--gold)"> Córners/tarjetas/tiros
+        </label>
         <span id="soccer-remaining" style="font-size:11px;color:var(--text3);margin-left:auto"></span>
       </div>
       <div style="font-size:10px;color:var(--text3);margin-bottom:10px"><b>API-Football</b> (principal): cuotas de varias casas + fixtures + resultados de la temporada ACTUAL → el <b>Dixon-Coles</b> arranca con datos reales al juntar ≥30 partidos por liga (fuerzas ataque/defensa → <b>edge de modelo</b> del spec). <b>odds-api.io</b> queda de respaldo. Consenso de-vig (Shin) vs. mejor precio; sin key, solo valor de línea.</div>
@@ -895,6 +898,15 @@ const nbOver = (mu,k,line) => {
   for(let x=1;x<top;x++){ p*=((k+x-1)/x)*q; cdf+=p; }      // recursión: no hace falta gamma
   return cl(1-cdf,.02,.98);
 };
+// PMF binomial negativo (conteo con sobredispersión) y rejilla conjunta de conteos
+// (local × visitante, independientes) para córners/tarjetas/faltas/tiros/etc.
+const nbPmf = (x,mu,k) => { mu=Math.max(mu,.01); const q=mu/(k+mu); let p=Math.pow(k/(k+mu),k); for(let i=1;i<=x;i++) p*=((k+i-1)/i)*q; return p; };
+function nbGrid(muH, muA, k, MAX=25){
+  const ph=[], pa=[]; let sh=0, sa=0;
+  for(let i=0;i<=MAX;i++){ ph[i]=nbPmf(i,muH,k); pa[i]=nbPmf(i,muA,k); sh+=ph[i]; sa+=pa[i]; }
+  const G=[]; for(let x=0;x<=MAX;x++){ G[x]=[]; for(let y=0;y<=MAX;y++) G[x][y]=(ph[x]/sh)*(pa[y]/sa); }
+  return G;
+}
 // P(X > line) con X ~ Binomial(n bateadores enfrentados, p). Para ponches, hits y BB
 // la Poisson NO sirve, aunque la varianza cruda casi coincida: cada bateador enfrentado
 // se poncha o no, conecta o no, así que la cola real es MÁS CORTA que la de Poisson
@@ -3062,6 +3074,10 @@ async function syncAfKeyToCloud(v){
     return true;
   }catch(e){ console.warn('sync af key:', e.message); return false; }
 }
+// Toggle de mercados de EVENTO (córners/tarjetas/faltas/tiros). Es caro (~1 llamada
+// por partido jugado de la liga), por eso va apagado por defecto.
+const getScEvents  = () => localStorage.getItem('sc_events')==='1';
+const saveScEvents = on => { on?localStorage.setItem('sc_events','1'):localStorage.removeItem('sc_events'); };
 async function loadAfKeyFromCloud(){
   if(!isOwner()){ remoteAfKey=null; return; }
   try{
@@ -3112,6 +3128,100 @@ async function getStrengthsAF(comp){
     return _afStrCache[ck]=str;
   }catch(e){ console.warn('af strengths '+comp.short+':', e.message); return _afStrCache[ck]=null; }
 }
+
+// ── Fuerzas de EVENTOS (córners/tarjetas/faltas/tiros/SOT/offsides) ──────────
+// Una sola llamada /fixtures/statistics por partido trae TODAS. Se arman fuerzas
+// ataque/defensa por equipo (mismo buildStrengths que los goles) + dispersión k
+// (binomial negativo, medida de los datos) por evento. Es CARO (~1 llamada por
+// partido jugado), así que va detrás de un toggle y se cachea por sesión.
+const SC_EVT = [
+  {k:'corners', stat:'Corner Kicks', name:'Córners',        max:25, m:{tot:45, home:57, away:58, ah:56, x2:55, h1:77}},
+  {k:'yellow',  stat:'Yellow Cards', name:'Tarjetas',       max:12, m:{tot:153, home:150, away:151}},
+  {k:'fouls',   stat:'Fouls',        name:'Faltas',         max:28, m:{tot:173, home:171, away:170, ah:174, x2:175}},
+  {k:'shots',   stat:'Total Shots',  name:'Tiros',          max:34, m:{tot:211}},
+  {k:'sot',     stat:'Shots on Goal',name:'Tiros a puerta', max:18, m:{tot:87}},
+  {k:'offsides',stat:'Offsides',     name:'Fuera de juego', max:12, m:{tot:164, home:167, away:168, ah:166, x2:165}},
+];
+let _afEvtCache={};
+const _statVal = (t,name)=>{ const s=(t.statistics||[]).find(x=>x.type===name); const v=s?s.value:null;
+  return v==null?0:(typeof v==='string'?(parseFloat(v)||0):+v); };
+async function getEventStrengthsAF(comp){
+  if(!comp.afId) return null;
+  const season=soccerSeason(), ck='afe-'+comp.afId+'-'+season;
+  if(ck in _afEvtCache) return _afEvtCache[ck];
+  try{
+    const fx=await afGetAll(`/fixtures?league=${comp.afId}&season=${season}&status=FT`);
+    const recent=fx.slice(-50);   // acota el costo de llamadas de estadísticas
+    const evK=SC_EVT.map(e=>e.k);
+    const T={}, get=n=>T[n]||(T[n]=Object.fromEntries(evK.map(k=>[k,{name:n,hp:0,hf:0,ha:0,ap:0,af:0,aa:0}])));
+    const moB=Object.fromEntries(evK.map(k=>[k,{s:0,ss:0,n:0}]));   // media/var por equipo-partido → k
+    const stats=await mapLimit(recent, 6, f=>afGet(`/fixtures/statistics?fixture=${f.fixture.id}`).then(r=>({f,r})).catch(()=>null));
+    let n=0;
+    for(const it of stats){ if(!it||!(it.r?.response?.length>=2)) continue;
+      const byId={}; it.r.response.forEach(t=>byId[t.team.id]=t);
+      const hs=byId[it.f.teams.home.id], as=byId[it.f.teams.away.id]; if(!hs||!as) continue;
+      const H=get(it.f.teams.home.name), Aw=get(it.f.teams.away.name);
+      SC_EVT.forEach(e=>{ const hv=_statVal(hs,e.stat), av=_statVal(as,e.stat);
+        H[e.k].hp++; H[e.k].hf+=hv; H[e.k].ha+=av;
+        Aw[e.k].ap++; Aw[e.k].af+=av; Aw[e.k].aa+=hv;
+        const mo=moB[e.k]; mo.s+=hv+av; mo.ss+=hv*hv+av*av; mo.n+=2; });
+      n++;
+    }
+    if(n<SC_MINGAMES) return _afEvtCache[ck]=null;
+    const out={games:n};
+    SC_EVT.forEach(e=>{ const rows=Object.values(T).map(v=>v[e.k]);
+      const str=buildStrengths(rows);
+      const mo=moB[e.k], mean=mo.n?mo.s/mo.n:1, varr=mo.n?mo.ss/mo.n-mean*mean:mean;
+      str.k=Math.max(1.5, Math.min(50, mean*mean/Math.max(0.15, varr-mean)));   // k por momentos, acotado
+      out[e.k]=str; });
+    return _afEvtCache[ck]=out;
+  }catch(e){ console.warn('af evt '+comp.short+':', e.message); return _afEvtCache[ck]=null; }
+}
+// Genera las selecciones de los mercados de evento desde la rejilla NB del partido.
+function afEventCands(bms, evtStr, home, away){
+  if(!evtStr) return [];
+  const C=[];
+  const push=(mkt,label,modelP,perSel,idx,rows,evFn)=>{ const nov=devigMulti(rows); if(!nov) return;
+    const prices=perSel[idx]; if(!prices||prices.length<1) return;   // eventos: cobertura fina, ≥1 casa
+    C.push(scCand(mkt, label, modelP, nov[idx], prices, prices.length, true, true, evFn)); };
+  for(const E of SC_EVT){ const str=evtStr[E.k]; if(!str) continue;
+    const lam=matchLambdas(str, home, away); if(!lam) continue;
+    const k=str.k||6, G=nbGrid(lam.lh, lam.la, k, E.max), M=E.m;
+    // Total del partido O/U (línea principal)
+    if(M.tot){ const L=afBestOULine(bms,M.tot);
+      if(L!=null){ const {rows,perSel}=afPairRows(bms,M.tot,[v=>v===`Over ${L}`,v=>v===`Under ${L}`]);
+        if(rows.length>=2){ const pO=gTotOver(G,L);
+          push(E.k,`${E.name} · Over ${L}`, pO, perSel,0,rows,_evGrid(G,(x,y)=>x+y,'over',L));
+          push(E.k,`${E.name} · Under ${L}`, 1-pO, perSel,1,rows,_evGrid(G,(x,y)=>x+y,'under',L)); } } }
+    // Team totals
+    [['home',true,'local'],['away',false,'visita']].forEach(([mk,hh,who])=>{ if(!M[mk]) return;
+      const L=afBestOULine(bms,M[mk]); if(L==null) return;
+      const {rows,perSel}=afPairRows(bms,M[mk],[v=>v===`Over ${L}`,v=>v===`Under ${L}`]); if(rows.length<2) return;
+      const pO=gTeamOver(G,hh,L);
+      push(E.k,`${E.name} ${who} · Over ${L}`, pO, perSel,0,rows,_evGrid(G,(x,y)=>hh?x:y,'over',L));
+      push(E.k,`${E.name} ${who} · Under ${L}`, 1-pO, perSel,1,rows,_evGrid(G,(x,y)=>hh?x:y,'under',L)); });
+    // Asian handicap del conteo
+    if(M.ah){ const lines=afAhLinesId(bms,M.ah), L=afBalancedAhLineId(bms,M.ah,lines);
+      if(L!=null){ const {rows,perSel}=afPairRows(bms,M.ah,[v=>v===`Home ${_ahLbl(L)}`,v=>v===`Away ${_ahLbl(L)}`]);
+        if(rows.length>=2){ const nov=devigMulti(rows); if(nov){
+          if(perSel[0].length>=1) C.push(scCand(E.k,`${E.name} Asiático Local ${_ahLbl(L)}`, gAhCover(G,true,L), nov[0], perSel[0], perSel[0].length, true, true, b=>gAhEV(G,true,L,b)));
+          if(perSel[1].length>=1) C.push(scCand(E.k,`${E.name} Asiático Visita ${_ahLbl(L)}`, gAhCover(G,false,-L), nov[1], perSel[1], perSel[1].length, true, true, b=>gAhEV(G,false,-L,b))); } } } }
+    // 1x2 del conteo (qué equipo tiene más)
+    if(M.x2){ const {rows,perSel}=afPairRows(bms,M.x2,[v=>v==='Home',v=>v==='Draw',v=>v==='Away']);
+      if(rows.length>=2){ const nov=devigMulti(rows); const mp=[gSum(G,(x,y)=>x>y),gSum(G,(x,y)=>x===y),gSum(G,(x,y)=>x<y)]; const lbl=['Local','Empate','Visita'];
+        [0,1,2].forEach(i=>{ const prices=perSel[i]; if(prices.length<1) return;
+          C.push(scCand(E.k,`${E.name} 1x2 · ${lbl[i]}`, mp[i], nov[i], prices, prices.length, true, true)); }); } }
+    // 1ª mitad total (córners)
+    if(M.h1){ const L=afBestOULine(bms,M.h1);
+      if(L!=null){ const G1=nbGrid(lam.lh*SC_H1_SHARE, lam.la*SC_H1_SHARE, k, E.max);
+        const {rows,perSel}=afPairRows(bms,M.h1,[v=>v===`Over ${L}`,v=>v===`Under ${L}`]);
+        if(rows.length>=2){ const pO=gTotOver(G1,L);
+          push(E.k,`${E.name} 1ª mitad · Over ${L}`, pO, perSel,0,rows,_evGrid(G1,(x,y)=>x+y,'over',L));
+          push(E.k,`${E.name} 1ª mitad · Under ${L}`, 1-pO, perSel,1,rows,_evGrid(G1,(x,y)=>x+y,'under',L)); } } }
+  }
+  return C;
+}
+
 // Parsea las cuotas de un fixture (bookmakers[].bets[]) a los arrays que espera la
 // matemática compartida: h2hBooks=[[H,D,A],…] y ouBooks=[{point,over,under},…].
 function afParseOdds(bookmakers){
@@ -3158,18 +3268,20 @@ function afBestOULine(bms, betId){
   return best;
 }
 // Todas las líneas de hándicap asiático presentes (lado local).
-function afAhLines(bms){ const s=new Set();
-  for(const bk of bms||[]) for(const bet of (bk.bets||[])) if(bet.id===4)
+function afAhLinesId(bms, id){ const s=new Set();
+  for(const bk of bms||[]) for(const bet of (bk.bets||[])) if(bet.id===id)
     for(const v of bet.values||[]){ const m=/^Home\s+([+-][\d.]+)$/.exec(v.value); if(m) s.add(+m[1]); }
   return [...s].sort((a,b)=>a-b); }
 // Línea AH principal: la más cercana a 50/50 según el mercado.
-function afBalancedAhLine(bms, lines){
+function afBalancedAhLineId(bms, id, lines){
   let best=null, bal=9;
-  for(const L of lines){ const {rows}=afPairRows(bms,4,[v=>v===`Home ${_ahLbl(L)}`,v=>v===`Away ${_ahLbl(L)}`]);
+  for(const L of lines){ const {rows}=afPairRows(bms,id,[v=>v===`Home ${_ahLbl(L)}`,v=>v===`Away ${_ahLbl(L)}`]);
     if(rows.length<1) continue; const nov=devigMulti(rows); if(!nov) continue;
     const d=Math.abs(nov[0]-0.5); if(d<bal){ bal=d; best=L; } }
   return best;
 }
+const afAhLines = bms => afAhLinesId(bms,4);
+const afBalancedAhLine = (bms,lines) => afBalancedAhLineId(bms,4,lines);
 // EV two-way/settlement con retorno = ret>0 ? ret*(d-1) : ret (media apuesta incluida).
 const _evGrid = (G, valOf, side, line) => b => { let ev=0;
   for(let x=0;x<G.length;x++) for(let y=0;y<G.length;y++){ const r=scSettle(side,line,valOf(x,y)); ev+=G[x][y]*(r>0?r*(b-1):r); } return ev; };
@@ -3226,7 +3338,7 @@ function afDerivedCands(bms, gridF, gridH1){
   return C;
 }
 
-function computeSoccerMatchAF(home, away, date, bookmakers, lg, str){
+function computeSoccerMatchAF(home, away, date, bookmakers, lg, str, evtStr){
   const {h2hBooks, ouBooks}=afParseOdds(bookmakers);
   if(!h2hBooks.length) return null;
   let model=null, gridF=null, gridH1=null;
@@ -3236,9 +3348,9 @@ function computeSoccerMatchAF(home, away, date, bookmakers, lg, str){
       gridF=model.grid; gridH1=dcGrid(lam.lh*SC_H1_SHARE, lam.la*SC_H1_SHARE); } }
   const m=finalizeSoccerMatch(home, away, date, lg, h2hBooks, ouBooks, model);
   if(!m) return null;
-  // Mercados derivados desde la rejilla + odds reales de API-Football.
+  // Mercados derivados (goles) + mercados de evento (córners/tarjetas/…) si hay fuerzas.
   try{
-    const extra=afDerivedCands(bookmakers, gridF, gridH1);
+    const extra=[...afDerivedCands(bookmakers, gridF, gridH1), ...afEventCands(bookmakers, evtStr, home, away)];
     if(extra.length){ m.cand=[...m.cand, ...extra].sort((a,b)=>b.rank-a.rank||b.ev-a.ev); m.bestBet=m.cand[0]; }
   }catch(e){ console.warn('af derived:', e.message); }
   return m;
@@ -3250,18 +3362,22 @@ async function getSoccerOddsAF(compKeys, dateStr){
   const season=soccerSeason(), date=dateStr || todayLocal();
   const matches=[], unresolved=[]; let finished=0, scheduled=0;
   const DONE=['FT','AET','PEN','PST','CANC','ABD','SUSP','INT','LIVE','1H','2H','HT','ET','BT','P'];
+  const wantEvt=getScEvents();
   for(const comp of wanted){
     try{
-      const str=await getStrengthsAF(comp);   // modelo real de la temporada (o null si hay pocos partidos)
       const fxr=await afGet(`/fixtures?league=${comp.afId}&season=${season}&date=${date}`);
       const fmap={}; (fxr.response||[]).forEach(f=>{ const st=f.fixture.status.short;
         if(st==='NS'||st==='TBD') scheduled++; else finished++;
         fmap[f.fixture.id]={ home:f.teams.home.name, away:f.teams.away.name, date:f.fixture.date, status:st }; });
-      if(!Object.keys(fmap).length) continue;   // esta liga no juega este día
+      // ¿Hay partidos POR JUGAR? Si no, no gastamos en fuerzas/estadísticas de esta liga.
+      const jugables=Object.values(fmap).filter(f=>!DONE.includes(f.status));
+      if(!jugables.length) continue;
+      const str=await getStrengthsAF(comp);   // modelo real de la temporada (o null si hay pocos partidos)
+      const evtStr=wantEvt ? await getEventStrengthsAF(comp) : null;   // córners/tarjetas/… (caro, tras toggle)
       const odds=await afGetAll(`/odds?league=${comp.afId}&season=${season}&date=${date}`);
       for(const o of odds){ const f=fmap[o.fixture.id]; if(!f) continue;
         if(DONE.includes(f.status)) continue;   // ya terminó / en juego / cancelado → no se apuesta
-        const m=computeSoccerMatchAF(f.home, f.away, f.date, o.bookmakers, comp, str);
+        const m=computeSoccerMatchAF(f.home, f.away, f.date, o.bookmakers, comp, str, evtStr);
         if(m){ m.eventId=String(o.fixture.id); m.afFixture=o.fixture.id; matches.push(m); } }
     }catch(e){ console.warn('af '+comp.short+':', e.message); unresolved.push(comp.short); }
   }
@@ -3312,6 +3428,7 @@ function setupSoccerLeagues(){
   el.dataset.done='1';
   const kin=document.getElementById('oddsio-key'); if(kin) kin.value=getOddsIoKey();
   const afin=document.getElementById('af-key'); if(afin) afin.value=getAfKey();
+  const evc=document.getElementById('sc-events'); if(evc) evc.checked=getScEvents();
 }
 async function analyzeSoccer(){
   const area=document.getElementById('soccer-area');
@@ -3662,7 +3779,8 @@ function renderSoccer(matches, unresolved, dateStr){
 
 // Tarjeta cuadrada de un partido: mejor pick + análisis breve. Clic → modal.
 const SC_MKT_NAME = { '1':'Ganador','2':'Ganador','X':'Empate','O':'Total goles','U':'Total goles',
-  BTS:'BTTS', DC:'Doble op.', DNB:'Draw No Bet', TT:'Total equipo', '1H':'1ª mitad', AH:'H. Asiático' };
+  BTS:'BTTS', DC:'Doble op.', DNB:'Draw No Bet', TT:'Total equipo', '1H':'1ª mitad', AH:'H. Asiático',
+  corners:'Córners', yellow:'Tarjetas', fouls:'Faltas', shots:'Tiros', sot:'Tiros a puerta', offsides:'Offsides' };
 const scMktName = mkt => SC_MKT_NAME[mkt] || mkt;
 function scCardHTML(m,i){
   const c=m.bestBet, tc=tierColor(c.tier);
@@ -3689,7 +3807,11 @@ function scDetailHTML(m){
   const p1=x=>Math.round(x*100)+'%', d2=x=>(+x).toFixed(2),
         fmtEv=v=>`${v>=0?'+':''}${(v*100).toFixed(1)}%`, pp=v=>`${v>=0?'+':''}${v}`;
   const mktN=c=>scMktName(c.mkt);
-  const cands=[...m.cand].sort((a,b)=>b.rank-a.rank);
+  const allC=[...m.cand].sort((a,b)=>b.rank-a.rank);
+  // Con mercados de evento pueden ser ~90: se muestran los de valor + hasta 36 en total.
+  const conValor=allC.filter(c=>scQualifies(c.tier)&&c.ev>0).length;
+  const CAP=Math.max(36, conValor+6);
+  const cands=allC.slice(0,CAP), oculto=allC.length-cands.length;
   const rows=cands.map(c=>{ const isBest=c===m.bestBet;
     return `<div class="sc-brow${isBest?' best':''}">
       <span style="min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${isBest?'⭐ ':''}<b>${esc(c.label)}</b> <span style="color:var(--text3);font-size:9px">${mktN(c)}</span></span>
@@ -3697,7 +3819,8 @@ function scDetailHTML(m){
       <span>@${d2(c.best)}</span>
       <span style="color:${evColor(c.ev)};font-weight:700">${fmtEv(c.ev)}</span>
       <span class="sc-tier" style="background:${tierColor(c.tier)};justify-self:start">${c.tier}</span>
-    </div>`; }).join('');
+    </div>`; }).join('')
+    + (oculto>0?`<div style="padding:8px 15px;font-size:10px;color:var(--text3);border-top:1px solid var(--border)">+${oculto} apuesta(s) más sin valor (ocultas)</div>`:'');
   const bb=m.bestBet;
   const modelLine = m.hasModel ? `<span style="color:var(--gtx)">✓ modelo Dixon-Coles</span>`
                                : `<span style="color:var(--gold)">⚠ valor de línea</span>`;

@@ -2709,7 +2709,8 @@ function scRank(c){
   return Math.round(100*(.40*evS+.25*edgeS+.20*dqS+.10*liqS+.05*pS));
 }
 // Construye una selección con toda la métrica del spec (§7-8,12,14-15).
-function scCand(mkt, label, modelP, noVig, prices, nBooks, hasOU, hasModel){
+// evFn(best): EV con settlement (asiático/DNB con push); si falta, EV two-way estándar.
+function scCand(mkt, label, modelP, noVig, prices, nBooks, hasOU, hasModel, evFn){
   const best=bestDec(prices), cons=avg(prices);
   const imps=prices.map(d=>1/d), mean=avg(imps);
   const disp=mean>0?(Math.max(...imps)-Math.min(...imps))/mean:1;
@@ -2719,7 +2720,7 @@ function scCand(mkt, label, modelP, noVig, prices, nBooks, hasOU, hasModel){
   const qw=dq/100;
   const adjP=qw*modelP+(1-qw)*noVig;                     // §8 shrinkage al mercado
   const edgePP=+((adjP-noVig)*100).toFixed(2);           // §7 edge de modelo (pp)
-  const ev=+(adjP*best-1).toFixed(4);                    // §7 EV con el mejor precio
+  const ev=+((evFn?evFn(best):adjP*best-1)).toFixed(4);  // §7 EV (settlement-aware si aplica)
   const priceQ=cons>0?best/cons-1:0;
   const c={mkt,label,modelP,noVig,adjP,best,cons,
     edgePP, ev, fairOdds:modelP>0?+(1/modelP).toFixed(2):null,
@@ -2741,17 +2742,45 @@ function _dcTau(x,y,lh,la,rho){
   return 1;
 }
 // λ local, λ visita → 1X2 + over/under de las líneas pedidas.
+// Rejilla conjunta de marcadores (Dixon-Coles) normalizada: G[x][y]=P(local=x, visita=y).
+function dcGrid(lh, la, rho=-0.05, MAX=10){
+  const G=[]; let norm=0;
+  for(let x=0;x<=MAX;x++){ G[x]=[]; for(let y=0;y<=MAX;y++){ const v=_dcTau(x,y,lh,la,rho)*_pois(x,lh)*_pois(y,la); G[x][y]=v; norm+=v; } }
+  for(let x=0;x<=MAX;x++) for(let y=0;y<=MAX;y++) G[x][y]/=norm;
+  return G;
+}
 function dcModel(lh, la, lines=[2.5], rho=-0.05, MAX=10){
-  let pH=0,pD=0,pA=0,norm=0; const over={}; lines.forEach(L=>over[L]=0);
-  for(let x=0;x<=MAX;x++) for(let y=0;y<=MAX;y++) norm+=_dcTau(x,y,lh,la,rho)*_pois(x,lh)*_pois(y,la);
-  for(let x=0;x<=MAX;x++) for(let y=0;y<=MAX;y++){
-    const p=_dcTau(x,y,lh,la,rho)*_pois(x,lh)*_pois(y,la)/norm;
+  const G=dcGrid(lh,la,rho,MAX);
+  let pH=0,pD=0,pA=0; const over={}; lines.forEach(L=>over[L]=0);
+  for(let x=0;x<=MAX;x++) for(let y=0;y<=MAX;y++){ const p=G[x][y];
     if(x>y)pH+=p; else if(x===y)pD+=p; else pA+=p;
     const tot=x+y; lines.forEach(L=>{ if(tot>L) over[L]+=p; });
   }
   const ou={}; lines.forEach(L=>ou[L]=[over[L],1-over[L]]);   // [over,under]
-  return { p1x2:[pH,pD,pA], ou, lambda:{h:lh,a:la} };
+  return { p1x2:[pH,pD,pA], ou, lambda:{h:lh,a:la}, grid:G };
 }
+
+// ── Probabilidades de mercado desde la rejilla conjunta (spec §3) ────────────
+const gSum=(G,f)=>{ let p=0; for(let x=0;x<G.length;x++) for(let y=0;y<G.length;y++) if(f(x,y)) p+=G[x][y]; return p; };
+const gBTTS   = G => gSum(G,(x,y)=>x>=1&&y>=1);                 // ambos anotan
+const gTeamOver = (G,home,L) => gSum(G,(x,y)=>(home?x:y)>L);   // total de un equipo > L
+const gTotOver  = (G,L) => gSum(G,(x,y)=>x+y>L);               // total del partido > L
+// Hándicap asiático: retorno neto por unidad apostando a un lado. margin = local−visita
+// (se niega para el lado visitante). Línea de cuartos → se parte en las dos medias.
+function _ahRet1(margin, line, d){ const adj=margin+line; return adj>1e-9?d-1:adj<-1e-9?-1:0; }
+function ahRet(margin, line, d){
+  const q=Math.round(line*4);
+  if(q%2!==0) return 0.5*_ahRet1(margin,line-0.25,d)+0.5*_ahRet1(margin,line+0.25,d);  // cuarto → split §3
+  return _ahRet1(margin,line,d);
+}
+// EV asiático correcto (win/half-win/push/half-loss/loss) sumando sobre la rejilla.
+function gAhEV(G, home, line, d){ let ev=0; for(let x=0;x<G.length;x++) for(let y=0;y<G.length;y++){ const m=home?(x-y):(y-x); ev+=G[x][y]*ahRet(m,line,d); } return ev; }
+// Fracción de cobertura esperada (win=1, push=0.5, media-win=0.75, cuarto partido),
+// CONSISTENTE con el EV de settlement para que edge y EV no se contradigan.
+function _ahUnit(m, line){ const q=Math.round(line*4);
+  if(q%2!==0) return 0.5*_ahUnit(m,line-0.25)+0.5*_ahUnit(m,line+0.25);
+  const adj=m+line; return adj>1e-9?1:adj<-1e-9?0:0.5; }
+function gAhCover(G, home, line){ let s=0; for(let x=0;x<G.length;x++) for(let y=0;y<G.length;y++){ const m=home?(x-y):(y-x); s+=G[x][y]*_ahUnit(m,line); } return s; }
 // Fuerzas ataque/defensa (local/visita) desde la tabla, con shrinkage por # de partidos.
 function buildStrengths(rows){
   const K=4;   // partidos de prior a la media de liga (regresa el arranque de temporada)
@@ -3103,14 +3132,116 @@ function afParseOdds(bookmakers){
   }
   return {h2hBooks, ouBooks};
 }
+// ── Mercados DERIVADOS de la rejilla Dixon-Coles (spec §1.1.1 + §3) ──────────
+// BTTS, Doble Oportunidad, Draw No Bet, Team Totals, 1ª mitad y Hándicap Asiático
+// (con settlement de cuartos correcto). Todos salen de la MISMA rejilla conjunta.
+const SC_H1_SHARE = 0.45;   // ~45% de los goles ocurren en la 1ª mitad (aprox. de liga)
+const _ahLbl = L => (L>=0?'+':'')+L;   // formato AF: "+0","+0.5","-1","-1.25"
+// Filas por-casa alineadas a un conjunto de resultados (solo casas que cotizan todos).
+function afPairRows(bms, betId, matchers){
+  const rows=[], perSel=matchers.map(()=>[]);
+  for(const bk of bms||[]){ const bet=(bk.bets||[]).find(b=>b.id===betId); if(!bet) continue;
+    const o=matchers.map(m=>{ const v=(bet.values||[]).find(x=>m(x.value)); return v?+v.odd:null; });
+    if(o.every(x=>x>1)){ rows.push(o); o.forEach((x,i)=>perSel[i].push(x)); } }
+  return {rows, perSel};
+}
+// Línea O/U principal (la más equilibrada ~50/50) de un mercado con líneas.
+function afBestOULine(bms, betId){
+  const byPt={};
+  for(const bk of bms||[]) for(const bet of (bk.bets||[])) if(bet.id===betId)
+    for(const v of bet.values||[]){ const m=/^(Over|Under)\s+([\d.]+)$/.exec(v.value); if(!m) continue;
+      (byPt[m[2]]=byPt[m[2]]||{o:[],u:[]})[m[1]==='Over'?'o':'u'].push(+v.odd); }
+  let best=null, bal=9;
+  for(const pt in byPt){ const g=byPt[pt]; if(!g.o.length||!g.u.length) continue;
+    const nov=devigMulti([[avg(g.o),avg(g.u)]]); if(!nov) continue;
+    const d=Math.abs(nov[0]-0.5); if(d<bal){ bal=d; best=+pt; } }
+  return best;
+}
+// Todas las líneas de hándicap asiático presentes (lado local).
+function afAhLines(bms){ const s=new Set();
+  for(const bk of bms||[]) for(const bet of (bk.bets||[])) if(bet.id===4)
+    for(const v of bet.values||[]){ const m=/^Home\s+([+-][\d.]+)$/.exec(v.value); if(m) s.add(+m[1]); }
+  return [...s].sort((a,b)=>a-b); }
+// Línea AH principal: la más cercana a 50/50 según el mercado.
+function afBalancedAhLine(bms, lines){
+  let best=null, bal=9;
+  for(const L of lines){ const {rows}=afPairRows(bms,4,[v=>v===`Home ${_ahLbl(L)}`,v=>v===`Away ${_ahLbl(L)}`]);
+    if(rows.length<1) continue; const nov=devigMulti(rows); if(!nov) continue;
+    const d=Math.abs(nov[0]-0.5); if(d<bal){ bal=d; best=L; } }
+  return best;
+}
+// EV two-way/settlement con retorno = ret>0 ? ret*(d-1) : ret (media apuesta incluida).
+const _evGrid = (G, valOf, side, line) => b => { let ev=0;
+  for(let x=0;x<G.length;x++) for(let y=0;y<G.length;y++){ const r=scSettle(side,line,valOf(x,y)); ev+=G[x][y]*(r>0?r*(b-1):r); } return ev; };
+
+function afDerivedCands(bms, gridF, gridH1){
+  const C=[]; const hasModel=!!gridF;
+  // Empuja una selección two-way (o con evFn de settlement).
+  const push=(mkt,label,modelP,perSel,idx,rows,evFn)=>{
+    const nov=devigMulti(rows); if(!nov) return;
+    const prices=perSel[idx]; if(!prices||prices.length<2) return;
+    C.push(scCand(mkt,label, hasModel?modelP:nov[idx], nov[idx], prices, prices.length, true, hasModel, evFn));
+  };
+  // BTTS (8)
+  { const {rows,perSel}=afPairRows(bms,8,[v=>v==='Yes',v=>v==='No']);
+    if(rows.length>=2){ const pYes=gridF?gBTTS(gridF):0;
+      push('BTS','Ambos anotan · Sí', pYes, perSel,0,rows);
+      push('BTS','Ambos anotan · No', 1-pYes, perSel,1,rows); } }
+  // Doble Oportunidad (12) — de-vig a suma 2 (cada selección cubre 2 de 3 resultados)
+  { const {rows,perSel}=afPairRows(bms,12,[v=>v==='Home/Draw',v=>v==='Home/Away',v=>v==='Draw/Away']);
+    if(rows.length>=2){
+      const pH=gridF?gSum(gridF,(x,y)=>x>y):0, pD=gridF?gSum(gridF,(x,y)=>x===y):0, pA=gridF?gSum(gridF,(x,y)=>x<y):0;
+      const mp=[pH+pD, pH+pA, pD+pA];
+      const dc=rows.map(r=>{ const q=r.map(o=>1/o), s=q.reduce((a,b)=>a+b,0); return q.map(x=>x*2/s); });
+      const nov=[0,1,2].map(i=>avg(dc.map(r=>r[i])));
+      const lbl=['Doble oportunidad · 1X (Local o empate)','Doble oportunidad · 12 (No empate)','Doble oportunidad · X2 (Visita o empate)'];
+      [0,1,2].forEach(i=>{ const prices=perSel[i]; if(prices.length<2) return;
+        C.push(scCand('DC',lbl[i], hasModel?mp[i]:nov[i], nov[i], prices, prices.length, true, hasModel)); }); } }
+  // Draw No Bet (2 "Home/Away") — empate DEVUELVE (push)
+  { const {rows,perSel}=afPairRows(bms,2,[v=>v==='Home',v=>v==='Away']);
+    if(rows.length>=2){ const pH=gridF?gSum(gridF,(x,y)=>x>y):0, pA=gridF?gSum(gridF,(x,y)=>x<y):0, noDraw=pH+pA;
+      push('DNB','Draw No Bet · Local', noDraw>0?pH/noDraw:0.5, perSel,0,rows, b=> pH*(b-1)-pA);
+      push('DNB','Draw No Bet · Visita', noDraw>0?pA/noDraw:0.5, perSel,1,rows, b=> pA*(b-1)-pH); } }
+  // Team Totals: Local (16) / Visita (17)
+  [[16,true,'local'],[17,false,'visita']].forEach(([id,home,who])=>{
+    const L=afBestOULine(bms,id); if(L==null) return;
+    const {rows,perSel}=afPairRows(bms,id,[v=>v===`Over ${L}`,v=>v===`Under ${L}`]);
+    if(rows.length<2) return; const pO=gridF?gTeamOver(gridF,home,L):0;
+    push('TT',`Total ${who} · Over ${L}`, pO, perSel,0,rows, gridF?_evGrid(gridF,(x,y)=>home?x:y,'over',L):null);
+    push('TT',`Total ${who} · Under ${L}`, 1-pO, perSel,1,rows, gridF?_evGrid(gridF,(x,y)=>home?x:y,'under',L):null);
+  });
+  // Goles 1ª mitad O/U (6)
+  { const L=afBestOULine(bms,6); if(L!=null){
+      const {rows,perSel}=afPairRows(bms,6,[v=>v===`Over ${L}`,v=>v===`Under ${L}`]);
+      if(rows.length>=2){ const pO=gridH1?gTotOver(gridH1,L):0;
+        push('1H',`1ª mitad · Over ${L}`, pO, perSel,0,rows, gridH1?_evGrid(gridH1,(x,y)=>x+y,'over',L):null);
+        push('1H',`1ª mitad · Under ${L}`, 1-pO, perSel,1,rows, gridH1?_evGrid(gridH1,(x,y)=>x+y,'under',L):null); } } }
+  // Hándicap Asiático (4) — línea principal, ambos lados (settlement de cuartos §3).
+  // Solo con modelo: el EV de settlement necesita la rejilla; sin ella sería adivinar.
+  if(gridF){ const L=afBalancedAhLine(bms, afAhLines(bms));
+    if(L!=null){ const {rows,perSel}=afPairRows(bms,4,[v=>v===`Home ${_ahLbl(L)}`,v=>v===`Away ${_ahLbl(L)}`]);
+      if(rows.length>=2){ const nov=devigMulti(rows);
+        if(nov){ if(perSel[0].length>=2) C.push(scCand('AH',`Asiático Local ${_ahLbl(L)}`, gAhCover(gridF,true,L), nov[0], perSel[0], perSel[0].length, true, true, b=>gAhEV(gridF,true,L,b)));
+          if(perSel[1].length>=2) C.push(scCand('AH',`Asiático Visita ${_ahLbl(L)}`, gAhCover(gridF,false,-L), nov[1], perSel[1], perSel[1].length, true, true, b=>gAhEV(gridF,false,-L,b))); } } } }
+  return C;
+}
+
 function computeSoccerMatchAF(home, away, date, bookmakers, lg, str){
   const {h2hBooks, ouBooks}=afParseOdds(bookmakers);
   if(!h2hBooks.length) return null;
-  let model=null;
+  let model=null, gridF=null, gridH1=null;
   if(str){ const lam=matchLambdas(str, home, away);
     if(lam){ const lines=ouBooks.length?[...new Set(ouBooks.map(b=>b.point))]:[2.5];
-      model=dcModel(lam.lh, lam.la, lines); model.played=lam.played; } }
-  return finalizeSoccerMatch(home, away, date, lg, h2hBooks, ouBooks, model);
+      model=dcModel(lam.lh, lam.la, lines); model.played=lam.played;
+      gridF=model.grid; gridH1=dcGrid(lam.lh*SC_H1_SHARE, lam.la*SC_H1_SHARE); } }
+  const m=finalizeSoccerMatch(home, away, date, lg, h2hBooks, ouBooks, model);
+  if(!m) return null;
+  // Mercados derivados desde la rejilla + odds reales de API-Football.
+  try{
+    const extra=afDerivedCands(bookmakers, gridF, gridH1);
+    if(extra.length){ m.cand=[...m.cand, ...extra].sort((a,b)=>b.rank-a.rank||b.ev-a.ev); m.bestBet=m.cand[0]; }
+  }catch(e){ console.warn('af derived:', e.message); }
+  return m;
 }
 // Trae fixtures + cuotas del día por liga (2 requests/liga) y arma los partidos.
 async function getSoccerOddsAF(compKeys, dateStr){
@@ -3530,10 +3661,13 @@ function renderSoccer(matches, unresolved, dateStr){
 }
 
 // Tarjeta cuadrada de un partido: mejor pick + análisis breve. Clic → modal.
+const SC_MKT_NAME = { '1':'Ganador','2':'Ganador','X':'Empate','O':'Total goles','U':'Total goles',
+  BTS:'BTTS', DC:'Doble op.', DNB:'Draw No Bet', TT:'Total equipo', '1H':'1ª mitad', AH:'H. Asiático' };
+const scMktName = mkt => SC_MKT_NAME[mkt] || mkt;
 function scCardHTML(m,i){
   const c=m.bestBet, tc=tierColor(c.tier);
   const ev=`${c.ev>=0?'+':''}${(c.ev*100).toFixed(1)}%`;
-  const mkt = (c.mkt==='O'||c.mkt==='U')?'Total goles':c.mkt==='X'?'Empate':'Ganador';
+  const mkt = scMktName(c.mkt);
   return `<div class="sc-card" onclick="openSoccerMatch(${i})">
     <div class="sc-card-top"><span>${m.league.flag} ${m.league.short}</span><span>${kickoff(m.commence)}</span></div>
     <div class="sc-teams">${esc(m.home)}<br><span class="vs">vs</span>${esc(m.away)}</div>
@@ -3554,7 +3688,7 @@ function openSoccerMatch(i){
 function scDetailHTML(m){
   const p1=x=>Math.round(x*100)+'%', d2=x=>(+x).toFixed(2),
         fmtEv=v=>`${v>=0?'+':''}${(v*100).toFixed(1)}%`, pp=v=>`${v>=0?'+':''}${v}`;
-  const mktN=c=> (c.mkt==='O'||c.mkt==='U')?'Total':(c.mkt==='X'||c.mkt==='1'||c.mkt==='2')?'1X2':'—';
+  const mktN=c=>scMktName(c.mkt);
   const cands=[...m.cand].sort((a,b)=>b.rank-a.rank);
   const rows=cands.map(c=>{ const isBest=c===m.bestBet;
     return `<div class="sc-brow${isBest?' best':''}">

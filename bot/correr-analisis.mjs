@@ -23,6 +23,10 @@ const PASS  = process.env.BOT_PASSWORD;
 // MODO=grade abre la página en modo calificar (auto=grade): califica el día que
 // cerró y arma el resumen de resultados. Cualquier otro valor = análisis normal.
 const MODO  = process.env.MODO === 'grade' ? 'grade' : '1';
+// Cada deporte tiene su PROPIO bot: el algoritmo del futbol no tiene nada que ver
+// con el del beisbol, asi que no comparten window.__auto. La pagina expone el del
+// deporte que se pida aqui, y solo ese.
+const DEPORTE = process.env.DEPORTE || 'mlb';
 const TIMEOUT_MS = 9 * 60 * 1000;   // un análisis completo ronda los 6 s, pero la
                                      // primera carga en frío del runner es lenta
 
@@ -42,8 +46,8 @@ pg.on('pageerror', e => console.log(`  [navegador] ERROR ${e.message}`));
 
 let codigo = 0;
 try {
-  const url = `${URL}?auto=${MODO}&cb=${Date.now()}`;   // cb: evita la caché de Pages
-  console.log(`Abriendo ${URL}?auto=${MODO}${MODO==='grade'?' (calificar)':''}`);
+  const url = `${URL}?auto=${MODO}&deporte=${DEPORTE}&cb=${Date.now()}`;   // cb: evita la caché de Pages
+  console.log(`Abriendo ${URL}?auto=${MODO}&deporte=${DEPORTE}${MODO === 'grade' ? ' (calificar)' : ''}`);
   await pg.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
 
   // Login. El modal puede estar oculto: se abre con el botón de sesión si hace falta.

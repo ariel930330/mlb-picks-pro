@@ -10,18 +10,22 @@
 (function () {
 'use strict';
 
+// Cliente de Supabase acotado a las tablas de MLB. Pedir otra tabla falla al
+// instante en vez de escribir donde no debe.
+const db = Deportes.clienteDe('mlb');
+
 // ── Su interfaz ─────────────────────────────────────────────────────────────
 // El HTML de MLB vive AQUÍ, no en index.html. Por eso index.html no menciona el
 // béisbol por ninguna parte y añadir o quitar un deporte no lo toca.
 const MLB_HTML = String.raw`
   <!-- Tabs -->
   <div class="tabs">
-    <button class="tab-btn active" onclick="showTab('picks')"><i class="ti ti-chart-bar"></i>Picks del Día</button>
-    <button class="tab-btn" onclick="showTab('pitchers');loadPropHist('pitcher')"><i class="ti ti-circle-dashed"></i>Pitcher's Model</button>
-    <button class="tab-btn" onclick="showTab('batters');loadPropHist('batter')"><i class="ti ti-run"></i>Bateadores</button>
-    <button class="tab-btn" onclick="showTab('signals');loadSignals()"><i class="ti ti-radar"></i>Señales</button>
-    <button class="tab-btn" onclick="showTab('model');loadModelTab()"><i class="ti ti-brain"></i>Modelo IA</button>
-    <button class="tab-btn" onclick="showTab('valid');loadValidation()"><i class="ti ti-target"></i>Validación</button>
+    <button class="tab-btn active" data-ac="showTab('picks')"><i class="ti ti-chart-bar"></i>Picks del Día</button>
+    <button class="tab-btn" data-ac="showTab('pitchers');loadPropHist('pitcher')"><i class="ti ti-circle-dashed"></i>Pitcher's Model</button>
+    <button class="tab-btn" data-ac="showTab('batters');loadPropHist('batter')"><i class="ti ti-run"></i>Bateadores</button>
+    <button class="tab-btn" data-ac="showTab('signals');loadSignals()"><i class="ti ti-radar"></i>Señales</button>
+    <button class="tab-btn" data-ac="showTab('model');loadModelTab()"><i class="ti ti-brain"></i>Modelo IA</button>
+    <button class="tab-btn" data-ac="showTab('valid');loadValidation()"><i class="ti ti-target"></i>Validación</button>
   </div>
 
   <div class="tab-content">
@@ -30,25 +34,25 @@ const MLB_HTML = String.raw`
     <div class="tab-pane active" id="tab-picks">
       <div class="toolbar">
         <input type="date" id="date-pick">
-        <button class="btn" id="run-btn" onclick="runAnalysis()" title="REFRESH LIVE BOARD: baja datos nuevos, recalcula y EXPLICA cada cambio de señal"><i class="ti ti-refresh"></i>Analizar partidos</button>
-        <button class="btn-sm" id="recheck-btn" onclick="recheckSnapshot()" title="RECHECK SNAPSHOT: reusa el snapshot congelado y devuelve exactamente las mismas señales, sin bajar datos ni gastar cuotas">🔒 Re-verificar snapshot</button>
-        <button class="btn-sm" id="sync-btn" onclick="syncCloud()" title="Jala el último análisis de la nube (de cualquier PC) sin volver a analizar ni gastar cuotas">☁ Sincronizar</button>
+        <button class="btn" id="run-btn" data-ac="runAnalysis()" title="REFRESH LIVE BOARD: baja datos nuevos, recalcula y EXPLICA cada cambio de señal"><i class="ti ti-refresh"></i>Analizar partidos</button>
+        <button class="btn-sm" id="recheck-btn" data-ac="recheckSnapshot()" title="RECHECK SNAPSHOT: reusa el snapshot congelado y devuelve exactamente las mismas señales, sin bajar datos ni gastar cuotas">🔒 Re-verificar snapshot</button>
+        <button class="btn-sm" id="sync-btn" data-ac="syncCloud()" title="Jala el último análisis de la nube (de cualquier PC) sin volver a analizar ni gastar cuotas">☁ Sincronizar</button>
         <input type="password" id="odds-key" placeholder="The Odds API key" autocomplete="off"
           title="Se guarda en tu cuenta (Supabase) si iniciaste sesión, así queda fija en todos tus dispositivos. Nunca se escribe en el código, porque el repo es público."
           style="background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:7px 10px;font-size:12px;color:var(--text);font-family:inherit;outline:none;min-width:170px"
           onchange="saveOddsKey(this.value)">
         <span id="odds-key-state" style="font-size:10px;color:var(--text3)"></span>
         <label title="Trae la línea real de ponches por pitcher. Usa 1 petición extra por partido." style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer">
-          <input type="checkbox" id="kprops-chk" onchange="saveKProps(this.checked)" style="accent-color:var(--gold)"> Props del abridor
+          <input type="checkbox" id="kprops-chk" data-ch="saveKProps(this.checked)" style="accent-color:var(--gold)"> Props del abridor
         </label>
         <label title="Trae líneas reales de bateadores (hits/bases/HR). Gasta ~3 peticiones por partido." style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer">
-          <input type="checkbox" id="bprops-chk" onchange="saveBProps(this.checked)" style="accent-color:var(--gold)"> Props bateadores
+          <input type="checkbox" id="bprops-chk" data-ch="saveBProps(this.checked)" style="accent-color:var(--gold)"> Props bateadores
         </label>
         <label title="Historial bateador-vs-pitcher (muchas llamadas a la MLB API, gratis pero lento)." style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer">
-          <input type="checkbox" id="bvp-chk" onchange="saveBvPOn(this.checked)" style="accent-color:var(--gold)"> BvP
+          <input type="checkbox" id="bvp-chk" data-ch="saveBvPOn(this.checked)" style="accent-color:var(--gold)"> BvP
         </label>
         <label title="Splits de cada bateador vs zurdos/derechos (OPS/K%/BB%/ISO vs la mano del abridor). Más llamadas a la MLB API, gratis pero lento." style="font-size:11px;color:var(--text2);display:flex;align-items:center;gap:4px;cursor:pointer">
-          <input type="checkbox" id="splits-chk" onchange="saveSplitsOn(this.checked)" style="accent-color:var(--gold)"> Splits L/R
+          <input type="checkbox" id="splits-chk" data-ch="saveSplitsOn(this.checked)" style="accent-color:var(--gold)"> Splits L/R
         </label>
         <span id="run-status" style="font-size:11px;color:var(--text3)"></span>
       </div>
@@ -60,11 +64,11 @@ const MLB_HTML = String.raw`
       </div>
       <div class="filterbar" id="filterbar" style="display:none">
         <span style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase">Filtrar:</span>
-        <button class="pf-btn active" data-f="all"  onclick="setPickFilter('all')">Todos</button>
-        <button class="pf-btn" data-f="ev"   onclick="setPickFilter('ev')">+EV (valor)</button>
-        <button class="pf-btn" data-f="high" onclick="setPickFilter('high')">🟢 Alta conf.</button>
+        <button class="pf-btn active" data-f="all"  data-ac="setPickFilter('all')">Todos</button>
+        <button class="pf-btn" data-f="ev"   data-ac="setPickFilter('ev')">+EV (valor)</button>
+        <button class="pf-btn" data-f="high" data-ac="setPickFilter('high')">🟢 Alta conf.</button>
         <span style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase;margin-left:auto" title="El sistema siempre ordena por edge (valor), nunca por probabilidad">Orden: valor (edge)</span>
-        <button class="btn-sm" onclick="copyPicks()"><i class="ti ti-copy"></i> Copiar</button>
+        <button class="btn-sm" data-ac="copyPicks()"><i class="ti ti-copy"></i> Copiar</button>
       </div>
       <div id="pod-area"></div>
       <div id="snapshot-area"></div>
@@ -81,10 +85,10 @@ const MLB_HTML = String.raw`
           <div class="ph-sub">Espejo de las tarjetas: la jugada de cada abridor, la que marca el ★. Al reanalizar, un pick sin calificar que ya no se recomienda se retira; lo calificado no se toca.</div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn-sm" onclick="loadPropHist('pitcher')">🔄 Recargar</button>
-          <button class="btn-sm owner-only" onclick="autoGradeProps()" title="Califica los props desde el boxscore final de MLB">⚡ Auto-calificar</button>
-          <button class="btn-sm owner-only" onclick="clearPropHist('pitcher')" title="Borra solo la jornada que estás viendo. Las demás fechas no se tocan.">🗑 Limpiar día</button>
-          <button class="btn-sm owner-only" style="color:var(--rtx);border-color:var(--red)" onclick="clearPropHist('pitcher',true)" title="Borra TODAS las fechas, incluidos los picks ya calificados. Ese récord no se puede regenerar.">🗑 Todo</button>
+          <button class="btn-sm" data-ac="loadPropHist('pitcher')">🔄 Recargar</button>
+          <button class="btn-sm owner-only" data-ac="autoGradeProps()" title="Califica los props desde el boxscore final de MLB">⚡ Auto-calificar</button>
+          <button class="btn-sm owner-only" data-ac="clearPropHist('pitcher')" title="Borra solo la jornada que estás viendo. Las demás fechas no se tocan.">🗑 Limpiar día</button>
+          <button class="btn-sm owner-only" style="color:var(--rtx);border-color:var(--red)" data-ac="clearPropHist('pitcher',true)" title="Borra TODAS las fechas, incluidos los picks ya calificados. Ese récord no se puede regenerar.">🗑 Todo</button>
         </div>
       </div>
       <div id="pitchers-hist"><div class="empty">Cargando…</div></div>
@@ -100,10 +104,10 @@ const MLB_HTML = String.raw`
           <div class="ph-sub">Espejo de las tarjetas. <b>Ojo:</b> el pool de bateo solo incluye equipos con <b>alineación publicada</b>, así que analizar temprano deja fuera a casi todos — el mejor edge de esa corrida puede ser el mejor de 2 equipos, no de 30.</div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn-sm" onclick="loadPropHist('batter')">🔄 Recargar</button>
-          <button class="btn-sm owner-only" onclick="autoGradeProps()" title="Califica los props desde el boxscore final de MLB">⚡ Auto-calificar</button>
-          <button class="btn-sm owner-only" onclick="clearPropHist('batter')" title="Borra solo la jornada que estás viendo. Las demás fechas no se tocan.">🗑 Limpiar día</button>
-          <button class="btn-sm owner-only" style="color:var(--rtx);border-color:var(--red)" onclick="clearPropHist('batter',true)" title="Borra TODAS las fechas, incluidos los picks ya calificados. Ese récord no se puede regenerar.">🗑 Todo</button>
+          <button class="btn-sm" data-ac="loadPropHist('batter')">🔄 Recargar</button>
+          <button class="btn-sm owner-only" data-ac="autoGradeProps()" title="Califica los props desde el boxscore final de MLB">⚡ Auto-calificar</button>
+          <button class="btn-sm owner-only" data-ac="clearPropHist('batter')" title="Borra solo la jornada que estás viendo. Las demás fechas no se tocan.">🗑 Limpiar día</button>
+          <button class="btn-sm owner-only" style="color:var(--rtx);border-color:var(--red)" data-ac="clearPropHist('batter',true)" title="Borra TODAS las fechas, incluidos los picks ya calificados. Ese récord no se puede regenerar.">🗑 Todo</button>
         </div>
       </div>
       <div id="batters-hist"><div class="empty">Cargando…</div></div>
@@ -117,9 +121,9 @@ const MLB_HTML = String.raw`
           <div style="font-size:11px;color:var(--text2)">Cada análisis registra la lectura de edge de cada juego. Aquí se mide si esa lectura <b>acierta</b>: por tier, por Data Quality y contra el modelo.</div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn-sm" onclick="loadSignals()">🔄 Recargar</button>
-          <button class="btn-sm owner-only" onclick="autoGradeSignals()" title="Califica las señales (ML y F5 del equipo señalado) desde el marcador final de MLB">⚡ Auto-calificar</button>
-          <button class="btn-sm owner-only" style="color:var(--rtx);border-color:var(--red)" onclick="clearSignals()">🗑 Limpiar señales</button>
+          <button class="btn-sm" data-ac="loadSignals()">🔄 Recargar</button>
+          <button class="btn-sm owner-only" data-ac="autoGradeSignals()" title="Califica las señales (ML y F5 del equipo señalado) desde el marcador final de MLB">⚡ Auto-calificar</button>
+          <button class="btn-sm owner-only" style="color:var(--rtx);border-color:var(--red)" data-ac="clearSignals()">🗑 Limpiar señales</button>
         </div>
       </div>
       <div class="stats-bar" style="grid-template-columns:repeat(auto-fit,minmax(140px,1fr))">
@@ -140,9 +144,9 @@ const MLB_HTML = String.raw`
       <div style="font-size:11px;color:var(--text2);margin-bottom:16px">Entrenados con 13,070 partidos reales (2019–2024) · 58.4% accuracy</div>
       <div id="weight-sliders"></div>
       <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
-        <button class="btn owner-only" onclick="retrainModel()" title="Ajusta los pesos hacia tus resultados, regularizado para no sobre-ajustar"><i class="ti ti-brain"></i>Reentrenar con mi historial</button>
-        <button class="btn-sm owner-only" onclick="saveWeightsToCloud()"><i class="ti ti-device-floppy"></i>Guardar</button>
-        <button class="btn-sm owner-only" onclick="resetWeights()">↺ Resetear a entrenados</button>
+        <button class="btn owner-only" data-ac="retrainModel()" title="Ajusta los pesos hacia tus resultados, regularizado para no sobre-ajustar"><i class="ti ti-brain"></i>Reentrenar con mi historial</button>
+        <button class="btn-sm owner-only" data-ac="saveWeightsToCloud()"><i class="ti ti-device-floppy"></i>Guardar</button>
+        <button class="btn-sm owner-only" data-ac="resetWeights()">↺ Resetear a entrenados</button>
       </div>
       <div style="font-size:10px;color:var(--text3);margin-top:6px">El reentrenamiento parte de los pesos entrenados (13,070 partidos) y los empuja <b>suavemente</b> hacia tus resultados. Necesita ~50+ juegos calificados; mientras más datos, más se mueve.</div>
       <div style="margin-top:16px;padding:12px 14px;background:var(--bg2);border-radius:var(--rs);border:1px solid var(--border);font-size:11px;color:var(--text2)">
@@ -158,9 +162,9 @@ const MLB_HTML = String.raw`
           <div style="font-size:11px;color:var(--text2)">¿Cuando digo X%, gano X%? · ¿Le gano al cierre? (CLV)</div>
         </div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn-sm" onclick="loadValidation()">🔄 Recargar</button>
-          <button class="btn-sm owner-only" onclick="captureClose()" title="Captura las cuotas de cierre del día para medir CLV (córrelo cerca del inicio de los juegos)">📸 Capturar cierre</button>
-          <button class="btn-sm owner-only" onclick="recalibrate()" title="Ajusta las probabilidades del modelo con tus resultados (Platt scaling)">🧠 Recalibrar</button>
+          <button class="btn-sm" data-ac="loadValidation()">🔄 Recargar</button>
+          <button class="btn-sm owner-only" data-ac="captureClose()" title="Captura las cuotas de cierre del día para medir CLV (córrelo cerca del inicio de los juegos)">📸 Capturar cierre</button>
+          <button class="btn-sm owner-only" data-ac="recalibrate()" title="Ajusta las probabilidades del modelo con tus resultados (Platt scaling)">🧠 Recalibrar</button>
         </div>
       </div>
       <div id="valid-area"><div class="empty">Cargando…</div></div>
@@ -2087,7 +2091,7 @@ async function runAnalysis() {
     // saveSignals devuelve false si falló. Antes se tragaba el error dentro y el
     // Promise.all resolvía "bien" igual, así que el robot reportaba éxito con las
     // señales sin guardar. Ahora el resultado de cada guardado cuenta.
-    window.__auto.guardadoPromesa =
+    AUTO.guardadoPromesa =
       Promise.all([ savePredictions(date, best5Games), saveSignals(date, results), savePropPicks(date) ])
         .then(([,okSig]) => {
           loadPropHist('pitcher'); loadPropHist('batter'); loadSignals();
@@ -2099,14 +2103,14 @@ async function runAnalysis() {
           if(propSaveOk===false) fallos.push('props');
           if(fallos.length){
             $('run-status').textContent += ` · ⚠ no se guardó: ${fallos.join(' y ')}`;
-            window.__auto.msgGuardado = fallos.join(' y ');
+            AUTO.msgGuardado = fallos.join(' y ');
             return false;
           }
           return true;
         })
         .catch(e => { console.warn('guardado:', e.message);
           $('run-status').textContent += ' · ⚠ no se pudo guardar en Supabase';
-          window.__auto.msgGuardado = e.message; return false; });
+          AUTO.msgGuardado = e.message; return false; });
 
   } catch(e) {
     $('picks-area').innerHTML=`<div class="error-box"><i class="ti ti-alert-circle"></i> ${e.message}</div>`;
@@ -2176,7 +2180,7 @@ async function savePropPicks(date){
     return true;   // no había nada que guardar, no es un error
   }
   try{
-    const {data:existing, error:eSel} = await sb.from('prop_picks')
+    const {data:existing, error:eSel} = await db.from('prop_picks')
       .select('id,kind,player_id,market,target,edge,ev,result').eq('game_date',date);
     if(propErr(eSel)) return false;
     const prev = existing||[];
@@ -2200,7 +2204,7 @@ async function savePropPicks(date){
     const vivos = new Set(cand.map(clave));
     const caducos = prev.filter(e=>!e.result && tiposVivos.has(e.kind) && !vivos.has(clave(e)));
     if(caducos.length){
-      const {error} = await sb.from('prop_picks').delete().in('id', caducos.map(e=>e.id));
+      const {error} = await db.from('prop_picks').delete().in('id', caducos.map(e=>e.id));
       if(propErr(error)) return false;
     }
     const fuera = new Set(caducos.map(e=>e.id));
@@ -2227,7 +2231,7 @@ async function savePropPicks(date){
       if(ex){
         // Ya está: solo se refresca si mejoró el edge y todavía no se calificó.
         if(!ex.result && (ex.edge==null || r.edge > +ex.edge)){
-          const {error} = await sb.from('prop_picks').update(row).eq('id',ex.id);
+          const {error} = await db.from('prop_picks').update(row).eq('id',ex.id);
           if(propErr(error)) return false;
         }
         continue;
@@ -2237,7 +2241,7 @@ async function savePropPicks(date){
       if(r.kind==='pitcher' || varaBat < r.edge) nuevos.push(row);
     }
     if(nuevos.length){
-      const {error} = await sb.from('prop_picks').insert(nuevos);
+      const {error} = await db.from('prop_picks').insert(nuevos);
       if(propErr(error)) return false;
     }
   }catch(e){ propErr(e); return false; }
@@ -2260,7 +2264,7 @@ async function savePredictions(date, games) {
   predSaveMsg = null;
   let usaPk = true;
   {
-    const {error} = await sb.from('predictions').select('game_pk').limit(1);
+    const {error} = await db.from('predictions').select('game_pk').limit(1);
     if(error && /does not exist/i.test(error.message||'')){
       usaPk = false;
       predSaveMsg = 'Falta la columna <code>game_pk</code> en <code>predictions</code>: en dobles carteleras '
@@ -2297,18 +2301,18 @@ async function savePredictions(date, games) {
     // columna: esas se actualizan y de paso quedan con su game_pk.
     let ex = null;
     if(usaPk && g.gamePk!=null){
-      const r = await sb.from('predictions').select('id,result').eq('game_pk',g.gamePk);
+      const r = await db.from('predictions').select('id,result').eq('game_pk',g.gamePk);
       ex = r.data;
     }
     if(!ex?.length){
-      const r = await sb.from('predictions').select('id,result,game_pk')
+      const r = await db.from('predictions').select('id,result,game_pk')
         .eq('game_date',date).eq('away',g.away).eq('home',g.home);
       // Solo se reutiliza una fila legacy (sin game_pk). Una que YA tenga otro game_pk
       // es el otro juego de la doble cartelera y no hay que tocarla.
       ex = (r.data||[]).filter(x => x.game_pk==null || !usaPk);
     }
-    if(ex?.length){ if(!ex[0].result) await sb.from('predictions').update(row).eq('id',ex[0].id); }
-    else { await sb.from('predictions').insert(row); }
+    if(ex?.length){ if(!ex[0].result) await db.from('predictions').update(row).eq('id',ex[0].id); }
+    else { await db.from('predictions').insert(row); }
   }
   return !predSaveMsg;
 }
@@ -2710,7 +2714,7 @@ function podCard(c, nCand, esRey, official){
       <span class="pod-sub">${esRey
         ? `oficial HAXIOM · pasa todos los mínimos §10${official?` · Solid ${official.solid}`:''}`
         : `el mejor de esta pestaña · por edge × confianza · NO es el oficial`}</span>
-      <button class="btn-sm pod-copy" onclick="podCopiar('${c.kind}', this)">📋 Copiar</button>
+      <button class="btn-sm pod-copy" data-ac="podCopiar('${c.kind}', this)">📋 Copiar</button>
     </div>
     ${esRey ? '' : (official
       ? `<div class="pod-otro">El <b>Prop del Día oficial</b> de hoy es <b>${esc(official.name)}</b> ${official.side==='over'?'OVER':'UNDER'} ${official.line}${esc(official.unidad||'')} ${amFmt(official.price)}, en <b>${POD_TAB[official.kind]}</b>. Esta es solo la mejor de la pestaña.</div>`
@@ -2960,7 +2964,7 @@ function renderBatters(batData) {
   podCober.batter = { con:(batData||[]).length*2 - sinPub, total:(batData||[]).length*2, filtro:onlyConf };
   const controls = `<div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:10px;font-size:11px">
     <label style="display:flex;align-items:center;gap:5px;cursor:pointer;font-weight:700" title="Con esto, si un equipo aún no publica su alineación, no se muestra a NADIE de ese equipo (ni banca ni proyectados).">
-      <input type="checkbox" ${onlyConf?'checked':''} onchange="toggleOnlyConfirmed(this.checked)"> Solo alineación publicada</label>
+      <input type="checkbox" ${onlyConf?'checked':''} data-ch="toggleOnlyConfirmed(this.checked)"> Solo alineación publicada</label>
     ${sinPub?`<span style="color:var(--atx)">⚠ ${sinPub} equipo${sinPub===1?'':'s'} sin publicar${onlyConf?' — ocultos hasta que salga su alineación':''}</span>`:`<span style="color:var(--gtx)">✓ todas las alineaciones publicadas</span>`}</div>`;
   batData.forEach(g=>{
     const wxF=wxFactor(g.wx), pf=g.pf||1, envAdj=pf*wxF;
@@ -3195,7 +3199,7 @@ async function saveSignals(date, games){
   let rows = games.map(g=>signalRow(date,g)).filter(Boolean);
   if(!rows.length) return true;
 
-  const {data:ex, error:eSel} = await sb.from('signals').select('id,game_pk,result').eq('game_date',date);
+  const {data:ex, error:eSel} = await db.from('signals').select('id,game_pk,result').eq('game_date',date);
   if(sigErr(eSel)) return false;
   const map={}; (ex||[]).forEach(e=>map[e.game_pk]=e);
 
@@ -3203,7 +3207,7 @@ async function saveSignals(date, games){
   // se reintenta sin ella, en vez de descubrirlo juego por juego.
   for(const col of SIG_OPCIONALES){
     if(rows[0][col] === undefined) continue;
-    const {error} = await sb.from('signals').select(col).limit(1);
+    const {error} = await db.from('signals').select(col).limit(1);
     if(error && /does not exist/i.test(error.message||'')){
       rows = sinOpcional(rows, col);
       sigSaveMsg = `La columna <code>${col}</code> no existe todavía en la tabla <code>signals</code>. `
@@ -3216,12 +3220,12 @@ async function saveSignals(date, games){
   for(const r of rows){
     const e=map[r.game_pk];
     if(e){
-      if(!e.result){ const {error} = await sb.from('signals').update(r).eq('id',e.id); if(sigErr(error)) return false; }
+      if(!e.result){ const {error} = await db.from('signals').update(r).eq('id',e.id); if(sigErr(error)) return false; }
     }
     else toInsert.push(r);
   }
   if(toInsert.length){
-    const {error} = await sb.from('signals').insert(toInsert);
+    const {error} = await db.from('signals').insert(toInsert);
     if(sigErr(error)) return false;
   }
   return true;
@@ -3346,7 +3350,7 @@ function sigSection(tier, dayRows, allRows){
 
 async function loadSignals(){
   $('signals-area').innerHTML='<div class="loading"><div class="spin"></div>Cargando señales…</div>';
-  const {data:all,error} = await sb.from('signals').select('*').order('game_date',{ascending:false}).limit(3000);
+  const {data:all,error} = await db.from('signals').select('*').order('game_date',{ascending:false}).limit(3000);
   if(error){
     const falta=/relation|does not exist|schema cache|not find the table/i.test(error.message||'');
     $('signals-area').innerHTML=`<div class="error-box">${esc(error.message)}${falta?'<br><br><b>Falta la tabla <code>signals</code></b> — corre el SQL de <code>supabase-setup.sql</code> en el SQL Editor de Supabase.':''}</div>`;
@@ -3385,7 +3389,7 @@ async function loadSignals(){
 
   $('sig-daybar').innerHTML =
     `<span style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase">Día:</span>`+
-    days.slice(0,14).map(d=>`<button class="day-btn${d===day?' active':''}" onclick="setSigDay('${esc(d)}')">${esc(d)}</button>`).join('')+
+    days.slice(0,14).map(d=>`<button class="day-btn${d===day?' active':''}" data-ac="setSigDay('${esc(d)}')">${esc(d)}</button>`).join('')+
     (days.length>14?`<span style="font-size:10px;color:var(--text3)">+${days.length-14} días más (abajo)</span>`:'');
 
   // ── Las 3 secciones, con el récord del día al lado del nombre ──
@@ -3404,7 +3408,7 @@ async function loadSignals(){
     const recs=SECTION_TIERS.map(t=>recordOf(dr.filter(x=>x.tier===t)));
     const tot=recordOf(dr.filter(x=>(TIER_RANK[x.tier]??0)>=1));
     const pend=dr.filter(x=>!x.result && (TIER_RANK[x.tier]??0)>=1).length;
-    return `<tr class="dayrow${d===day?' active':''}" onclick="setSigDay('${esc(d)}')">
+    return `<tr class="dayrow${d===day?' active':''}" data-ac="setSigDay('${esc(d)}')">
       <td style="white-space:nowrap;font-weight:700">${esc(d)}</td>
       ${recs.map(r=>`<td class="num">${cell(r)}</td>`).join('')}
       <td class="num">${cell(tot)}</td>
@@ -3475,7 +3479,7 @@ async function loadSignals(){
 async function clearSignals(){
   if(!requireAuth()) return;
   if(!confirm('¿Borrar TODAS las señales guardadas? No se puede deshacer.')) return;
-  const {error} = await sb.from('signals').delete().gte('id',0);
+  const {error} = await db.from('signals').delete().gte('id',0);
   if(error){ alert('❌ Error: '+error.message+'\nCorre el SQL de permisos en Supabase.'); return; }
   loadSignals();
 }
@@ -3483,7 +3487,7 @@ async function clearSignals(){
 // ── Validación: calibración (predicho vs real) + CLV ───────────────────────
 async function loadValidation(){
   $('valid-area').innerHTML='<div class="loading"><div class="spin"></div>Cargando…</div>';
-  const {data:rows,error}=await sb.from('predictions').select('*').limit(2000);
+  const {data:rows,error}=await db.from('predictions').select('*').limit(2000);
   if(error){ $('valid-area').innerHTML=`<div class="error-box">${error.message}</div>`; return; }
   const graded=(rows||[]).filter(r=>r.result==='win'||r.result==='loss');
   // Calibración por bin de probabilidad del pick
@@ -3558,14 +3562,14 @@ async function captureClose(){
   const date=$('date-pick').value;
   $('valid-area').insertAdjacentHTML('afterbegin','<div class="loading" id="cap-msg"><div class="spin"></div>Capturando cuotas de cierre…</div>');
   const {map}=await getMlbOdds(date);
-  const {data:rows}=await sb.from('predictions').select('*').eq('game_date',date);
+  const {data:rows}=await db.from('predictions').select('*').eq('game_date',date);
   let n=0;
   for(const r of (rows||[])){
     if(r.top_pick_fair==null) continue;
     const o=pickOdds(map, TEAM_FULL[r.home]||r.home, TEAM_FULL[r.away]||r.away, null);
     const cf=o?closeFairFor(r,o):null;
     if(cf==null) continue;
-    await sb.from('predictions').update({close_fair:+cf.toFixed(4), clv:+(cf-r.top_pick_fair).toFixed(4)}).eq('id',r.id);
+    await db.from('predictions').update({close_fair:+cf.toFixed(4), clv:+(cf-r.top_pick_fair).toFixed(4)}).eq('id',r.id);
     n++;
   }
   $('cap-msg')?.remove();
@@ -3584,7 +3588,7 @@ function fitPlatt(rows){
 // Recalibra el modelo con tu historial (Platt) y guarda los parámetros
 async function recalibrate(){
   if(!requireAuth()) return;
-  const {data:rows}=await sb.from('predictions').select('top_pick_prob,result').limit(5000);
+  const {data:rows}=await db.from('predictions').select('top_pick_prob,result').limit(5000);
   const fit=fitPlatt(rows);
   if(!fit){ alert('Necesitas ~30+ picks calificados (✓/✗) para recalibrar.'); return; }
 
@@ -3603,7 +3607,7 @@ async function recalibrate(){
   CAL = { a:+(prev.a*fit.a).toFixed(4), b:+(fit.a*prev.b + fit.b).toFixed(4) };
 
   localStorage.setItem('cal_ab',JSON.stringify(CAL));
-  try{ await sb.from('model_weights').upsert({id:2,weights_json:JSON.stringify(CAL),train_iter:fit.n},{onConflict:'id'}); }catch{}
+  try{ await db.from('model_weights').upsert({id:2,weights_json:JSON.stringify(CAL),train_iter:fit.n},{onConflict:'id'}); }catch{}
   alert(`✅ Recalibrado con ${fit.n} picks calificados\n\n`
       + `  ajuste medido  a=${fit.a} · b=${fit.b}\n`
       + `  antes          a=${prev.a} · b=${prev.b}\n`
@@ -3612,7 +3616,7 @@ async function recalibrate(){
       + `historial ya venían corregidas, así que el ajuste se suma en vez de sustituir.`);
   loadValidation();
 }
-function resetCalibration(){ CAL={a:1,b:0}; localStorage.removeItem('cal_ab'); try{sb.from('model_weights').delete().eq('id',2);}catch{} loadValidation(); }
+function resetCalibration(){ CAL={a:1,b:0}; localStorage.removeItem('cal_ab'); try{db.from('model_weights').delete().eq('id',2);}catch{} loadValidation(); }
 
 // ── Auto-grading: califica desde el marcador final de MLB ──────────────────
 // Devuelve 'win' | 'loss' | 'push' | null (null = no calificable automáticamente)
@@ -3663,7 +3667,7 @@ function gradeTopPick(r, g) {
 // dispara el botón de Señales para que Validación (calibración, CLV, reentrenamiento)
 // siga alimentándose aunque la pestaña de historial ya no exista.
 async function gradePredictions(){
-  const {data:rows,error} = await sb.from('predictions').select('*').is('result',null);
+  const {data:rows,error} = await db.from('predictions').select('*').is('result',null);
   if(error||!rows?.length) return {graded:0, pending:0};
 
   const finals={};
@@ -3683,7 +3687,7 @@ async function gradePredictions(){
     if(hS!=null&&aS!=null) upd.home_won = hS>aS?1:0;   // resultado real del ML (para reentrenar)
     const res=gradeTopPick(r,g);
     if(res){ upd.result=res; graded++; }
-    if(Object.keys(upd).length) await sb.from('predictions').update(upd).eq('id',r.id);
+    if(Object.keys(upd).length) await db.from('predictions').update(upd).eq('id',r.id);
   }
   return {graded, pending};
 }
@@ -3693,7 +3697,7 @@ async function gradePredictions(){
 async function autoGradeSignals(){
   if(!requireAuth()) return;
   $('signals-area').insertAdjacentHTML('afterbegin','<div class="loading" id="sig-grading"><div class="spin"></div>Consultando marcadores finales…</div>');
-  const {data:rows,error} = await sb.from('signals').select('*').is('result',null);
+  const {data:rows,error} = await db.from('signals').select('*').is('result',null);
   if(error){ $('sig-grading')?.remove(); alert('Error: '+error.message); return; }
 
   let graded=0, pending=0;
@@ -3729,7 +3733,7 @@ async function autoGradeSignals(){
       else if(mkt==='F5') { if(f5){ const tf=isHome?f5.h:f5.a, of=isHome?f5.a:f5.h;
                                     res = tf>of ? 'win' : tf<of ? 'loss' : 'push'; } }
       if(res){ upd.result = res; graded++; } else { pending++; }
-      await sb.from('signals').update(upd).eq('id',r.id);
+      await db.from('signals').update(upd).eq('id',r.id);
     }
   }
   const pred = await gradePredictions();   // mantiene viva la Validación
@@ -3757,7 +3761,7 @@ async function loadPropHist(kind){
   const el = $(kind==='pitcher' ? 'pitchers-hist' : 'batters-hist');
   if(!el) return;
   el.innerHTML='<div class="loading"><div class="spin"></div>Cargando…</div>';
-  const {data:rows,error} = await sb.from('prop_picks').select('*')
+  const {data:rows,error} = await db.from('prop_picks').select('*')
     .eq('kind',kind).order('game_date',{ascending:false}).limit(1500);
   if(error){
     const falta=/column .*edge|schema cache/i.test(error.message||'');
@@ -3812,9 +3816,9 @@ function renderPropHist(kind){
     return `<option value="${esc(d)}"${d===day?' selected':''}>${esc(d)} · ${byDay[d].length} pick${byDay[d].length===1?'':'s'}${r.n?` · ${r.w}-${r.l}`:' · sin calificar'}</option>`; };
   const daybar = `<div class="filterbar">
     <span style="font-size:10px;color:var(--text3);font-weight:600;text-transform:uppercase">Jornada:</span>
-    <button class="day-nav" onclick="setPropDay('${kind}','${esc(days[i+1]||day)}')"${i>=days.length-1?' disabled':''} title="Día anterior">‹</button>
-    <select class="day-sel" onchange="setPropDay('${kind}', this.value)">${days.map(opt).join('')}</select>
-    <button class="day-nav" onclick="setPropDay('${kind}','${esc(days[i-1]||day)}')"${i<=0?' disabled':''} title="Día siguiente">›</button>
+    <button class="day-nav" data-ac="setPropDay('${kind}','${esc(days[i+1]||day)}')"${i>=days.length-1?' disabled':''} title="Día anterior">‹</button>
+    <select class="day-sel" data-ch="setPropDay('${kind}', this.value)">${days.map(opt).join('')}</select>
+    <button class="day-nav" data-ac="setPropDay('${kind}','${esc(days[i-1]||day)}')"${i<=0?' disabled':''} title="Día siguiente">›</button>
     <span style="font-size:10px;color:var(--text3)">${days.length} jornada${days.length===1?'':'s'} guardada${days.length===1?'':'s'}</span>
   </div>`;
 
@@ -3857,7 +3861,7 @@ function renderPropHist(kind){
   const histFilas = visibles.map(d=>{
     const a=byDay[d], r=rec(a), pend=a.filter(x=>!x.result).length;
     const mejor = a.reduce((m,x)=> (x[crit]!=null && (m==null || +x[crit]>+m[crit])) ? x : m, null);
-    return `<tr class="dayrow${d===day?' active':''}" onclick="setPropDay('${kind}','${esc(d)}')">
+    return `<tr class="dayrow${d===day?' active':''}" data-ac="setPropDay('${kind}','${esc(d)}')">
       <td style="white-space:nowrap;font-weight:700">${esc(d)}</td>
       <td class="num">${a.length}</td>
       <td class="num" style="font-weight:700;color:${recCol(r)}">${r.n?`${r.w}-${r.l}`:'—'}</td>
@@ -3907,7 +3911,7 @@ async function clearPropHist(kind, todo=false){
   const nom = kind==='pitcher' ? 'abridores' : 'bateadores';
   const dia = propDay[kind] || (propRows[kind]||[])[0]?.game_date || null;
 
-  let q = sb.from('prop_picks').delete().eq('kind',kind);
+  let q = db.from('prop_picks').delete().eq('kind',kind);
   if(todo){
     const cal = (propRows[kind]||[]).filter(r=>r.result==='win'||r.result==='loss').length;
     const aviso = `¿Borrar el historial COMPLETO de ${nom}, de TODAS las fechas?`
@@ -3960,7 +3964,7 @@ async function autoGradeProps(){
   // el aviso se pone donde el usuario está parado.
   const donde = document.querySelector('#tab-batters.active') ? 'batters-hist' : 'pitchers-hist';
   $(donde)?.insertAdjacentHTML('afterbegin','<div class="loading" id="pg-msg"><div class="spin"></div>Calificando props desde boxscores…</div>');
-  const {data:rows}=await sb.from('prop_picks').select('*').is('result',null);
+  const {data:rows}=await db.from('prop_picks').select('*').is('result',null);
   if(!rows?.length){ $('pg-msg')?.remove();
     if(new URLSearchParams(location.search).get('auto')!=='grade') alert('No hay props sin calificar.');
     return {graded:0, pending:0}; }
@@ -3974,7 +3978,7 @@ async function autoGradeProps(){
   for(const pk of Object.keys(byGame)){
     const players=await boxscorePlayers(pk); if(!players) continue;
     for(const p of byGame[pk]){ const g=gradeProp(p,players); if(!g) continue;
-      const {error}=await sb.from('prop_picks').update({actual:g.actual,result:g.result}).eq('id',p.id);
+      const {error}=await db.from('prop_picks').update({actual:g.actual,result:g.result}).eq('id',p.id);
       if(error){ fallos++; console.warn('gradeProp:',error.message); } else graded++; }
   }
   $('pg-msg')?.remove();
@@ -3988,7 +3992,7 @@ async function autoGradeProps(){
 // ── Model tab ─────────────────────────────────────────────────────────────────
 async function loadModelTab() {
   // Load weights from Supabase
-  const {data} = await sb.from('model_weights').select('*').eq('id',1);
+  const {data} = await db.from('model_weights').select('*').eq('id',1);
   if(data?.length){
     try{ const loaded=JSON.parse(data[0].weights_json); if(loaded.w_hp) W={...DEFAULT_W,...loaded}; trainIter=data[0].train_iter||0; }catch{}
   }
@@ -4002,17 +4006,27 @@ function renderSliders() {
     <div class="slider-row">
       <div class="slider-lbl"><span>${lbl}</span><span id="sv-${k}">${Math.abs(W[k]||0).toFixed(3)}</span></div>
       <input type="range" min="${min}" max="${max}" step="0.01" value="${Math.abs(W[k]||0)}"
-        oninput="W['${k}']=parseFloat(this.value);W['${k.replace('w_h','w_a')}']=-(parseFloat(this.value));document.getElementById('sv-${k}').textContent=parseFloat(this.value).toFixed(3)">
+        data-in="setWeight('${k}', this.value)">
     </div>`).join('');
 }
 
 async function saveWeightsToCloud() {
   if(!requireAuth()) return;
-  const {error} = await sb.from('model_weights').upsert({id:1,weights_json:JSON.stringify(W),train_iter:trainIter},{onConflict:'id'});
+  const {error} = await db.from('model_weights').upsert({id:1,weights_json:JSON.stringify(W),train_iter:trainIter},{onConflict:'id'});
   if(error) alert('Error: '+error.message);
   else alert('✅ Pesos guardados en Supabase');
 }
 
+// Mueve un peso del modelo desde su deslizador. Antes esto vivia dentro del
+// atributo oninput= y tocaba W directamente; al encerrar MLB en su archivo, W
+// dejo de existir para el HTML y los deslizadores se habrian roto en silencio.
+function setWeight(k, valor){
+  const v = parseFloat(valor);
+  W[k] = v;
+  W[k.replace('w_h','w_a')] = -v;          // el peso del visitante es el espejo del local
+  const el = document.getElementById('sv-'+k);
+  if(el) el.textContent = v.toFixed(3);
+}
 function resetWeights() {
   W={...DEFAULT_W}; trainIter=13070;
   renderSliders(); txt('m-iters',13070);
@@ -4039,7 +4053,7 @@ function trainLogistic(samples, prior, lambda){
 // Reentrena los pesos con tu historial (regularizado hacia los pesos entrenados)
 async function retrainModel(){
   if(!requireAuth()) return;
-  const {data:rows}=await sb.from('predictions').select('features_json,home_won').not('home_won','is',null).limit(5000);
+  const {data:rows}=await db.from('predictions').select('features_json,home_won').not('home_won','is',null).limit(5000);
   const samples=(rows||[]).map(r=>{ try{return {f:JSON.parse(r.features_json||'{}'),y:r.home_won};}catch{return null;} }).filter(s=>s&&s.f&&s.f.hps!=null);
   if(samples.length<50){ alert(`Necesitas ~50+ juegos con features y resultado.\nLlevas ${samples.length} (genera picks y usa Auto-calificar).`); return; }
   // λ alto = se queda cerca del prior; baja al acumular datos (mín 0.2)
@@ -4085,7 +4099,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   updateKeyState();
 
   // Test Supabase connection
-  const {error} = await sb.from('predictions').select('id',{count:'exact',head:true});
+  const {error} = await db.from('predictions').select('id',{count:'exact',head:true});
   const badge=$('cloud-badge');
   if(error){ badge.textContent='⚠ Error Supabase'; }
   else{ badge.textContent='✅ Supabase'; badge.classList.add('connected'); }
@@ -4095,7 +4109,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   // Cargar la recalibración (Platt) guardada: local -> nube
   try{ const c=JSON.parse(localStorage.getItem('cal_ab')||'null'); if(c?.a) CAL=c; }catch{}
-  try{ const {data:cd}=await sb.from('model_weights').select('weights_json').eq('id',2); if(cd?.length){ const c=JSON.parse(cd[0].weights_json); if(c?.a) CAL=c; } }catch{}
+  try{ const {data:cd}=await db.from('model_weights').select('weights_json').eq('id',2); if(cd?.length){ const c=JSON.parse(cd[0].weights_json); if(c?.a) CAL=c; } }catch{}
 
   // Restaurar el análisis MÁS RECIENTE entre esta PC y la nube (compartido entre dispositivos).
   await restoreBest();
@@ -4115,7 +4129,7 @@ function registrarSW(){
 
 // ── MODO AUTOMÁTICO ──────────────────────────────────────────────────────────
 // Lo usa el robot de GitHub Actions (.github/workflows/analisis-auto.yml): abre la
-// página con ?auto=1, rellena el login normal, y espera a window.__auto.done.
+// página con ?auto=1, rellena el login normal, y espera a AUTO.done.
 //
 // El estado se expone en window y NO se lee del DOM a propósito: el DOM cambia cada
 // vez que se mueve un botón, y el robot no debe romperse por eso.
@@ -4123,7 +4137,9 @@ function registrarSW(){
 // Las credenciales NO viajan por la URL: quedarían en los logs de Actions y en el
 // historial del navegador. El runner rellena el formulario de siempre, y esto se
 // dispara solo cuando ya hay sesión.
-window.__auto = { listo:false, done:false, ok:false, msg:'', guardado:false, guardadoPromesa:null };
+// El bot de MLB. NO es global: el núcleo lo expone como AUTO solo si
+// se pide este deporte (?deporte=mlb). El fútbol tendrá el suyo, aparte.
+const AUTO = { listo:false, done:false, ok:false, msg:'', guardado:false, guardadoPromesa:null };
 function autoArranca(){
   const modo = new URLSearchParams(location.search).get('auto');
   if(modo!=='1' && modo!=='grade') return;
@@ -4131,8 +4147,8 @@ function autoArranca(){
   const intenta = async () => {
     if(lanzado || !isOwner()) return;
     lanzado = true;
-    window.__auto.listo = true;
-    window.__auto.modo = modo;
+    AUTO.listo = true;
+    AUTO.modo = modo;
     try{
       if(modo==='grade'){ await runGradeFlow(); } else {
       // La jornada de MLB se cuenta en HORA DEL ESTE, no en UTC ni en la hora del
@@ -4140,20 +4156,20 @@ function autoArranca(){
       // analizar esa fecha traería la jornada equivocada.
       const hoyET = new Date().toLocaleDateString('en-CA',{timeZone:'America/New_York'});
       const dp = $('date-pick'); if(dp) dp.value = hoyET;
-      window.__auto.fecha = hoyET;
+      AUTO.fecha = hoyET;
       await runAnalysis();
-      window.__auto.guardado = await (window.__auto.guardadoPromesa || Promise.resolve(false));
-      window.__auto.ok  = true;
-      window.__auto.msg = `${(allGames||[]).length} partidos · guardado: ${window.__auto.guardado?'sí'
-        : `NO (${window.__auto.msgGuardado||'motivo desconocido'})`}`;
+      AUTO.guardado = await (AUTO.guardadoPromesa || Promise.resolve(false));
+      AUTO.ok  = true;
+      AUTO.msg = `${(allGames||[]).length} partidos · guardado: ${AUTO.guardado?'sí'
+        : `NO (${AUTO.msgGuardado||'motivo desconocido'})`}`;
       // Resumen para el aviso de Telegram que manda el robot. Se arma aquí y no en el
       // runner porque aquí es donde vive el dato: el runner solo lee y envía.
       const b = podBest;
-      window.__auto.resumen = {
+      AUTO.resumen = {
         fecha: hoyET,
         partidos: (allGames||[]).length,
         picks: (propsPitcher||[]).length + (propsBatter||[]).length,
-        guardado: window.__auto.guardado,
+        guardado: AUTO.guardado,
         aviso: propSaveMsg && propSaveOk!==false ? propSaveMsg.replace(/<[^>]+>/g,'') : null,
         pod: b ? {
           nombre: b.name, equipo: b.team, rival: b.opp, mercado: b.nombre,
@@ -4163,10 +4179,10 @@ function autoArranca(){
       };
       }   // fin del análisis (modo '1')
     }catch(e){
-      window.__auto.ok  = false;
-      window.__auto.msg = e?.message || String(e);
+      AUTO.ok  = false;
+      AUTO.msg = e?.message || String(e);
     }finally{
-      window.__auto.done = true;
+      AUTO.done = true;
     }
   };
   sb.auth.onAuthStateChange(() => setTimeout(intenta, 400));
@@ -4184,7 +4200,7 @@ async function runGradeFlow(){
   const hoyET = new Date().toLocaleDateString('en-CA',{timeZone:'America/New_York'});
   const ay = new Date(hoyET+'T12:00:00Z'); ay.setUTCDate(ay.getUTCDate()-1);
   const ayerET = ay.toISOString().slice(0,10);
-  window.__auto.fecha = ayerET;
+  AUTO.fecha = ayerET;
 
   // Califica TODO lo pendiente que ya esté final (incluye ayer). Cada función deja
   // como 'pendiente' lo que aún no tiene marcador, así que nunca califica de más.
@@ -4194,7 +4210,7 @@ async function runGradeFlow(){
 
   // Récord de AYER (win/loss; los push y pendientes no cuentan).
   const rec = async (tabla) => {
-    try{ const {data}=await sb.from(tabla).select('result').eq('game_date',ayerET).in('result',['win','loss']);
+    try{ const {data}=await db.from(tabla).select('result').eq('game_date',ayerET).in('result',['win','loss']);
       const w=(data||[]).filter(x=>x.result==='win').length, n=(data||[]).length; return {w, l:n-w, n};
     }catch{ return {w:0,l:0,n:0}; }
   };
@@ -4204,22 +4220,22 @@ async function runGradeFlow(){
   // su resultado se busca en prop_picks por jugador+lado.
   let pod=null;
   try{
-    const {data}=await sb.from('analysis_cache').select('payload').eq('game_date',ayerET).limit(1);
+    const {data}=await db.from('analysis_cache').select('payload').eq('game_date',ayerET).limit(1);
     const snap=data?.[0]?JSON.parse(data[0].payload)?.snapshot:null;
     const off=(snap?.pod?.status==='Official')?snap.pod.official:null;
     if(off){
-      const {data:pr}=await sb.from('prop_picks').select('result,actual,side').eq('game_date',ayerET).eq('player_id',off.player_id);
+      const {data:pr}=await db.from('prop_picks').select('result,actual,side').eq('game_date',ayerET).eq('player_id',off.player_id);
       const m=(pr||[]).find(x=>x.side===off.side)||pr?.[0]||null;
       pod={ nombre:off.name, mercado:off.mktName, lado:off.side, linea:off.line, unidad:off.unidad||'',
             precio:off.price, result:m?.result||null, actual:(m&&m.actual!=null)?m.actual:null };
     }
   }catch(e){ console.warn('pod grade:',e.message); }
 
-  window.__auto.resumen = { modo:'grade', fecha:ayerET,
+  AUTO.resumen = { modo:'grade', fecha:ayerET,
     calificadas:{ senales:cSig, props:cProp }, senales:sig, props:prop, pod };
-  window.__auto.ok = true;
-  window.__auto.guardado = true;   // "guardar" aquí = calificación escrita en Supabase
-  window.__auto.msg = `calificado ${ayerET}: señales ${sig.w}-${sig.l} · props ${prop.w}-${prop.l}`;
+  AUTO.ok = true;
+  AUTO.guardado = true;   // "guardar" aquí = calificación escrita en Supabase
+  AUTO.msg = `calificado ${ayerET}: señales ${sig.w}-${sig.l} · props ${prop.w}-${prop.l}`;
 }
 
 // Aplica un análisis restaurado a todas las pestañas
@@ -4393,7 +4409,7 @@ function saveSnapshot(snap){
 let _snapTableOff = false;
 async function saveSnapshotCloud(snap){
   if(!isOwner() || _snapTableOff) return;   // escritura solo del dueño (RLS)
-  try{ const {error} = await sb.from('board_snapshots').insert({ id:snap.id, game_date:snap.date, criteria:snap.criteria,
+  try{ const {error} = await db.from('board_snapshots').insert({ id:snap.id, game_date:snap.date, criteria:snap.criteria,
         created_at:new Date(snap.createdAt).toISOString(), payload:JSON.stringify(snap) });
     if(error){ _snapTableOff=true; }   // tabla ausente u otro rechazo: no reintentar esta sesión
   }catch(e){ _snapTableOff=true; }
@@ -4710,7 +4726,7 @@ function cacheAnalysis(date){
 }
 async function saveAnalysisCloud(date, payload){
   if(!isOwner()) return;   // escritura solo del dueño (RLS)
-  try{ await sb.from('analysis_cache').upsert({game_date:date, payload:JSON.stringify(payload), updated_at:new Date().toISOString()},{onConflict:'game_date'}); }catch(e){ console.warn('cloud cache:',e.message); }
+  try{ await db.from('analysis_cache').upsert({game_date:date, payload:JSON.stringify(payload), updated_at:new Date().toISOString()},{onConflict:'game_date'}); }catch(e){ console.warn('cloud cache:',e.message); }
 }
 // Restaura el análisis MÁS RECIENTE: compara el caché local (esta PC) con el de la NUBE
 // (compartido entre PCs) y usa el más nuevo. Así, tras analizar en cualquier PC, todas ven
@@ -4721,7 +4737,7 @@ async function restoreBest(){
   const localTs = localOk ? (local.savedAt || (local.date?Date.parse(local.date+'T23:59:59Z'):0) || 0) : 0;
   let cloud=null, cloudTs=0;
   try{
-    const {data,error}=await sb.from('analysis_cache').select('payload,updated_at').order('updated_at',{ascending:false}).limit(1);
+    const {data,error}=await db.from('analysis_cache').select('payload,updated_at').order('updated_at',{ascending:false}).limit(1);
     if(!error && data?.length){ const c=JSON.parse(data[0].payload); if(c?.games?.length){ cloud=c; cloudTs=Date.parse(data[0].updated_at)||0; } }
   }catch(e){ console.warn('restoreCloud:',e.message); }
   if(cloud && cloudTs>=localTs){ applyRestored(cloud,'(nube · más reciente)'); return; }   // la nube es más nueva → gana
@@ -4734,7 +4750,7 @@ async function syncCloud(){
   const btn=$('sync-btn'); if(btn) btn.disabled=true;
   $('run-status').textContent='☁ Sincronizando desde la nube…';
   try{
-    const {data,error}=await sb.from('analysis_cache').select('payload,updated_at').order('updated_at',{ascending:false}).limit(1);
+    const {data,error}=await db.from('analysis_cache').select('payload,updated_at').order('updated_at',{ascending:false}).limit(1);
     if(error||!data?.length){ $('run-status').textContent='☁ Aún no hay análisis en la nube (analiza logueado en una PC).'; }
     else{ const c=JSON.parse(data[0].payload);
       if(c?.games?.length){ applyRestored(c,'(nube · sincronizado)');
@@ -4746,7 +4762,7 @@ async function syncCloud(){
 
 async function restoreToday() {
   const today = todayLocal();
-  const {data:rows,error} = await sb.from('predictions')
+  const {data:rows,error} = await db.from('predictions')
     .select('*').eq('game_date',today).order('top_pick_edge',{ascending:false});
   if(error||!rows?.length) return;
 
@@ -4794,7 +4810,9 @@ Deportes.registrar({
   sub: 'MLB Stats API · Supabase · Modelo estadístico',
   css: 'deportes/mlb.css',
   html: MLB_HTML,
-  manejadores: { autoGradeProps, autoGradeSignals, captureClose, clearPropHist, clearSignals, copyPicks, loadModelTab, loadPropHist, loadSignals, loadValidation, podCopiar, recalibrate, recheckSnapshot, resetWeights, retrainModel, runAnalysis, saveBProps, saveBvPOn, saveKProps, saveSplitsOn, saveWeightsToCloud, setPickFilter, setPropDay, setSigDay, showTab, syncCloud, toggleOnlyConfirmed },
+  tablas: ["predictions","signals","prop_picks","model_weights","analysis_cache","board_snapshots"],   // nadie más puede tocarlas
+  auto: AUTO,                       // su bot, no el de otro
+  manejadores: { setWeight, autoGradeProps, autoGradeSignals, captureClose, clearPropHist, clearSignals, copyPicks, loadModelTab, loadPropHist, loadSignals, loadValidation, podCopiar, recalibrate, recheckSnapshot, resetWeights, retrainModel, runAnalysis, saveBProps, saveBvPOn, saveKProps, saveSplitsOn, saveWeightsToCloud, setPickFilter, setPropDay, setSigDay, showTab, syncCloud, toggleOnlyConfirmed },
 });
 
 })();

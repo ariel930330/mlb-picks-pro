@@ -1,226 +1,239 @@
-.card[id]{scroll-margin-top:14px}
-/* ── Tabs ── */
-.tabs{display:flex;border-bottom:1px solid var(--border);padding:0 16px;background:var(--bg2);flex-shrink:0;overflow-x:auto}
-.tab-btn{padding:10px 14px;font-size:12px;font-weight:500;border:none;background:none;color:var(--text2);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap;font-family:inherit;display:flex;align-items:center;gap:5px}
-.tab-btn.active{color:var(--gold);border-bottom-color:var(--gold);font-weight:700}
-.tab-btn:hover:not(.active){color:var(--text)}
-.tab-content{flex:1;overflow-y:auto}
-.tab-pane{display:none;padding:18px 24px;width:100%}
-.tab-pane.active{display:block}
-/* ── Cards ── */
-.card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:10px}
-.card-hdr{padding:8px 12px;background:var(--bg3);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
-.card-hdr-title{font-size:12px;font-weight:700}
-/* ── Game card ── */
-.game-matchup{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center;padding:12px 16px 8px}
-.team-name{font-size:26px;font-weight:700}
-.team-away .team-name{color:var(--blue)}
-.team-home .team-name{color:var(--green);text-align:right}
-.team-pct{font-size:12px;font-weight:600;margin-top:2px}
-.team-ml{font-size:11px;color:var(--text3)}
-.team-home{text-align:right}
-.prob-bar{height:6px;display:flex;background:var(--bg3)}
-.prob-away{background:var(--blue)}
-.prob-home{background:var(--green)}
-.pick-row{display:flex;align-items:stretch;border-bottom:1px solid var(--border)}
-.pick-row:last-child{border-bottom:none}
-.f5-strip{border-top:1px solid var(--border);padding:8px 12px 10px;background:var(--bg3)}
-.f5-hd{font-size:10px;font-weight:800;color:var(--text2);margin-bottom:7px;text-transform:uppercase;letter-spacing:.3px}
-.f5-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
-.f5-cell{background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:6px 7px;text-align:center;min-width:0}
-.f5-lbl{font-size:8.5px;color:var(--text3);font-weight:700;text-transform:uppercase}
-.f5-main{font-size:11px;font-weight:700;margin:2px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.f5-prob{font-size:13px;font-weight:800;font-variant-numeric:tabular-nums}
-.f5-edge{font-size:9px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:1px}
-.pick-accent{width:4px;flex-shrink:0}
-.pick-badge{width:76px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px 4px;border-right:1px solid var(--border);gap:3px}
-.pick-badge .icon{font-size:13px}
-.pick-badge .label{font-size:8px;font-weight:700;letter-spacing:.4px;text-transform:uppercase}
-.pick-body{flex:1;padding:8px 12px}
-.pick-cat{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.3px;margin-bottom:2px}
-.pick-main{font-size:13px;font-weight:700}
-.pick-sub{font-size:10px;color:var(--text2);margin-top:2px}
-.pick-pct{padding:8px 12px;text-align:right;flex-shrink:0;display:flex;flex-direction:column;justify-content:center}
-.pick-prob{font-size:16px;font-weight:700}
-.pick-edge{font-size:9px;color:var(--text3);margin-top:2px}
-.high .pick-accent,.high .pick-badge{background:var(--gbg)}
-.high .label,.high .pick-prob{color:var(--gtx)}
-.low  .pick-accent,.low  .pick-badge{background:var(--rbg)}
-.low  .label,.low  .pick-prob{color:var(--rtx)}
-.game-footer{padding:6px 12px;font-size:9px;color:var(--text3);background:var(--bg3);border-top:1px solid var(--border)}
-/* ── MLB Edge Read (encoding visual) ── */
-.er{background:var(--bg3);border-radius:var(--rs);padding:10px 12px 11px;margin:0 12px 10px}
-.er-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}
-.er-ttl{font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--gold)}
-.er-conv{display:flex;align-items:center;gap:8px}
-.er-team{font-size:15px;font-weight:800;letter-spacing:-.3px}
-.er-tier{font-size:10px;font-weight:800;letter-spacing:.4px;padding:3px 8px;border-radius:6px;color:#fff}
-.er-rows{display:flex;flex-direction:column;gap:3px}
-.er-row{display:grid;grid-template-columns:74px 1fr 46px;align-items:center;gap:8px;font-size:10px}
-.er-nm{color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.er-track{position:relative;height:11px;background:var(--bg4);border-radius:3px;overflow:hidden}
-.er-track::before{content:"";position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--text3);opacity:.5}
-.er-fill{position:absolute;top:0;bottom:0;border-radius:2px}
-.er-fill.away{right:50%;background:var(--blue)}
-.er-fill.home{left:50%;background:var(--green)}
-.er-fill.dim{opacity:.32}
-.er-val{text-align:right;font-weight:800;font-variant-numeric:tabular-nums}
-.er-val.away{color:var(--blue)}
-.er-val.home{color:var(--green)}
-.er-val.even{color:var(--text3)}
-.er-meta{display:flex;align-items:center;gap:12px;margin-top:9px;padding-top:9px;border-top:1px solid var(--border);flex-wrap:wrap}
-.er-dq{display:flex;align-items:center;gap:7px}
-.er-dq-lbl{font-size:9px;font-weight:800;letter-spacing:.4px;color:var(--text3);text-transform:uppercase}
-.er-dq-track{width:64px;height:7px;border-radius:99px;background:var(--bg4);overflow:hidden}
-.er-dq-fill{height:100%;border-radius:99px}
-.er-dq-val{font-size:11px;font-weight:800;font-variant-numeric:tabular-nums}
-.er-park{font-size:10px;color:var(--text2);font-weight:600}
-.er-apps{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:9px}
-.er-apps .lb{font-size:9px;font-weight:800;letter-spacing:.4px;color:var(--text3);text-transform:uppercase}
-.er-app{font-size:10px;font-weight:700;padding:3px 8px;border-radius:99px;background:var(--gbg);color:var(--gtx);display:inline-flex;gap:5px;align-items:center}
-.er-note{font-size:9.5px;margin-top:8px;line-height:1.45}
-.er-note.conf{color:var(--rtx)}
-.er-note b{letter-spacing:.3px}
-/* detalle plegable */
-.er-more{margin:0 12px 8px}
-.er-more>summary{cursor:pointer;font-size:9.5px;font-weight:700;color:var(--text2);padding:4px 0;list-style:none;user-select:none}
-.er-more>summary::-webkit-details-marker{display:none}
-.er-more>summary::before{content:"▸ ";color:var(--gold)}
-.er-more[open]>summary::before{content:"▾ "}
-/* ── Conviction Board (tablero de jornada) ── */
-.board{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:12px;box-shadow:var(--shadow)}
-.board-hd{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--border);background:var(--bg3)}
-.board-row{display:grid;grid-template-columns:104px 1fr 92px 58px 62px;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--border);font-size:12px;cursor:pointer;text-decoration:none;color:inherit;transition:background .12s}
-.board-row:last-child{border-bottom:none}
-.board-row:hover{background:var(--bg3)}
-.board-mu{font-weight:700;white-space:nowrap}
-.board-edge{display:flex;align-items:center;gap:7px;min-width:0}
-.board-eteam{font-weight:800}
-.board-ebar{flex:1;height:6px;border-radius:99px;background:var(--bg4);overflow:hidden;min-width:24px}
-.board-ebar>i{display:block;height:100%;border-radius:99px}
-.board-tier{font-size:10px;font-weight:800;letter-spacing:.3px;padding:2px 7px;border-radius:5px;color:#fff;text-align:center;white-space:nowrap}
-.board-dq{font-size:11px;font-weight:800;font-variant-numeric:tabular-nums;text-align:center}
-.board-bet{font-size:11px;font-weight:700;color:var(--gold);text-align:right;white-space:nowrap}
-/* ── Señales: secciones por tier (Elite / Strong / Lean) ── */
-.sig-hd{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;background:var(--bg3);border-bottom:1px solid var(--border);flex-wrap:wrap}
-.sig-nm{font-size:12px;font-weight:800;letter-spacing:.5px;display:flex;align-items:center;gap:8px}
-.sig-dot{width:10px;height:10px;border-radius:50%;flex:none}
-.sig-sub{font-size:10px;color:var(--text3);font-weight:500;letter-spacing:0}
-.sig-rec{display:flex;align-items:baseline;gap:8px;white-space:nowrap}
-.sig-empty{padding:14px;text-align:center;color:var(--text3);font-size:11px}
-.day-btn{background:var(--bg2);color:var(--text2);border:1px solid var(--border);padding:5px 11px;border-radius:99px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;font-variant-numeric:tabular-nums}
-.day-btn.active{background:linear-gradient(135deg,var(--purple),var(--purple2));color:#fff;border-color:transparent;box-shadow:0 0 12px rgba(178,107,255,.42)}
-.day-btn:hover:not(.active){background:var(--bg4)}
-.dayrow{cursor:pointer}
-.dayrow.active td{background:var(--bg3);font-weight:700}
-.day-sel{background:var(--bg2);color:var(--text);border:1px solid var(--border);padding:6px 10px;border-radius:8px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;outline:none;font-variant-numeric:tabular-nums;max-width:100%}
-.day-sel:focus{border-color:var(--purple)}
-.day-sel option{background:var(--bg2);color:var(--text)}
-.day-nav{background:var(--bg2);color:var(--text2);border:1px solid var(--border);width:26px;height:26px;border-radius:7px;font-size:15px;line-height:1;cursor:pointer;font-family:inherit}
-.day-nav:hover:not(:disabled){background:var(--bg4);color:var(--text)}
-.day-nav:disabled{opacity:.3;cursor:default}
-/* ── Batter prop rows (chips, sin overlap) ── */
-.bt-row{display:grid;grid-template-columns:18px auto minmax(0,1fr) auto;align-items:start;gap:9px;padding:9px 12px;border-bottom:1px solid var(--border)}
-.bt-row:last-child{border-bottom:none}
-.bt-rank{width:18px;height:18px;border-radius:50%;background:var(--bg);color:var(--gold);font-size:10px;font-weight:800;display:flex;align-items:center;justify-content:center;margin-top:2px}
-.bt-info{min-width:0;display:flex;flex-direction:column;gap:3px}
-.bt-name{font-weight:700;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:5px}
-.bt-hand{color:var(--text3);font-size:9px;font-weight:700}
-.bt-ok{color:var(--gtx);font-size:9px;font-weight:800}
-.bt-nc{color:var(--text3);font-size:9px;font-weight:700;border:1px solid var(--border);border-radius:3px;padding:0 3px}
-.ph-hdr{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin:22px 0 10px;padding-top:16px;border-top:1px solid var(--border)}
-.ph-title{font-size:13px;font-weight:700}
-.ph-sub{font-size:11px;color:var(--text2);max-width:620px}
-.bt-vs{font-size:9.5px;color:var(--text2);display:flex;align-items:center;gap:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.bt-mtag{font-weight:800}
-.bt-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:1px}
-.bt-chip{font-size:9px;font-weight:700;padding:2px 6px;border-radius:5px;background:var(--bg3);color:var(--text2);white-space:nowrap}
-.bt-chip.blue{color:var(--blue)}
-.bt-chip.gold{color:var(--gold)}
-.bt-proj{display:flex;flex-direction:column;align-items:flex-end;gap:2px;text-align:right;min-width:92px}
-.bt-val{font-size:18px;font-weight:800;color:var(--green);line-height:1;font-variant-numeric:tabular-nums}
-.bt-casa{font-size:9px;font-weight:700;white-space:nowrap}
-/* ── Prop del Día ── */
-.pod{border:1px solid var(--gold);border-radius:var(--r);background:
+#dep-mlb .card[id]{scroll-margin-top:14px}/* ── Tabs ── */
+
+#dep-mlb .tabs{display:flex;border-bottom:1px solid var(--border);padding:0 16px;background:var(--bg2);flex-shrink:0;overflow-x:auto}
+#dep-mlb .tab-btn{padding:10px 14px;font-size:12px;font-weight:500;border:none;background:none;color:var(--text2);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap;font-family:inherit;display:flex;align-items:center;gap:5px}
+#dep-mlb .tab-btn.active{color:var(--gold);border-bottom-color:var(--gold);font-weight:700}
+#dep-mlb .tab-btn:hover:not(.active){color:var(--text)}
+#dep-mlb .tab-content{flex:1;overflow-y:auto}
+#dep-mlb .tab-pane{display:none;padding:18px 24px;width:100%}
+#dep-mlb .tab-pane.active{display:block}/* ── Cards ── */
+
+#dep-mlb .card{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:10px}
+#dep-mlb .card-hdr{padding:8px 12px;background:var(--bg3);border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center}
+#dep-mlb .card-hdr-title{font-size:12px;font-weight:700}/* ── Game card ── */
+
+#dep-mlb .game-matchup{display:grid;grid-template-columns:1fr auto 1fr;gap:8px;align-items:center;padding:12px 16px 8px}
+#dep-mlb .team-name{font-size:26px;font-weight:700}
+#dep-mlb .team-away .team-name{color:var(--blue)}
+#dep-mlb .team-home .team-name{color:var(--green);text-align:right}
+#dep-mlb .team-pct{font-size:12px;font-weight:600;margin-top:2px}
+#dep-mlb .team-ml{font-size:11px;color:var(--text3)}
+#dep-mlb .team-home{text-align:right}
+#dep-mlb .prob-bar{height:6px;display:flex;background:var(--bg3)}
+#dep-mlb .prob-away{background:var(--blue)}
+#dep-mlb .prob-home{background:var(--green)}
+#dep-mlb .pick-row{display:flex;align-items:stretch;border-bottom:1px solid var(--border)}
+#dep-mlb .pick-row:last-child{border-bottom:none}
+#dep-mlb .f5-strip{border-top:1px solid var(--border);padding:8px 12px 10px;background:var(--bg3)}
+#dep-mlb .f5-hd{font-size:10px;font-weight:800;color:var(--text2);margin-bottom:7px;text-transform:uppercase;letter-spacing:.3px}
+#dep-mlb .f5-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px}
+#dep-mlb .f5-cell{background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:6px 7px;text-align:center;min-width:0}
+#dep-mlb .f5-lbl{font-size:8.5px;color:var(--text3);font-weight:700;text-transform:uppercase}
+#dep-mlb .f5-main{font-size:11px;font-weight:700;margin:2px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#dep-mlb .f5-prob{font-size:13px;font-weight:800;font-variant-numeric:tabular-nums}
+#dep-mlb .f5-edge{font-size:9px;font-weight:700;font-variant-numeric:tabular-nums;margin-top:1px}
+#dep-mlb .pick-accent{width:4px;flex-shrink:0}
+#dep-mlb .pick-badge{width:76px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:8px 4px;border-right:1px solid var(--border);gap:3px}
+#dep-mlb .pick-badge .icon{font-size:13px}
+#dep-mlb .pick-badge .label{font-size:8px;font-weight:700;letter-spacing:.4px;text-transform:uppercase}
+#dep-mlb .pick-body{flex:1;padding:8px 12px}
+#dep-mlb .pick-cat{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.3px;margin-bottom:2px}
+#dep-mlb .pick-main{font-size:13px;font-weight:700}
+#dep-mlb .pick-sub{font-size:10px;color:var(--text2);margin-top:2px}
+#dep-mlb .pick-pct{padding:8px 12px;text-align:right;flex-shrink:0;display:flex;flex-direction:column;justify-content:center}
+#dep-mlb .pick-prob{font-size:16px;font-weight:700}
+#dep-mlb .pick-edge{font-size:9px;color:var(--text3);margin-top:2px}
+#dep-mlb .high .pick-accent,#dep-mlb .high .pick-badge{background:var(--gbg)}
+#dep-mlb .high .label,#dep-mlb .high .pick-prob{color:var(--gtx)}
+#dep-mlb .low  .pick-accent,#dep-mlb .low  .pick-badge{background:var(--rbg)}
+#dep-mlb .low  .label,#dep-mlb .low  .pick-prob{color:var(--rtx)}
+#dep-mlb .game-footer{padding:6px 12px;font-size:9px;color:var(--text3);background:var(--bg3);border-top:1px solid var(--border)}/* ── MLB Edge Read (encoding visual) ── */
+
+#dep-mlb .er{background:var(--bg3);border-radius:var(--rs);padding:10px 12px 11px;margin:0 12px 10px}
+#dep-mlb .er-top{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:9px}
+#dep-mlb .er-ttl{font-size:10px;font-weight:800;letter-spacing:.5px;color:var(--gold)}
+#dep-mlb .er-conv{display:flex;align-items:center;gap:8px}
+#dep-mlb .er-team{font-size:15px;font-weight:800;letter-spacing:-.3px}
+#dep-mlb .er-tier{font-size:10px;font-weight:800;letter-spacing:.4px;padding:3px 8px;border-radius:6px;color:#fff}
+#dep-mlb .er-rows{display:flex;flex-direction:column;gap:3px}
+#dep-mlb .er-row{display:grid;grid-template-columns:74px 1fr 46px;align-items:center;gap:8px;font-size:10px}
+#dep-mlb .er-nm{color:var(--text2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#dep-mlb .er-track{position:relative;height:11px;background:var(--bg4);border-radius:3px;overflow:hidden}
+#dep-mlb .er-track::before{content:"";position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--text3);opacity:.5}
+#dep-mlb .er-fill{position:absolute;top:0;bottom:0;border-radius:2px}
+#dep-mlb .er-fill.away{right:50%;background:var(--blue)}
+#dep-mlb .er-fill.home{left:50%;background:var(--green)}
+#dep-mlb .er-fill.dim{opacity:.32}
+#dep-mlb .er-val{text-align:right;font-weight:800;font-variant-numeric:tabular-nums}
+#dep-mlb .er-val.away{color:var(--blue)}
+#dep-mlb .er-val.home{color:var(--green)}
+#dep-mlb .er-val.even{color:var(--text3)}
+#dep-mlb .er-meta{display:flex;align-items:center;gap:12px;margin-top:9px;padding-top:9px;border-top:1px solid var(--border);flex-wrap:wrap}
+#dep-mlb .er-dq{display:flex;align-items:center;gap:7px}
+#dep-mlb .er-dq-lbl{font-size:9px;font-weight:800;letter-spacing:.4px;color:var(--text3);text-transform:uppercase}
+#dep-mlb .er-dq-track{width:64px;height:7px;border-radius:99px;background:var(--bg4);overflow:hidden}
+#dep-mlb .er-dq-fill{height:100%;border-radius:99px}
+#dep-mlb .er-dq-val{font-size:11px;font-weight:800;font-variant-numeric:tabular-nums}
+#dep-mlb .er-park{font-size:10px;color:var(--text2);font-weight:600}
+#dep-mlb .er-apps{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-top:9px}
+#dep-mlb .er-apps .lb{font-size:9px;font-weight:800;letter-spacing:.4px;color:var(--text3);text-transform:uppercase}
+#dep-mlb .er-app{font-size:10px;font-weight:700;padding:3px 8px;border-radius:99px;background:var(--gbg);color:var(--gtx);display:inline-flex;gap:5px;align-items:center}
+#dep-mlb .er-note{font-size:9.5px;margin-top:8px;line-height:1.45}
+#dep-mlb .er-note.conf{color:var(--rtx)}
+#dep-mlb .er-note b{letter-spacing:.3px}/* detalle plegable */
+
+#dep-mlb .er-more{margin:0 12px 8px}
+#dep-mlb .er-more>summary{cursor:pointer;font-size:9.5px;font-weight:700;color:var(--text2);padding:4px 0;list-style:none;user-select:none}
+#dep-mlb .er-more>summary::-webkit-details-marker{display:none}
+#dep-mlb .er-more>summary::before{content:"▸ ";color:var(--gold)}
+#dep-mlb .er-more[open]>summary::before{content:"▾ "}/* ── Conviction Board (tablero de jornada) ── */
+
+#dep-mlb .board{background:var(--bg2);border:1px solid var(--border);border-radius:var(--r);overflow:hidden;margin-bottom:12px;box-shadow:var(--shadow)}
+#dep-mlb .board-hd{display:flex;align-items:center;justify-content:space-between;padding:11px 14px;border-bottom:1px solid var(--border);background:var(--bg3)}
+#dep-mlb .board-row{display:grid;grid-template-columns:104px 1fr 92px 58px 62px;align-items:center;gap:10px;padding:9px 14px;border-bottom:1px solid var(--border);font-size:12px;cursor:pointer;text-decoration:none;color:inherit;transition:background .12s}
+#dep-mlb .board-row:last-child{border-bottom:none}
+#dep-mlb .board-row:hover{background:var(--bg3)}
+#dep-mlb .board-mu{font-weight:700;white-space:nowrap}
+#dep-mlb .board-edge{display:flex;align-items:center;gap:7px;min-width:0}
+#dep-mlb .board-eteam{font-weight:800}
+#dep-mlb .board-ebar{flex:1;height:6px;border-radius:99px;background:var(--bg4);overflow:hidden;min-width:24px}
+#dep-mlb .board-ebar>i{display:block;height:100%;border-radius:99px}
+#dep-mlb .board-tier{font-size:10px;font-weight:800;letter-spacing:.3px;padding:2px 7px;border-radius:5px;color:#fff;text-align:center;white-space:nowrap}
+#dep-mlb .board-dq{font-size:11px;font-weight:800;font-variant-numeric:tabular-nums;text-align:center}
+#dep-mlb .board-bet{font-size:11px;font-weight:700;color:var(--gold);text-align:right;white-space:nowrap}/* ── Señales: secciones por tier (Elite / Strong / Lean) ── */
+
+#dep-mlb .sig-hd{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 14px;background:var(--bg3);border-bottom:1px solid var(--border);flex-wrap:wrap}
+#dep-mlb .sig-nm{font-size:12px;font-weight:800;letter-spacing:.5px;display:flex;align-items:center;gap:8px}
+#dep-mlb .sig-dot{width:10px;height:10px;border-radius:50%;flex:none}
+#dep-mlb .sig-sub{font-size:10px;color:var(--text3);font-weight:500;letter-spacing:0}
+#dep-mlb .sig-rec{display:flex;align-items:baseline;gap:8px;white-space:nowrap}
+#dep-mlb .sig-empty{padding:14px;text-align:center;color:var(--text3);font-size:11px}
+#dep-mlb .day-btn{background:var(--bg2);color:var(--text2);border:1px solid var(--border);padding:5px 11px;border-radius:99px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;font-variant-numeric:tabular-nums}
+#dep-mlb .day-btn.active{background:linear-gradient(135deg,var(--purple),var(--purple2));color:#fff;border-color:transparent;box-shadow:0 0 12px rgba(178,107,255,.42)}
+#dep-mlb .day-btn:hover:not(.active){background:var(--bg4)}
+#dep-mlb .dayrow{cursor:pointer}
+#dep-mlb .dayrow.active td{background:var(--bg3);font-weight:700}
+#dep-mlb .day-sel{background:var(--bg2);color:var(--text);border:1px solid var(--border);padding:6px 10px;border-radius:8px;font-size:12px;font-weight:600;font-family:inherit;cursor:pointer;outline:none;font-variant-numeric:tabular-nums;max-width:100%}
+#dep-mlb .day-sel:focus{border-color:var(--purple)}
+#dep-mlb .day-sel option{background:var(--bg2);color:var(--text)}
+#dep-mlb .day-nav{background:var(--bg2);color:var(--text2);border:1px solid var(--border);width:26px;height:26px;border-radius:7px;font-size:15px;line-height:1;cursor:pointer;font-family:inherit}
+#dep-mlb .day-nav:hover:not(:disabled){background:var(--bg4);color:var(--text)}
+#dep-mlb .day-nav:disabled{opacity:.3;cursor:default}/* ── Batter prop rows (chips, sin overlap) ── */
+
+#dep-mlb .bt-row{display:grid;grid-template-columns:18px auto minmax(0,1fr) auto;align-items:start;gap:9px;padding:9px 12px;border-bottom:1px solid var(--border)}
+#dep-mlb .bt-row:last-child{border-bottom:none}
+#dep-mlb .bt-rank{width:18px;height:18px;border-radius:50%;background:var(--bg);color:var(--gold);font-size:10px;font-weight:800;display:flex;align-items:center;justify-content:center;margin-top:2px}
+#dep-mlb .bt-info{min-width:0;display:flex;flex-direction:column;gap:3px}
+#dep-mlb .bt-name{font-weight:700;font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;align-items:center;gap:5px}
+#dep-mlb .bt-hand{color:var(--text3);font-size:9px;font-weight:700}
+#dep-mlb .bt-ok{color:var(--gtx);font-size:9px;font-weight:800}
+#dep-mlb .bt-nc{color:var(--text3);font-size:9px;font-weight:700;border:1px solid var(--border);border-radius:3px;padding:0 3px}
+#dep-mlb .ph-hdr{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin:22px 0 10px;padding-top:16px;border-top:1px solid var(--border)}
+#dep-mlb .ph-title{font-size:13px;font-weight:700}
+#dep-mlb .ph-sub{font-size:11px;color:var(--text2);max-width:620px}
+#dep-mlb .bt-vs{font-size:9.5px;color:var(--text2);display:flex;align-items:center;gap:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#dep-mlb .bt-mtag{font-weight:800}
+#dep-mlb .bt-chips{display:flex;flex-wrap:wrap;gap:4px;margin-top:1px}
+#dep-mlb .bt-chip{font-size:9px;font-weight:700;padding:2px 6px;border-radius:5px;background:var(--bg3);color:var(--text2);white-space:nowrap}
+#dep-mlb .bt-chip.blue{color:var(--blue)}
+#dep-mlb .bt-chip.gold{color:var(--gold)}
+#dep-mlb .bt-proj{display:flex;flex-direction:column;align-items:flex-end;gap:2px;text-align:right;min-width:92px}
+#dep-mlb .bt-val{font-size:18px;font-weight:800;color:var(--green);line-height:1;font-variant-numeric:tabular-nums}
+#dep-mlb .bt-casa{font-size:9px;font-weight:700;white-space:nowrap}/* ── Prop del Día ── */
+
+#dep-mlb .pod{border:1px solid var(--gold);border-radius:var(--r);background:
      linear-gradient(180deg,color-mix(in srgb,var(--gold) 9%,transparent),transparent 62%),var(--bg2);
      margin-bottom:14px;overflow:hidden}
-.pod-hdr{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
-         padding:9px 13px;border-bottom:1px solid var(--border)}
-/* Variante del que NO es el mejor del día: mismo formato, sin corona ni dorado */
-.pod.pod-alt{border-color:var(--border);background:var(--bg2)}
-.pod.pod-alt .pod-tag{color:var(--text2)}
-.pod-otro{padding:7px 13px;background:var(--bg3);border-bottom:1px solid var(--border);
+#dep-mlb .pod-hdr{display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+         padding:9px 13px;border-bottom:1px solid var(--border)}/* Variante del que NO es el mejor del día: mismo formato, sin corona ni dorado */
+
+#dep-mlb .pod.pod-alt{border-color:var(--border);background:var(--bg2)}
+#dep-mlb .pod.pod-alt .pod-tag{color:var(--text2)}
+#dep-mlb .pod-otro{padding:7px 13px;background:var(--bg3);border-bottom:1px solid var(--border);
           font-size:10px;color:var(--text2)}
-.pod-otro b{color:var(--text)}
-.pod-cober{padding:7px 13px;border-bottom:1px solid var(--border);font-size:10px;
+#dep-mlb .pod-otro b{color:var(--text)}
+#dep-mlb .pod-cober{padding:7px 13px;border-bottom:1px solid var(--border);font-size:10px;
            color:var(--text2);line-height:1.55}
-.pod-cober b{color:var(--text)}
-.pod-cober-mal{background:color-mix(in srgb,var(--red) 12%,transparent);color:var(--rtx)}
-.pod-cober-mal b{color:var(--rtx)}
-.pod-tag{font-size:11px;font-weight:800;letter-spacing:.09em;color:var(--gold)}
-.pod-sub{font-size:10px;color:var(--text3);flex:1;min-width:130px}
-.pod-copy{white-space:nowrap}
-.pod-body{display:flex;align-items:center;gap:13px;padding:13px;flex-wrap:wrap}
-.pod-img{width:52px;height:52px;border-radius:50%;object-fit:cover;background:var(--bg3);flex-shrink:0}
-.pod-who{flex:1;min-width:190px}
-.pod-name{font-size:17px;font-weight:800;line-height:1.15}
-.pod-vs{font-size:10px;color:var(--text2);display:flex;align-items:center;gap:4px;margin:2px 0 5px}
-.pod-pick{font-size:19px;font-weight:800;letter-spacing:-.01em}
-.pod-price{font-size:14px;color:var(--text2);font-weight:700;margin-left:5px}
-.pod-blks{display:flex;gap:7px;flex-wrap:wrap}
-.pod-blk{background:var(--bg3);border-radius:var(--rs);padding:6px 12px;text-align:center;min-width:66px}
-.pod-blk-l{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.04em}
-.pod-blk-v{font-size:15px;font-weight:800;font-variant-numeric:tabular-nums}
-.pod-ctx{display:flex;gap:16px;flex-wrap:wrap;padding:0 13px 9px;font-size:10px;color:var(--text2)}
-.pod-ctx b{color:var(--text3);font-weight:700}
-.pod-note{padding:8px 13px;border-top:1px solid var(--border);font-size:9px;color:var(--text3);line-height:1.5}
-/* ── Stats bar ── */
-.stats-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
-.stat-card{background:var(--bg2);border-radius:var(--rs);padding:10px 12px;border:1px solid var(--border)}
-.stat-label{font-size:9px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px}
-.stat-val{font-size:22px;font-weight:700}
-/* ── Toolbar ── */
-.toolbar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
-/* ── History table ── */
-.htable{width:100%;border-collapse:collapse;font-size:11px}
-.htable th{text-align:left;padding:8px 10px;font-weight:700;color:var(--text2);border-bottom:1px solid var(--border);font-size:10px;background:var(--bg3);white-space:nowrap}
-.htable td{padding:7px 10px;border-bottom:1px solid var(--border)}
-.htable tr:hover td{background:var(--bg3)}
-.htable td.num,.htable th.num{text-align:center;font-variant-numeric:tabular-nums}
-.mark-btn.win{background:var(--gbg);color:var(--gtx);border-color:var(--green)}
-.mark-btn.loss{background:var(--rbg);color:var(--rtx);border-color:var(--red)}
-/* ── Model sliders ── */
-.slider-row{margin-bottom:10px;background:var(--bg2);border-radius:var(--rs);padding:10px 14px;border:1px solid var(--border)}
-.slider-lbl{display:flex;justify-content:space-between;font-size:11px;color:var(--text2);margin-bottom:6px}
-.slider-lbl span{font-weight:700;color:var(--gold)}
-/* ── Spinner ── */
-.spin{width:24px;height:24px;border:2px solid var(--border);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 8px}
-.loading{padding:40px;text-align:center;color:var(--text2)}
-.empty{padding:40px;text-align:center;color:var(--text3)}
-.error-box{padding:10px 14px;background:var(--rbg);border:1px solid var(--red);border-radius:var(--rs);font-size:12px;color:var(--rtx);margin-bottom:12px}
-/* ── Imágenes: logos y headshots ── */
-.team-logo-img{width:52px;height:52px;object-fit:contain;display:block;margin:0 0 6px;filter:drop-shadow(0 0 6px rgba(178,107,255,.35))}
-.team-home .team-logo-img{margin-left:auto}
-.logo-xs{width:16px;height:16px;object-fit:contain;vertical-align:middle;flex-shrink:0}
-.headshot{width:46px;height:46px;border-radius:50%;object-fit:cover;background:var(--bg3);border:1px solid rgba(178,107,255,.35);box-shadow:0 0 10px rgba(178,107,255,.25);flex-shrink:0}
-.headshot-sm{width:30px;height:30px;border-radius:50%;object-fit:cover;background:var(--bg3);border:1px solid rgba(178,107,255,.3);box-shadow:0 0 6px rgba(178,107,255,.2);flex-shrink:0}
-.tabs{background:var(--bg2)}
-.tab-btn{transition:color .12s,border-color .12s}
-.tab-btn.active{text-shadow:0 0 10px rgba(178,107,255,.7)}
-.card{box-shadow:var(--shadow);transition:transform .16s,box-shadow .16s,border-color .16s}
-.card:hover{transform:translateY(-3px);box-shadow:var(--shadow-lg),0 0 0 1px rgba(178,107,255,.25);border-color:rgba(178,107,255,.32)}
-.card-hdr{background:linear-gradient(90deg,var(--bg3),var(--bg2))}
-.card-hdr-title{display:flex;align-items:center;gap:6px}
-.game-matchup{background:radial-gradient(130% 120% at 50% -10%,rgba(178,107,255,.10),var(--bg2))}
-.team-name{line-height:1.05;letter-spacing:-.5px}
-.prob-bar{height:8px;border-radius:0 0 3px 3px;overflow:hidden}
-.pick-row{transition:background .12s}
-.pick-row:hover{background:rgba(178,107,255,.06)}
-.stat-card{transition:transform .15s,box-shadow .15s,border-color .15s}
-.stat-card:hover{transform:translateY(-2px);box-shadow:var(--shadow);border-color:rgba(0,227,154,.3)}
-.stat-val{background:linear-gradient(135deg,var(--green),var(--purple));-webkit-background-clip:text;background-clip:text;color:transparent}
-.pick-stake{font-size:9px;color:var(--gtx);font-weight:700;margin-top:2px}
-.filterbar{display:flex;align-items:center;gap:6px;margin-bottom:12px;flex-wrap:wrap}
-.pf-btn,.ps-btn{background:var(--bg2);color:var(--text2);border:1px solid var(--border);padding:5px 11px;border-radius:99px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;transition:background .12s,color .12s}
-.pf-btn.active,.ps-btn.active{background:linear-gradient(135deg,var(--purple),var(--purple2));color:#fff;border-color:transparent;box-shadow:0 0 12px rgba(178,107,255,.42)}
-.pf-btn:hover:not(.active),.ps-btn:hover:not(.active){background:var(--bg4)}
+#dep-mlb .pod-cober b{color:var(--text)}
+#dep-mlb .pod-cober-mal{background:color-mix(in srgb,var(--red) 12%,transparent);color:var(--rtx)}
+#dep-mlb .pod-cober-mal b{color:var(--rtx)}
+#dep-mlb .pod-tag{font-size:11px;font-weight:800;letter-spacing:.09em;color:var(--gold)}
+#dep-mlb .pod-sub{font-size:10px;color:var(--text3);flex:1;min-width:130px}
+#dep-mlb .pod-copy{white-space:nowrap}
+#dep-mlb .pod-body{display:flex;align-items:center;gap:13px;padding:13px;flex-wrap:wrap}
+#dep-mlb .pod-img{width:52px;height:52px;border-radius:50%;object-fit:cover;background:var(--bg3);flex-shrink:0}
+#dep-mlb .pod-who{flex:1;min-width:190px}
+#dep-mlb .pod-name{font-size:17px;font-weight:800;line-height:1.15}
+#dep-mlb .pod-vs{font-size:10px;color:var(--text2);display:flex;align-items:center;gap:4px;margin:2px 0 5px}
+#dep-mlb .pod-pick{font-size:19px;font-weight:800;letter-spacing:-.01em}
+#dep-mlb .pod-price{font-size:14px;color:var(--text2);font-weight:700;margin-left:5px}
+#dep-mlb .pod-blks{display:flex;gap:7px;flex-wrap:wrap}
+#dep-mlb .pod-blk{background:var(--bg3);border-radius:var(--rs);padding:6px 12px;text-align:center;min-width:66px}
+#dep-mlb .pod-blk-l{font-size:9px;color:var(--text3);text-transform:uppercase;letter-spacing:.04em}
+#dep-mlb .pod-blk-v{font-size:15px;font-weight:800;font-variant-numeric:tabular-nums}
+#dep-mlb .pod-ctx{display:flex;gap:16px;flex-wrap:wrap;padding:0 13px 9px;font-size:10px;color:var(--text2)}
+#dep-mlb .pod-ctx b{color:var(--text3);font-weight:700}
+#dep-mlb .pod-note{padding:8px 13px;border-top:1px solid var(--border);font-size:9px;color:var(--text3);line-height:1.5}/* ── Stats bar ── */
+
+#dep-mlb .stats-bar{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:12px}
+#dep-mlb .stat-card{background:var(--bg2);border-radius:var(--rs);padding:10px 12px;border:1px solid var(--border)}
+#dep-mlb .stat-label{font-size:9px;color:var(--text3);font-weight:600;text-transform:uppercase;letter-spacing:.3px;margin-bottom:4px}
+#dep-mlb .stat-val{font-size:22px;font-weight:700}/* ── Toolbar ── */
+
+#dep-mlb .toolbar{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}/* ── History table ── */
+
+#dep-mlb .htable{width:100%;border-collapse:collapse;font-size:11px}
+#dep-mlb .htable th{text-align:left;padding:8px 10px;font-weight:700;color:var(--text2);border-bottom:1px solid var(--border);font-size:10px;background:var(--bg3);white-space:nowrap}
+#dep-mlb .htable td{padding:7px 10px;border-bottom:1px solid var(--border)}
+#dep-mlb .htable tr:hover td{background:var(--bg3)}
+#dep-mlb .htable td.num,#dep-mlb .htable th.num{text-align:center;font-variant-numeric:tabular-nums}
+#dep-mlb .mark-btn.win{background:var(--gbg);color:var(--gtx);border-color:var(--green)}
+#dep-mlb .mark-btn.loss{background:var(--rbg);color:var(--rtx);border-color:var(--red)}/* ── Model sliders ── */
+
+#dep-mlb .slider-row{margin-bottom:10px;background:var(--bg2);border-radius:var(--rs);padding:10px 14px;border:1px solid var(--border)}
+#dep-mlb .slider-lbl{display:flex;justify-content:space-between;font-size:11px;color:var(--text2);margin-bottom:6px}
+#dep-mlb .slider-lbl span{font-weight:700;color:var(--gold)}/* ── Spinner ── */
+
+#dep-mlb .spin{width:24px;height:24px;border:2px solid var(--border);border-top-color:var(--gold);border-radius:50%;animation:spin .7s linear infinite;margin:0 auto 8px}
+#dep-mlb .loading{padding:40px;text-align:center;color:var(--text2)}
+#dep-mlb .empty{padding:40px;text-align:center;color:var(--text3)}
+#dep-mlb .error-box{padding:10px 14px;background:var(--rbg);border:1px solid var(--red);border-radius:var(--rs);font-size:12px;color:var(--rtx);margin-bottom:12px}/* ── Imágenes: logos y headshots ── */
+
+#dep-mlb .team-logo-img{width:52px;height:52px;object-fit:contain;display:block;margin:0 0 6px;filter:drop-shadow(0 0 6px rgba(178,107,255,.35))}
+#dep-mlb .team-home .team-logo-img{margin-left:auto}
+#dep-mlb .logo-xs{width:16px;height:16px;object-fit:contain;vertical-align:middle;flex-shrink:0}
+#dep-mlb .headshot{width:46px;height:46px;border-radius:50%;object-fit:cover;background:var(--bg3);border:1px solid rgba(178,107,255,.35);box-shadow:0 0 10px rgba(178,107,255,.25);flex-shrink:0}
+#dep-mlb .headshot-sm{width:30px;height:30px;border-radius:50%;object-fit:cover;background:var(--bg3);border:1px solid rgba(178,107,255,.3);box-shadow:0 0 6px rgba(178,107,255,.2);flex-shrink:0}
+#dep-mlb .tabs{background:var(--bg2)}
+#dep-mlb .tab-btn{transition:color .12s,border-color .12s}
+#dep-mlb .tab-btn.active{text-shadow:0 0 10px rgba(178,107,255,.7)}
+#dep-mlb .card{box-shadow:var(--shadow);transition:transform .16s,box-shadow .16s,border-color .16s}
+#dep-mlb .card:hover{transform:translateY(-3px);box-shadow:var(--shadow-lg),0 0 0 1px rgba(178,107,255,.25);border-color:rgba(178,107,255,.32)}
+#dep-mlb .card-hdr{background:linear-gradient(90deg,var(--bg3),var(--bg2))}
+#dep-mlb .card-hdr-title{display:flex;align-items:center;gap:6px}
+#dep-mlb .game-matchup{background:radial-gradient(130% 120% at 50% -10%,rgba(178,107,255,.10),var(--bg2))}
+#dep-mlb .team-name{line-height:1.05;letter-spacing:-.5px}
+#dep-mlb .prob-bar{height:8px;border-radius:0 0 3px 3px;overflow:hidden}
+#dep-mlb .pick-row{transition:background .12s}
+#dep-mlb .pick-row:hover{background:rgba(178,107,255,.06)}
+#dep-mlb .stat-card{transition:transform .15s,box-shadow .15s,border-color .15s}
+#dep-mlb .stat-card:hover{transform:translateY(-2px);box-shadow:var(--shadow);border-color:rgba(0,227,154,.3)}
+#dep-mlb .stat-val{background:linear-gradient(135deg,var(--green),var(--purple));-webkit-background-clip:text;background-clip:text;color:transparent}
+#dep-mlb .pick-stake{font-size:9px;color:var(--gtx);font-weight:700;margin-top:2px}
+#dep-mlb .filterbar{display:flex;align-items:center;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+#dep-mlb .pf-btn,#dep-mlb .ps-btn{background:var(--bg2);color:var(--text2);border:1px solid var(--border);padding:5px 11px;border-radius:99px;font-size:11px;font-weight:600;cursor:pointer;font-family:inherit;transition:background .12s,color .12s}
+#dep-mlb .pf-btn.active,#dep-mlb .ps-btn.active{background:linear-gradient(135deg,var(--purple),var(--purple2));color:#fff;border-color:transparent;box-shadow:0 0 12px rgba(178,107,255,.42)}
+#dep-mlb .pf-btn:hover:not(.active),#dep-mlb .ps-btn:hover:not(.active){background:var(--bg4)}
+/* ── Estaban en el CSS del núcleo por error: son de MLB ── */
+#dep-mlb .er-app .n{font-family:ui-monospace,Consolas,monospace;font-weight:800;opacity:.7}
+#dep-mlb .er-note.red{color:var(--red)}
+#dep-mlb .board-hd .t{font-size:11px;font-weight:800;letter-spacing:.5px;color:var(--gold)}
+#dep-mlb .board-hd .s{font-size:10px;color:var(--text3)}
+#dep-mlb .sig-rec .r{font-size:18px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:.5px}
+#dep-mlb .sig-rec .p{font-size:11px;font-weight:700}
+#dep-mlb .sig-rec .a{font-size:10px;color:var(--text3);font-weight:500}
+#dep-mlb .bt-chip.warn{color:var(--rtx)}
+#dep-mlb .htable th.c,#dep-mlb .htable td.c{text-align:center}
+#dep-mlb .htable th.r,#dep-mlb .htable td.r{text-align:right}
+#dep-mlb .mark-btn{font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid var(--border);background:transparent;cursor:pointer;font-family:inherit;color:var(--text2)}
+#dep-mlb .mark-btn.push{background:#e6eefb;color:#2f72c4;border-color:var(--blue)}

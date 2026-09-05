@@ -291,8 +291,9 @@ async function loadAfKeyFromCloud(){
 //   desactivar()  al salir (opcional)
 const Deportes = (() => {
   const mods = new Map();
-  const duenoManejador = new Map();   // nombre global -> id del deporte
-  const duenoId        = new Map();   // id del DOM     -> id del deporte
+  const duenoManejador = new Map();   // 'mlb.runAnalysis' -> id del deporte
+  const duenoId        = new Map();   // id del DOM        -> id del deporte
+  const duenoTabla     = new Map();   // tabla de Supabase -> id del deporte
   let activo = null;
 
   const pon = (sel, txt) => { const e = document.querySelector(sel); if (e) e.textContent = txt; };
@@ -317,14 +318,25 @@ const Deportes = (() => {
       duenoId.set(el.id, m.id);
     }
 
-    // 3 · Manejadores: lo único que sale al espacio global, con dueño anotado.
-    //     El resto de sus funciones y variables quedan encerradas en su archivo.
-    for (const [k, f] of Object.entries(m.manejadores || {})) {
-      const dueno = duenoManejador.get(k);
-      if (dueno) throw new Error(`El manejador "${k}()" ya es de ${dueno}; ${m.id} no puede reutilizarlo.`);
-      duenoManejador.set(k, m.id);
-      window[k] = f;
+    // 3 · Manejadores: NO salen a ningún sitio. Se quedan en esta variable, dentro
+    //     del núcleo, y el HTML del deporte los invoca con data-ac / data-ch. Para
+    //     otro deporte sencillamente no existen: no hay nombre por el que llamarlos.
+    const mapa = { ...(m.manejadores || {}) };
+    duenoManejador.set(m.id, Object.keys(mapa));
+    conectarAcciones(cont, mapa, m.id);
+
+    // 3b · Tablas de Supabase: cada deporte declara las suyas y nadie más las toca.
+    //      El algoritmo de un deporte no tiene nada que ver con el de otro, así que
+    //      tampoco deben compartir dónde escriben.
+    for (const t of m.tablas || []) {
+      const dueno = duenoTabla.get(t);
+      if (dueno) throw new Error(`La tabla "${t}" ya es de ${dueno}; ${m.id} no puede compartirla.`);
+      duenoTabla.set(t, m.id);
     }
+
+    // 3c · Su bot. No se comparte: el núcleo expone como window.__auto el del
+    //      deporte que se pida en la URL (?deporte=mlb), y solo ese.
+    if (m.auto) autos.set(m.id, m.auto);
 
     // 4 · Hoja de estilos propia.
     if (m.css) {
@@ -337,7 +349,83 @@ const Deportes = (() => {
     catch (e) { console.error('[' + m.id + '] falló al iniciar:', e); }
     pintarBotones();
     if (!activo) activar(m.id);
+    exponerBot();
     return m;
+  }
+
+  // ── Despacho de acciones ──────────────────────────────────────────────────
+  // En vez de onclick="runAnalysis()", que obliga a tener la función en window
+  // donde cualquiera la alcanza, el HTML lleva data-ac="runAnalysis()" y el
+  // núcleo la busca en el mapa PRIVADO de ese deporte. Fuera de aquí no hay
+  // ningún nombre por el que invocarla.
+  //   data-ac  click        data-ch  change        data-in  input
+  const partirArgs = s => {
+    const out = []; let act = '', cad = null;
+    for (const c of s) {
+      if (cad) { act += c; if (c === cad) cad = null; continue; }
+      if (c === '"' || c === "'") { cad = c; act += c; continue; }
+      if (c === ',') { out.push(act); act = ''; continue; }
+      act += c;
+    }
+    if (act.trim()) out.push(act);
+    return out.map(x => x.trim());
+  };
+  const valorDe = (a, el) => {
+    if (a === 'this') return el;
+    if (a === 'this.checked') return el.checked;
+    if (a === 'this.value') return el.value;
+    if (a === 'true') return true;
+    if (a === 'false') return false;
+    if (a === 'null') return null;
+    if (/^-?\d+(\.\d+)?$/.test(a)) return +a;
+    if (/^'.*'$|^".*"$/.test(a)) return a.slice(1, -1).replace(/&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+    return a;
+  };
+  function conectarAcciones(cont, mapa, id) {
+    const correr = (attr, ev) => {
+      const el = ev.target.closest && ev.target.closest('[data-' + attr + ']');
+      if (!el || !cont.contains(el)) return;
+      for (const llamada of (el.dataset[attr] || '').split(';')) {
+        const m = /^\s*([A-Za-z_$][\w$]*)\s*\(([\s\S]*)\)\s*$/.exec(llamada);
+        if (!m) continue;
+        const f = mapa[m[1]];
+        if (!f) { console.error('[' + id + '] no tiene la acción ' + m[1] + '()'); continue; }
+        try { f(...(m[2].trim() ? partirArgs(m[2]).map(a => valorDe(a, el)) : [])); }
+        catch (e) { console.error('[' + id + '] ' + m[1] + '() falló:', e); }
+      }
+    };
+    cont.addEventListener('click',  e => correr('ac', e));
+    cont.addEventListener('change', e => correr('ch', e));
+    cont.addEventListener('input',  e => correr('in', e));
+  }
+
+  // ── Cliente de Supabase acotado ───────────────────────────────────────────
+  // Se lo pide un deporte al arrancar, antes de registrarse, así que la lista de
+  // tablas se comprueba en el momento de usarla, no al crearlo.
+  function clienteDe(id) {
+    return {
+      from(tabla) {
+        const dueno = duenoTabla.get(tabla);
+        if (dueno === undefined)
+          throw new Error(`${id} intenta usar la tabla "${tabla}", que no declaró en "tablas".`);
+        if (dueno !== id)
+          throw new Error(`La tabla "${tabla}" es de ${dueno}; ${id} no puede tocarla.`);
+        return sb.from(tabla);
+      },
+      get auth() { return sb.auth; },
+    };
+  }
+
+  // ── El bot ────────────────────────────────────────────────────────────────
+  // Un solo window.__auto, pero es el de UN deporte, el que se pida con
+  // ?deporte=mlb. Sin ese parámetro, y con un solo deporte cargado, se usa ese.
+  // Así el robot de GitHub corre béisbol o fútbol, nunca los dos mezclados.
+  const autos = new Map();
+  function exponerBot() {
+    const pedido = new URLSearchParams(location.search).get('deporte');
+    const id = pedido || (autos.size === 1 ? [...autos.keys()][0] : null);
+    if (id && autos.has(id)) { window.__auto = autos.get(id); window.__auto.deporte = id; }
+    else if (pedido) console.error('Se pidió el bot de "' + pedido + '", que no está cargado.');
   }
 
   function pintarBotones() {
@@ -371,15 +459,22 @@ const Deportes = (() => {
 
   // Diagnóstico: en la consola, Deportes.diagnostico()
   function diagnostico() {
-    console.log('Deportes registrados: ' + [...mods.keys()].join(', ') + '   activo: ' + activo);
-    const porDep = {};
-    duenoManejador.forEach((d, k) => (porDep[d] = porDep[d] || []).push(k));
-    for (const d in porDep) console.log('  ' + d + ' publica ' + porDep[d].length + ' manejador(es): ' + porDep[d].join(' '));
-    console.log('  ids del DOM repartidos: ' + duenoId.size);
-    return { deportes: [...mods.keys()], activo, manejadores: porDep };
+    console.log('Deportes: ' + [...mods.keys()].join(', ') + '   activo: ' + activo);
+    for (const id of mods.keys()) {
+      const man = duenoManejador.get(id) || [];
+      const tab = [...duenoTabla].filter(([, d]) => d === id).map(([t]) => t);
+      const ids = [...duenoId].filter(([, d]) => d === id).length;
+      console.log('  ' + id + ':');
+      console.log('    acciones (privadas, no accesibles desde fuera): ' + man.length + '  ' + man.join(' '));
+      console.log('    tablas de Supabase: ' + (tab.join(' ') || '(ninguna)'));
+      console.log('    ids del DOM: ' + ids);
+      console.log('    bot propio: ' + (autos.has(id) ? 'sí' : 'no'));
+    }
+    console.log('  window.__auto expuesto: ' + (window.__auto ? window.__auto.deporte : '(ninguno)'));
+    return { deportes: [...mods.keys()], activo };
   }
 
-  return { registrar, activar, diagnostico,
+  return { registrar, activar, diagnostico, clienteDe,
            get activo() { return activo; },
            get lista()  { return [...mods.keys()]; } };
 })();

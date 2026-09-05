@@ -54,19 +54,11 @@ a{color:var(--blue);text-decoration:none}
 @media(max-width:520px){.f5-grid{grid-template-columns:repeat(2,1fr)}}
 .med  .pick-accent,.med  .pick-badge{background:var(--abg)}
 .med  .label,.med  .pick-prob{color:var(--atx)}
-.er-app .n{font-family:ui-monospace,Consolas,monospace;font-weight:800;opacity:.7}
-.er-note.red{color:var(--red)}
-.board-hd .t{font-size:11px;font-weight:800;letter-spacing:.5px;color:var(--gold)}
-.board-hd .s{font-size:10px;color:var(--text3)}
-.sig-rec .r{font-size:18px;font-weight:800;font-variant-numeric:tabular-nums;letter-spacing:.5px}
-.sig-rec .p{font-size:11px;font-weight:700}
-.sig-rec .a{font-size:10px;color:var(--text3);font-weight:500}
 @media(max-width:560px){
   .board-row{grid-template-columns:88px 1fr 52px;gap:8px}
   .board-tier,.board-dq{display:none}
   .er-row{grid-template-columns:64px 1fr 42px}
 }
-.bt-chip.warn{color:var(--rtx)}
 @media(max-width:560px){ .pod-blks{width:100%} .pod-blk{flex:1} }
 input[type=date]{background:var(--bg2);border:1px solid var(--border);border-radius:var(--rs);padding:7px 10px;font-size:12px;color:var(--text);font-family:inherit;outline:none}
 .btn{background:var(--gold);color:#fff;border:none;padding:8px 16px;border-radius:var(--rs);font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;display:flex;align-items:center;gap:5px}
@@ -76,14 +68,10 @@ input[type=date]{background:var(--bg2);border:1px solid var(--border);border-rad
 .btn-sm:hover{background:var(--bg4)}
 /* Alineación de columnas: .c = centrada, .r = derecha. Se aplica a th y td por igual
    para que la cabecera nunca quede desfasada respecto a sus celdas. */
-.htable th.c,.htable td.c{text-align:center}
-.htable th.r,.htable td.r{text-align:right}
 .conf-pill{font-size:10px;padding:2px 7px;border-radius:4px;font-weight:600}
 .conf-High{background:var(--gbg);color:var(--gtx)}
 .conf-Medium{background:var(--abg);color:var(--atx)}
 .conf-Low{background:var(--bg3);color:var(--text2)}
-.mark-btn{font-size:10px;padding:3px 8px;border-radius:4px;border:1px solid var(--border);background:transparent;cursor:pointer;font-family:inherit;color:var(--text2)}
-.mark-btn.push{background:#e6eefb;color:#2f72c4;border-color:var(--blue)}
 input[type=range]{width:100%;accent-color:var(--gold)}
 @keyframes spin{to{transform:rotate(360deg)}}
 /* ── Pulido visual · negro futurista con LEDs ── */

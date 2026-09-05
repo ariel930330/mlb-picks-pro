@@ -26,6 +26,15 @@
 #dep-futbol .sc-btn{border:none;border-radius:10px;padding:9px 16px;font-weight:800;font-size:12px;font-family:inherit;cursor:pointer;color:#fff;background:linear-gradient(135deg,var(--purple),var(--purple2));box-shadow:0 0 16px rgba(178,107,255,.4)}
 #dep-futbol .sc-btn:disabled{opacity:.5;cursor:wait}
 #dep-futbol .sc-btn.ghost{background:var(--bg3);box-shadow:none;color:var(--text2);border:1px solid var(--border)}
+#dep-futbol .sc-fechas{display:inline-flex;align-items:center;gap:2px;background:var(--bg3);border:1px solid var(--border);border-radius:10px;padding:2px}
+#dep-futbol .sc-fechas input[type=date]{background:none;border:none;color:var(--text);font-family:inherit;font-size:12px;padding:5px 4px;outline:none}
+#dep-futbol .sc-nav{background:none;border:none;color:var(--text2);font-family:inherit;font-size:14px;font-weight:800;padding:4px 9px;border-radius:7px;cursor:pointer;line-height:1}
+#dep-futbol .sc-nav:hover{background:var(--bg4);color:var(--text)}
+#dep-futbol .sc-nav.hoy{font-size:11px;font-weight:700}
+#dep-futbol .sc-sel{background:var(--bg3);border:1px solid var(--border);color:var(--text2);border-radius:10px;padding:7px 9px;font-size:11px;font-family:inherit;outline:none;max-width:190px}
+#dep-futbol .sc-origen{font-size:11px;border-radius:10px;padding:8px 12px;margin-bottom:10px;border:1px solid var(--border)}
+#dep-futbol .sc-origen.guardado{background:rgba(178,107,255,.10);border-color:rgba(178,107,255,.35);color:var(--ptx)}
+#dep-futbol .sc-origen.vivo{background:rgba(0,227,154,.09);border-color:rgba(0,227,154,.32);color:var(--gtx)}
 #dep-futbol .sc-tabs{display:flex;gap:4px;border-bottom:1px solid var(--border);margin-bottom:12px;overflow-x:auto}
 #dep-futbol .sc-tab{background:none;border:none;color:var(--text3);font-family:inherit;font-size:12px;font-weight:700;padding:9px 13px;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap}
 #dep-futbol .sc-tab.active{color:var(--text);border-bottom-color:var(--green)}

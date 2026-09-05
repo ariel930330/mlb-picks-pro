@@ -6,7 +6,7 @@
 | `deportes/futbol.js` | Motor completo + interfaz (un archivo por deporte, `deportes/LEEME.md`). Módulos internos: VERSIONES/CONFIG, REGISTRO DE MERCADOS, NÚCLEO MATEMÁTICO, MODELO, ADAPTADOR API-FOOTBALL, CANDIDATOS/EV, PUERTAS/SCORES/TIERS, POD, CORRIDA, INTERFAZ |
 | `deportes/futbol.css` | Estilos, todo bajo `#dep-futbol` |
 | `futbol-setup.sql` | Tablas Supabase + RLS. Bloques 1-9 append-only; bloque 10 (`futbol_tablero`) es el tablero vigente, la única tabla que se actualiza en sitio |
-| `tests/futbol.test.mjs` | 66 pruebas (Master §10). `node tests/futbol.test.mjs` |
+| `tests/futbol.test.mjs` | 67 pruebas (Master §10). `node tests/futbol.test.mjs` |
 | `docs/futbol/01-auditoria.md` | Auditoría Master §1 |
 | `docs/futbol/03-informe-fase1.md` | Informe de cierre de fase (implementado / probado / validado / bloqueado) |
 
@@ -31,6 +31,22 @@
 | XI | ≤60 min o alineaciones publicadas (≈T-40) | pueden abrirse Lean/Strong/Elite (PAPER) |
 | T-30 / T-5 | ≤30 / ≤5 min | recheck de precio; frescura por tier (S11) |
 | INICIADO | kickoff pasado | no se evalúa (estado ≠ NS) |
+
+## Navegación entre fechas
+El tablero vive en Supabase, no en la memoria del navegador. Al abrir la página se carga el análisis guardado del día, y con la barra de fechas se puede ir a cualquier otro **sin gastar llamadas a la API**.
+
+| Control | Qué hace |
+|---|---|
+| `‹` y `›` | Día anterior y siguiente |
+| Campo de fecha | Ir a una fecha concreta |
+| `Hoy` | Volver al día actual (zona del Este) |
+| Desplegable | Solo las fechas que ya tienen análisis guardado |
+
+Un aviso arriba del tablero dice si lo que ves es **guardado** (morado, con la hora de la última corrida) o **en vivo** (verde, de esta sesión). Analizar de nuevo sobrescribe el tablero de esa fecha y el aviso pasa a en vivo.
+
+Al abrir un partido guardado, el modal trae del histórico el resto de selecciones evaluadas de ese partido, no solo las tres del tablero.
+
+Solo se guardan los partidos que dejaron algún pick. Un día con 52 partidos y picks en 39 mostrará 39 tarjetas al recargar; el conteo completo sigue en el resumen del snapshot.
 
 ## Qué se guarda y qué se sobrescribe
 | Tabla | Comportamiento |

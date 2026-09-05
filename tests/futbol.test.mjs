@@ -324,6 +324,37 @@ t('sobrescritura: si el edge EMPEORA se actualiza el precio vigente pero se recu
     cerca(f.mejor_edge, a.e, 1e-9, 'pero se recuerda el mejor visto');
     assert.equal(f.mejor_snapshot, 'SNAP-1'); }
 });
+t('lo guardado se puede volver a leer: el tablero se reconstruye igual (refrescar la pagina)', async () => {
+  ctx.__db.filas = {}; ctx.__db.log = [];
+  const cs = slateDe(3, [.14]); const tb = F.tableroDe(cs);
+  const snap = { snapshot_id: 'SNAP-R', slate_date: '2026-09-06', analysis_time: '2026-09-06T12:00:00Z', input_hash: 'h' };
+  await F.guardarTablero(snap, tb);
+  const filas = ctx.__db.filas.futbol_tablero;
+  const leido = F.desdeFilas(filas);
+  const orig = [...tb.values()].flat();
+  assert.equal(leido.cands.length, orig.length, 'se recuperan todos los picks');
+  assert.equal(leido.tablero.size, tb.size, 'se recuperan todos los partidos');
+  for (const c of leido.cands) {
+    const o = orig.find(x => x.key === c.key);
+    assert.ok(o, 'clave desconocida: ' + c.key);
+    assert.equal(c.estado, o.estado);
+    assert.equal(c.mercado, o.mercado);
+    assert.equal(c.sel, o.sel);
+    assert.equal(c.linea, o.linea);
+    assert.equal(c.am, o.am);
+    assert.equal(c.posicion, o.posicion);
+    cerca(c.edge_pp, o.edge_pp, 1e-9, 'edge');
+    cerca(c.ev, o.ev, 1e-9, 'EV');
+    cerca(c.scores.composite, o.scores.composite, 1e-9, 'score');
+    cerca(c.scores.cinco.edge_strength, o.scores.cinco.edge_strength, 1e-9, 'score de edge');
+    cerca(c.scores.cinco.confidence, o.scores.cinco.confidence, 1e-9, 'confianza');
+    assert.equal(c.dq.dq, o.dq.dq, 'calidad de dato');
+    assert.equal(c.fx.home, o.fx.home); assert.equal(c.fx.away, o.fx.away);
+    assert.equal(c.tesis, o.tesis);
+  }
+  // el orden dentro de cada partido se conserva por posicion
+  for (const [, p] of leido.tablero) p.forEach((c, i) => assert.equal(c.posicion, i + 1));
+});
 t('sobrescritura: un pick que sale del top 3 queda marcado fuera del tablero, no se borra', async () => {
   ctx.__db.filas = {}; ctx.__db.log = [];
   const cs = slateDe(1, [.14]); const tb = F.tableroDe(cs);

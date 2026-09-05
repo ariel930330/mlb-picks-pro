@@ -134,10 +134,19 @@ jobs:
                 echo "La espera de $((DORMIR/60)) min no cabe en el tiempo del job. Fin."
                 break
               fi
+              # AL RESUMEN, no solo al log. Un job dormido se ve EXACTAMENTE igual que
+              # uno colgado: el contador sube y no pasa nada. Sin esta línea hay que
+              # abrir el paso para enterarse de que está esperando a propósito.
+              DESPIERTA=$(TZ=America/New_York date -d "+$((DORMIR/60)) minutes" '+%-I:%M %p' 2>/dev/null || echo '?')
               echo "Vuelta $VUELTA · esperando $((DORMIR/60)) min hasta la oleada…"
+              echo "### ⏳ Durmiendo $((DORMIR/60)) min" >> $GITHUB_STEP_SUMMARY
+              echo "" >> $GITHUB_STEP_SUMMARY
+              echo "No está colgado: espera despierto a la oleada y analiza a las **$DESPIERTA ET**." >> $GITHUB_STEP_SUMMARY
+              echo "Para analizar sin esperar, cancela y vuelve a lanzarlo eligiendo \`analizar-ya\`." >> $GITHUB_STEP_SUMMARY
               sleep "$DORMIR"
             fi
             echo "Vuelta $VUELTA · analizando"
+            echo "### ▶️ Analizando (vuelta $VUELTA) · $(TZ=America/New_York date '+%-I:%M %p') ET" >> $GITHUB_STEP_SUMMARY
             node bot/correr-analisis.mjs || echo "::warning::El analisis de la vuelta $VUELTA fallo"
             # El aviso va DESPUES de cada analisis, no al final del job: el job puede
             # quedarse dormido horas esperando la siguiente oleada, y un aviso que

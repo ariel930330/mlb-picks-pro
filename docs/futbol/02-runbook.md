@@ -5,8 +5,8 @@
 |---|---|
 | `deportes/futbol.js` | Motor completo + interfaz (un archivo por deporte, `deportes/LEEME.md`). Módulos internos: VERSIONES/CONFIG, REGISTRO DE MERCADOS, NÚCLEO MATEMÁTICO, MODELO, ADAPTADOR API-FOOTBALL, CANDIDATOS/EV, PUERTAS/SCORES/TIERS, POD, CORRIDA, INTERFAZ |
 | `deportes/futbol.css` | Estilos, todo bajo `#dep-futbol` |
-| `futbol-setup.sql` | Tablas Supabase (append-only) + RLS |
-| `tests/futbol.test.mjs` | 59 pruebas (Master §10). `node tests/futbol.test.mjs` |
+| `futbol-setup.sql` | Tablas Supabase + RLS. Bloques 1-9 append-only; bloque 10 (`futbol_tablero`) es el tablero vigente, la única tabla que se actualiza en sitio |
+| `tests/futbol.test.mjs` | 65 pruebas (Master §10). `node tests/futbol.test.mjs` |
 | `docs/futbol/01-auditoria.md` | Auditoría Master §1 |
 | `docs/futbol/03-informe-fase1.md` | Informe de cierre de fase (implementado / probado / validado / bloqueado) |
 
@@ -31,6 +31,15 @@
 | XI | ≤60 min o alineaciones publicadas (≈T-40) | pueden abrirse Lean/Strong/Elite (PAPER) |
 | T-30 / T-5 | ≤30 / ≤5 min | recheck de precio; frescura por tier (S11) |
 | INICIADO | kickoff pasado | no se evalúa (estado ≠ NS) |
+
+## Qué se guarda y qué se sobrescribe
+| Tabla | Comportamiento |
+|---|---|
+| `futbol_tablero` | **Se sobrescribe.** Los 3 mejores picks de cada partido, por edge. Una corrida posterior reemplaza la fila con su evaluación actual y recuerda el mejor edge visto. Un pick que sale del top 3 queda con `en_tablero = false`, no se borra |
+| `futbol_senales` | Append-only. Una fila por candidato con estado y por corrida. Los No Signal no se guardan |
+| `futbol_snapshots`, `futbol_cuotas`, `futbol_cierres`, `futbol_auditoria` | Append-only. Es lo que hace posible el backtest punto-en-el-tiempo |
+
+La fila del tablero se actualiza aunque el edge haya empeorado, porque el precio anterior ya no existe. Lo que se conserva del pasado es `mejor_edge` y en qué corrida se vio.
 
 ## Qué decide un pick
 Tres números de 0 a 100, combinados en un score único (Master §6, instrucción del dueño del 5-sep-2026):

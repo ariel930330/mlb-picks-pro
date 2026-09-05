@@ -180,5 +180,70 @@ begin
   end if;
 end $$;
 
+
+-- 10 · Tablero vigente: los mejores picks de cada partido · SOBRESCRIBIBLE -----
+--  Es la UNICA tabla que se actualiza en sitio. Guarda el pick vigente de cada
+--  partido y se reescribe cuando una corrida posterior encuentra uno mejor.
+--  El historico (futbol_senales) sigue siendo append-only para auditoria y
+--  backtest: aqui no se pierde nada, solo se muestra lo vigente.
+create table if not exists public.futbol_tablero (
+  candidate_key    text primary key,
+  actualizado      timestamptz not null default now(),
+  visto_primero    timestamptz not null default now(),
+  snapshot_id      text not null,
+  slate_date       date not null,
+  competition_id   integer not null,
+  competition      text not null,
+  fixture_id       bigint not null,
+  home             text not null,
+  away             text not null,
+  kickoff          timestamptz not null,
+  canonical_market text not null,
+  selection        text not null,
+  line             numeric,
+  book             text,
+  odds_decimal     numeric,
+  odds_american    integer,
+  fair_decimal     numeric,
+  edge_pp          numeric,          -- lo que ordena el tablero
+  ev               numeric,
+  ev_lcb           numeric,
+  score            numeric,
+  score_edge       numeric,
+  score_confianza  numeric,
+  score_calidad    numeric,
+  state            text not null,
+  provisional_tier text,
+  posicion         integer not null, -- 1..3 dentro de su partido
+  en_tablero       boolean not null default true,
+  mejor_edge       numeric,          -- mejor edge visto para este pick
+  mejor_snapshot   text,             -- en que corrida se vio
+  corridas         integer not null default 1,
+  reason_codes     text[] not null default '{}',
+  min_decimal      numeric,
+  expires_at       timestamptz,
+  record           jsonb not null
+);
+create index if not exists futbol_tablero_fx    on public.futbol_tablero (fixture_id, posicion);
+create index if not exists futbol_tablero_slate on public.futbol_tablero (slate_date, en_tablero);
+
+-- RLS del tablero: lectura publica; el dueno inserta, ACTUALIZA y borra (es el
+-- unico sitio que se sobrescribe a proposito).
+do $
+declare hay_dueno boolean; cond text;
+begin
+  select exists (select 1 from pg_proc where proname = 'es_dueno') into hay_dueno;
+  cond := case when hay_dueno then 'public.es_dueno()' else 'true' end;
+  execute 'alter table public.futbol_tablero enable row level security';
+  execute 'drop policy if exists "futbol_tablero read" on public.futbol_tablero';
+  execute 'create policy "futbol_tablero read" on public.futbol_tablero for select using (true)';
+  execute 'drop policy if exists "futbol_tablero owner insert" on public.futbol_tablero';
+  execute format('create policy "futbol_tablero owner insert" on public.futbol_tablero for insert to authenticated with check (%s)', cond);
+  execute 'drop policy if exists "futbol_tablero owner update" on public.futbol_tablero';
+  execute format('create policy "futbol_tablero owner update" on public.futbol_tablero for update to authenticated using (%s) with check (%s)', cond, cond);
+  execute 'drop policy if exists "futbol_tablero owner delete" on public.futbol_tablero';
+  execute format('create policy "futbol_tablero owner delete" on public.futbol_tablero for delete to authenticated using (%s)', cond);
+end $;
+
 -- Comprobación ----------------------------------------------------------------
 select tablename, rowsecurity from pg_tables where schemaname='public' and tablename like 'futbol_%' order by 1;

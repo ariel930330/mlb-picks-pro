@@ -10,17 +10,42 @@ const ctx = {
   document: { getElementById: () => null, querySelectorAll: () => [] },
   localStorage: { getItem: () => null, setItem() {}, removeItem() {} },
   location: { search: '' }, fetch: () => Promise.reject(new Error('sin red en pruebas')),
-  Deportes: { clienteDe: () => ({ from: () => ({ select: () => ({ eq: () => ({ in: () => ({ data: [] }) }) }) }) }), registrar: m => { ctx.__registro = m; } },
+  Deportes: { clienteDe: () => ({ from: n => tabla(n) }), registrar: m => { ctx.__registro = m; } },
   sb: { auth: { onAuthStateChange() {} } }, getAfKey: () => '', isOwner: () => false, requireAuth: () => false,
   module: { exports: {} },
 };
+// Base de datos en memoria: guarda lo insertado y aplica upsert por clave.
+const DB = { filas: {}, log: [] };
+ctx.__db = DB;
+const tabla = n => { DB.filas[n] = DB.filas[n] || [];
+  const sel = { data: DB.filas[n], error: null };
+  const cons = { eq: async () => ({ data: DB.filas[n], error: null }), in: async () => ({ data: DB.filas[n], error: null }),
+                 neq: () => cons, order: () => cons, limit: async () => ({ data: DB.filas[n], error: null }), then: undefined };
+  return {
+    select: () => Object.assign(Object.create(cons), sel, cons),
+    insert: async r => { const a = Array.isArray(r) ? r : [r]; DB.filas[n].push(...a); DB.log.push({ op: 'insert', tabla: n, filas: a.length }); return { error: null }; },
+    upsert: async (r, o) => { const clave = (o && o.onConflict) || 'id';
+      for (const fila of r) { const i = DB.filas[n].findIndex(x => x[clave] === fila[clave]); if (i >= 0) DB.filas[n][i] = fila; else DB.filas[n].push(fila); }
+      DB.log.push({ op: 'upsert', tabla: n, filas: r.length, clave }); return { error: null }; },
+    update: obj => ({ in: async (col, ks) => { let nn = 0; DB.filas[n].forEach(x => { if (ks.includes(x[col])) { Object.assign(x, obj); nn++; } }); DB.log.push({ op: 'update', tabla: n, filas: nn }); return { error: null }; },
+                      eq: async () => ({ error: null }) }),
+  }; };
 ctx.window = ctx; ctx.globalThis = ctx;
 vm.createContext(ctx);
 vm.runInContext(code, ctx, { filename: 'futbol.js' });
 const F = ctx.module.exports;
 
 let ok = 0, fallos = 0;
-const t = (nombre, fn) => { try { fn(); ok++; console.log('  ✓ ' + nombre); } catch (e) { fallos++; console.log('  ✗ ' + nombre + '\n      ' + (e.message || e)); } };
+const ico = n => String.fromCharCode(32, 32, n, 32);
+const sangria = String.fromCharCode(10) + "      ";
+const bien = nombre => { ok++; console.log(ico(10003) + nombre); };
+const mal = (nombre, e) => { fallos++; console.log(ico(10007) + nombre + sangria + ((e && e.message) || e)); };
+const pendientes = [];
+const t = (nombre, fn) => {
+  if (fn.constructor.name === "AsyncFunction") { pendientes.push([nombre, fn]); return; }
+  try { fn(); bien(nombre); } catch (e) { mal(nombre, e); }
+};
+const correrPendientes = async () => { for (const [nombre, fn] of pendientes) { try { await fn(); bien(nombre); } catch (e) { mal(nombre, e); } } };
 const cerca = (a, b, tol = 1e-9, msg = '') => assert.ok(Math.abs(a - b) <= tol, `${msg} esperado ${b} ± ${tol}, obtenido ${a}`);
 
 console.log('\n1 · Conversión de cuotas');
@@ -209,6 +234,96 @@ t('precio minimo aceptable: en ese precio el EV es exactamente el umbral de SU t
 t('si el precio cae por debajo del mínimo, el EV ya no cumple (PRICE_EXPIRED en la siguiente corrida)', () => { const cs = corre(fxDe(32), cuotas1x2(precioPara(.14, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8)); const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME'); const req = F.CONFIG.tiers[{ 'Elite Signal': 'elite', 'Strong Signal': 'strong' }[h.estado] || 'lean'].ev; assert.ok(F.evDeMasa(h.masa, h.min_dec - 0.05) < req); });
 t('expira al inicio del partido y el registro lleva expires_at = kickoff', () => { const cs = corre(fxDe(33), cuotas1x2(precioPara(.14, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8)); const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME'); const r = F.registroDe(h, { snapshot_id: 'SNAP-SOC-x-000000-abcdef', analysis_time: '2026-09-06T12:05:00Z', input_hash: 'h' }); assert.equal(r.signal.expires_at, h.fx.kickoff); assert.equal(r.signal.validation_status, 'PAPER'); assert.ok(r.market.minimum_acceptable_price && r.model.settlement_mass && r.audit.versions.calibracion === 'market_prior_shrinkage_v0' && r.model.calibrated_probability != null && r.model.model_weight > 0.99); });
 
+console.log('\n9b · Tablero: 3 picks por partido y sobrescritura');
+const slateDe = (n, evs) => { const D = distDe(1.9, 0.8); let cs = [];
+  for (let k = 0; k < n; k++) { const fx = fxDe(500 + k); fx.dist = D;
+    const q = [...cuotas1x2(precioPara(evs[0], pHome), 4.4, 6.0, 6),
+      ...[1, 2, 3, 4].flatMap(b => [{ book_id: b, book: 'B' + b, mercado: 'MATCH_GOALS', sel: 'OVER', linea: 2.5, dec: 2.6 }, { book_id: b, book: 'B' + b, mercado: 'MATCH_GOALS', sel: 'UNDER', linea: 2.5, dec: 1.55 }]),
+      ...[1, 2, 3, 4].flatMap(b => [{ book_id: b, book: 'B' + b, mercado: 'BTTS', sel: 'YES', linea: null, dec: 2.4 }, { book_id: b, book: 'B' + b, mercado: 'BTTS', sel: 'NO', linea: null, dec: 1.62 }]),
+      ...[1, 2, 3, 4].flatMap(b => [{ book_id: b, book: 'B' + b, mercado: 'TEAM_GOALS_HOME', sel: 'OVER', linea: 1.5, dec: 2.1 }, { book_id: b, book: 'B' + b, mercado: 'TEAM_GOALS_HOME', sel: 'UNDER', linea: 1.5, dec: 1.78 }])];
+    const c = F.candidatosDe(fx, q, D, {}); c.forEach(x => x.fx = fx); cs = cs.concat(c); }
+  F.asignarTiers(cs, ctxFab()); return cs; };
+t('el tablero da como maximo 3 picks por partido, ordenados por edge', () => {
+  const cs = slateDe(4, [.14]); const tb = F.tableroDe(cs);
+  assert.ok(tb.size >= 1, 'partidos con tablero: ' + tb.size);
+  for (const [, p] of tb) {
+    assert.ok(p.length <= F.CONFIG.tablero.por_partido, 'picks en un partido: ' + p.length);
+    for (let i = 1; i < p.length; i++) assert.ok(p[i - 1].edge_pp >= p[i].edge_pp - 1e-9, 'orden de edge roto');
+    p.forEach((c, i) => assert.equal(c.posicion, i + 1));
+    assert.equal(new Set(p.map(c => c.tesis)).size, p.length, 'dos picks de la misma tesis');
+    assert.ok(p.every(c => c.estado !== 'No Signal' && c.edge_pp > 0));
+  }
+});
+t('el tablero descarta lo bloqueado por correlacion y lo que no tiene estado', () => {
+  const cs = slateDe(2, [.14]); const tb = F.tableroDe(cs);
+  const enTablero = new Set([...tb.values()].flat().map(c => c.key));
+  const bloqueados = cs.filter(c => (c.codes || []).includes('CORRELATION_BLOCK'));
+  assert.ok(bloqueados.length > 0, 'el fixture deberia producir correlaciones');
+  assert.ok(bloqueados.every(c => !enTablero.has(c.key)), 'un correlacionado entro al tablero');
+  assert.ok(cs.filter(c => c.estado === 'No Signal').every(c => !enTablero.has(c.key)));
+});
+t('guardar: el historico NO recibe los No Signal (S24) y el tablero se sobrescribe por clave', async () => {
+  ctx.__db.filas = {}; ctx.__db.log = [];
+  const cs = slateDe(3, [.14]); const tb = F.tableroDe(cs);
+  const snap = { snapshot_id: 'SNAP-SOC-2026-09-06-120000-aaaaaa', slate_date: '2026-09-06', analysis_time: '2026-09-06T12:00:00Z', input_hash: 'h1', versions: {}, competitions: [], counts: {}, requests_used: 1 };
+  const r1 = await F.guardarTablero(snap, tb);
+  const filas = ctx.__db.filas.futbol_tablero;
+  assert.equal(r1.nuevos, [...tb.values()].flat().length);
+  assert.equal(filas.length, r1.nuevos);
+  assert.ok(filas.every(f => f.en_tablero && f.corridas === 1 && f.mejor_edge === f.edge_pp));
+  const up = ctx.__db.log.find(l => l.op === 'upsert' && l.tabla === 'futbol_tablero');
+  assert.equal(up.clave, 'candidate_key');
+});
+t('sobrescritura: una corrida posterior con MEJOR edge reemplaza la fila y guarda el mejor visto', async () => {
+  ctx.__db.filas = {}; ctx.__db.log = [];
+  const cs = slateDe(2, [.14]); const tb = F.tableroDe(cs);
+  const snap1 = { snapshot_id: 'SNAP-1', slate_date: '2026-09-06', analysis_time: '2026-09-06T12:00:00Z', input_hash: 'h1' };
+  await F.guardarTablero(snap1, tb);
+  const antes = ctx.__db.filas.futbol_tablero.map(f => ({ k: f.candidate_key, e: f.edge_pp }));
+  // segunda corrida: el mismo pick con 2 pp mas de edge
+  [...tb.values()].flat().forEach(c => { c.edge_pp += 2; });
+  const snap2 = { snapshot_id: 'SNAP-2', slate_date: '2026-09-06', analysis_time: '2026-09-06T13:00:00Z', input_hash: 'h2' };
+  const r2 = await F.guardarTablero(snap2, tb);
+  const despues = ctx.__db.filas.futbol_tablero;
+  assert.equal(despues.length, antes.length, 'la sobrescritura no debe duplicar filas');
+  assert.equal(r2.mejorados, antes.length);
+  assert.equal(r2.nuevos, 0);
+  for (const f of despues) { const a = antes.find(x => x.k === f.candidate_key);
+    cerca(f.edge_pp, a.e + 2, 1e-9, 'edge actualizado');
+    cerca(f.mejor_edge, a.e + 2, 1e-9, 'mejor edge visto');
+    assert.equal(f.mejor_snapshot, 'SNAP-2');
+    assert.equal(f.corridas, 2);
+    assert.equal(f.snapshot_id, 'SNAP-2'); }
+});
+t('sobrescritura: si el edge EMPEORA se actualiza el precio vigente pero se recuerda el mejor', async () => {
+  ctx.__db.filas = {}; ctx.__db.log = [];
+  const cs = slateDe(2, [.14]); const tb = F.tableroDe(cs);
+  await F.guardarTablero({ snapshot_id: 'SNAP-1', slate_date: '2026-09-06' }, tb);
+  const antes = ctx.__db.filas.futbol_tablero.map(f => ({ k: f.candidate_key, e: f.edge_pp }));
+  [...tb.values()].flat().forEach(c => { c.edge_pp -= 1; });
+  const r2 = await F.guardarTablero({ snapshot_id: 'SNAP-2', slate_date: '2026-09-06' }, tb);
+  assert.equal(r2.mejorados, 0); assert.equal(r2.iguales, antes.length);
+  for (const f of ctx.__db.filas.futbol_tablero) { const a = antes.find(x => x.k === f.candidate_key);
+    cerca(f.edge_pp, a.e - 1, 1e-9, 'el vigente refleja la corrida actual, porque el precio viejo ya no existe');
+    cerca(f.mejor_edge, a.e, 1e-9, 'pero se recuerda el mejor visto');
+    assert.equal(f.mejor_snapshot, 'SNAP-1'); }
+});
+t('sobrescritura: un pick que sale del top 3 queda marcado fuera del tablero, no se borra', async () => {
+  ctx.__db.filas = {}; ctx.__db.log = [];
+  const cs = slateDe(1, [.14]); const tb = F.tableroDe(cs);
+  const fxId = [...tb.keys()][0]; const picks = tb.get(fxId);
+  assert.ok(picks.length >= 2, 'hacen falta al menos 2 picks para la prueba');
+  await F.guardarTablero({ snapshot_id: 'SNAP-1', slate_date: '2026-09-06' }, tb);
+  const total = ctx.__db.filas.futbol_tablero.length;
+  const saliente = picks[picks.length - 1].key;
+  tb.set(fxId, picks.slice(0, picks.length - 1));
+  const r2 = await F.guardarTablero({ snapshot_id: 'SNAP-2', slate_date: '2026-09-06' }, tb);
+  assert.equal(r2.fuera, 1);
+  assert.equal(ctx.__db.filas.futbol_tablero.length, total, 'no se borra ninguna fila');
+  const f = ctx.__db.filas.futbol_tablero.find(x => x.candidate_key === saliente);
+  assert.equal(f.en_tablero, false);
+  assert.ok(ctx.__db.filas.futbol_tablero.filter(x => x.en_tablero).length === total - 1);
+});
 console.log('\n10 · Punto en el tiempo, reproducibilidad y fixture dorado');
 t('el PRNG con la misma semilla reproduce la misma secuencia', () => { const a = F.prng(42), b = F.prng(42); for (let i = 0; i < 10; i++) assert.equal(a(), b()); });
 t('mismo insumo ⇒ mismo resultado (determinismo del snapshot)', () => { const q = cuotas1x2(precioPara(.07, pHome), 4.4, 6.0, 6); const j = () => JSON.stringify(corre(fxDe(40), q, distDe(1.9, 0.8)).map(c => [c.key, c.estado, c.ev, c.ev_lcb, c.scores?.composite])); assert.equal(j(), j()); assert.equal(F.hashFNV('abc'), F.hashFNV('abc')); assert.notEqual(F.hashFNV('abc'), F.hashFNV('abd')); });
@@ -217,5 +332,6 @@ t('fuerzas: un equipo que anota más recibe λ mayor y ESS crece con los partido
 t('fixture dorado: λ 1.5 / 1.1 contra una implementación independiente (Poisson y DC ρ −0.05)', () => { const f = n => n <= 1 ? 1 : n * f(n - 1); const po = (k, l) => Math.exp(-l) * l ** k / f(k); const tau = (x, y, l, m, r) => x === 0 && y === 0 ? 1 - l * m * r : x === 0 && y === 1 ? 1 + l * r : x === 1 && y === 0 ? 1 + m * r : x === 1 && y === 1 ? 1 - r : 1; let pH = 0, pD = 0, pO = 0, Z = 0; const cel = []; for (let x = 0; x <= 10; x++) for (let y = 0; y <= 10; y++) { const v = tau(x, y, 1.5, 1.1, -0.05) * po(x, 1.5) * po(y, 1.1); cel.push([x, y, v]); Z += v; } for (const [x, y, v] of cel) { const p = v / Z; if (x > y) pH += p; if (x === y) pD += p; if (x + y > 2.5) pO += p; } const G = F.rejillaDC(1.5, 1.1, -0.05); cerca(F.sumaRejilla(G, (x, y) => x > y), pH, 1e-12); cerca(F.sumaRejilla(G, (x, y) => x === y), pD, 1e-12); cerca(F.masaEstados(G, 'MATCH_GOALS', 'OVER', 2.5, null).win, pO, 1e-12); assert.ok(pH > 0.44 && pH < 0.48 && pD > 0.24 && pD < 0.27); });
 t('POD: sin ≥3 casas two-sided el resultado es la no-selección oficial con reason codes', () => { const fx = { id: 50, lineup: 'CONFIRMED', cuotas: [{ bet_id: 240, mercado: 'PLAYER_SHOTS', jugador: 'X', linea: 0.5, sel: 'OVER', book_id: 8, dec: 1.2 }] }; const p = F.evaluarPOD([fx], new Date()); assert.equal(p.status, 'No Selection'); assert.ok(p.message.startsWith('NO QUALIFYING SOCCER PROP OF THE DAY')); assert.equal(p.eliminated.OPPOSITE_PRICE_MISSING, 1); });
 
+await correrPendientes();
 console.log(`\n${ok} pruebas pasaron · ${fallos} fallaron`);
 process.exit(fallos ? 1 : 0);

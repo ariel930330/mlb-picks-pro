@@ -61,6 +61,10 @@ const CONFIG = Object.freeze({
   xg: { peso: 0.6, cobertura_min: 0.6, stats_por_corrida: 120 },   // S13
   lineups_ventana_min: 120,                                   // se piden alineaciones a ≤120 min del inicio
   correlacion: { cap_por_familia: 1 },                        // S16 (SE §1.3: una tesis por partido/lado)
+  // Tablero vigente (instrucción del dueño, 5-sep-2026): 3 picks por partido, los de
+  // MAYOR EDGE, y se sobrescriben cuando una corrida posterior encuentra algo mejor.
+  // El histórico append-only no se toca: se guarda aparte para auditoría y backtest.
+  tablero: { por_partido: 3, orden: 'edge' },
   caps: { por_tier: null, por_partido: null },                // S9
   // SE §7 — literal
   tiers: {
@@ -97,6 +101,8 @@ const CONFIG = Object.freeze({
     'S20 el pick lo deciden Edge Strength, Confianza y Data Quality (Master §6), pesos 0.4375/0.3125/0.25 y bandas 85/72/60; el percentil del slate de SE §7 se guarda pero no decide (instrucción del dueño 5-sep-2026)',
     'S21 Edge Strength = min(100, 20·edge_pp); mínimos por tier 3.5/2.5/1.5 pp',
     'S22 Confianza = media de calibración validada, incertidumbre del EV, soporte de muestra (ESS) y acuerdo entre familias (los cuatro insumos que nombra Master §6)',
+    'S23 tablero vigente de 3 picks por partido ordenados por edge, sobrescribible; el histórico sigue siendo append-only (SE §2.1 / POD §26)',
+    'S24 en futbol_senales solo se guardan los candidatos con estado (Elite/Strong/Lean/Detected); los No Signal se resumen en el conteo del snapshot',
   ],
 });
 // S1 · Competiciones del dueño (ids verificados contra /leagues el 5-sep-2026)
@@ -581,7 +587,10 @@ function asignarTiers(cands, ctxDe) {
   }
   // 4 · correlación (SE §1.3, S16): una tesis por partido; el resto se bloquea con CORRELATION_BLOCK
   const reservadas = new Map();
-  const orden = cands.filter(c => RANGO_ESTADO[c.estado] >= 2).sort((a, b) => RANGO_ESTADO[b.estado] - RANGO_ESTADO[a.estado] || b.scores.composite - a.scores.composite || b.ev - a.ev);
+  // SE §1.3: 1X2, hándicap, total de equipo y BTTS del mismo lado son UNA opinión. Se
+  // deduplica también dentro de la watchlist para que el tablero nunca enseñe tres
+  // expresiones de la misma tesis.
+  const orden = cands.filter(c => RANGO_ESTADO[c.estado] >= 1).sort((a, b) => RANGO_ESTADO[b.estado] - RANGO_ESTADO[a.estado] || b.scores.composite - a.scores.composite || b.ev - a.ev);
   for (const c of orden) { const fam = `${c.fixture_id}|${c.tesis}`; const n = reservadas.get(fam) || 0;
     if (n >= CONFIG.correlacion.cap_por_familia) { c.correlacion_con = fam; c.estado_previo_corr = c.estado; c.estado = ESTADOS.DETECTED; c.codes.push(RC.CORRELATION_BLOCK); c.detalles.push('misma tesis que una señal mejor rankeada del partido'); }
     else reservadas.set(fam, n + 1); }
@@ -592,6 +601,28 @@ function asignarTiers(cands, ctxDe) {
     c.min_dec = c.p_model > 0 && c.riesgo > 1e-9 ? +(((req / c.riesgo) + 1) / c.p_model).toFixed(3) : null;
     c.min_am = c.min_dec ? decAAm(c.min_dec) : null; }
   return cands;
+}
+
+// Los N mejores picks de cada partido, por EDGE (instrucción del dueño). Solo entran
+// candidatos con estado (No Signal queda fuera) y que no sean la repetición de una tesis
+// ya representada en ese partido.
+function tableroDe(cands) {
+  const porFx = new Map();
+  for (const c of cands) {
+    if (c.estado === ESTADOS.NONE || !c.scores) continue;
+    if ((c.codes || []).includes(RC.CORRELATION_BLOCK)) continue;
+    if (!(c.edge_pp > 0)) continue;
+    if (!porFx.has(c.fixture_id)) porFx.set(c.fixture_id, []);
+    porFx.get(c.fixture_id).push(c);
+  }
+  const out = new Map();
+  for (const [fx, L] of porFx) {
+    L.sort((a, b) => b.edge_pp - a.edge_pp || RANGO_ESTADO[b.estado] - RANGO_ESTADO[a.estado] || b.scores.composite - a.scores.composite);
+    const top = L.slice(0, CONFIG.tablero.por_partido);
+    top.forEach((c, i) => { c.posicion = i + 1; c.en_tablero = true; });
+    out.set(fx, top);
+  }
+  return out;
 }
 
 // ══ 7 · PROP OF THE DAY (POD v1.0) ════════════════════════════════════════════
@@ -620,7 +651,7 @@ function evaluarPOD(partidos, ahora) {
 const db = Deportes.clienteDe('futbol');
 const fechaSlate = d => (d || new Date()).toLocaleDateString('en-CA', { timeZone: CONFIG.zona });
 const $f = id => document.getElementById(id);
-let ESTADO = { snapshot: null, partidos: [], cands: [], pod: null, compet: [], msg: '', guardado: null };
+let ESTADO = { snapshot: null, partidos: [], cands: [], tablero: new Map(), pod: null, compet: [], msg: '', guardado: null };
 const modelos = new Map();          // competición → modelo (por corrida)
 const AUTO = { listo: false, done: false, ok: false, msg: '', guardado: false };
 
@@ -693,18 +724,19 @@ async function correrAnalisis(fecha, opciones = {}) {
   for (const fx of partidos) { const cs = candidatosDe(fx, fx.cuotas, fx.dist, {}); cs.forEach(c => { c.fx = fx; }); cands = cands.concat(cs); }
   const ctxDe = c => { const fx = c.fx; return { fx, dist: fx.dist, lineup: fx.lineup, gk_confirmed: fx.gk_confirmed, injury_feed: fx.injury_feed, bajas: fx.bajas.length, quote_age_min: fx.quote_time ? (ahora - new Date(fx.quote_time)) / 6e4 : 1e9, ventana: fx.ventana, xg_suficiente: fx.xg_suficiente, rest_known: false }; };
   asignarTiers(cands, ctxDe);
+  const tablero = tableroDe(cands);
   const pod = evaluarPOD(partidos, ahora);
   // Snapshot inmutable
   const insumo = partidos.map(p => ({ id: p.id, q: p.quote_time, n: p.cuotas.length, l: p.lineup })).concat([VERSIONES, { slate }]);
   const hash = hashFNV(JSON.stringify(insumo));
   const snapshot = { snapshot_id: `SNAP-SOC-${slate}-${ahora.toISOString().slice(11, 19).replace(/:/g, '')}-${hash.slice(0, 6)}`, slate_date: slate, analysis_time: ahora.toISOString(), versions: VERSIONES,
     competitions: compet, input_hash: hash, requests_used: AF.usados(), counts: contar(partidos, cands) };
-  ESTADO = { snapshot, partidos, cands, pod, compet, ms: Date.now() - t0, guardado: null, msg: '' };
+  ESTADO = { snapshot, partidos, cands, tablero, pod, compet, ms: Date.now() - t0, guardado: null, msg: '' };
   // Cierres: partidos a ≤15 min del inicio → última cotización válida
   ESTADO.cierres = partidos.filter(p => p.minutos <= 15 && p.minutos > -5).map(p => ({ fixture_id: p.id, minutes_to_ko: +p.minutos.toFixed(1), consensus: Object.fromEntries(cands.filter(c => c.fixture_id === p.id && c.cons).map(c => [`${c.mercado}|${c.sel}|${c.linea ?? ''}`, { p_novig: +c.p_novig.toFixed(4), best_dec: c.dec, books: c.filas }])) }));
   return ESTADO;
 }
-function contar(partidos, cands) { const c = { partidos: partidos.length, candidatos: cands.length, por_estado: {} }; for (const x of cands) c.por_estado[x.estado] = (c.por_estado[x.estado] || 0) + 1; return c; }
+function contar(partidos, cands) { const c = { partidos: partidos.length, candidatos: cands.length, por_estado: {}, en_tablero: cands.filter(x => x.en_tablero).length }; for (const x of cands) c.por_estado[x.estado] = (c.por_estado[x.estado] || 0) + 1; return c; }
 // Objeto de decisión SE §10 / §1.2 por candidato
 function registroDe(c, snap) {
   const fx = c.fx, M = MERCADOS[c.mercado];
@@ -729,10 +761,14 @@ async function guardar() {
     if (e1) throw e1;
     const cuotas = S.partidos.map(p => ({ snapshot_id: snap.snapshot_id, fixture_id: p.id, quote_time: p.quote_time || null, books: p.casas, quotes: p.cuotas.map(q => ({ book_id: q.book_id, book: q.book, bet_id: q.bet_id, etiqueta: q.etiqueta, valor: q.valor, mercado: q.mercado, sel: q.sel, linea: q.linea, dec: q.dec, am: q.am })) }));
     for (let i = 0; i < cuotas.length; i += 50) { const { error } = await db.from('futbol_cuotas').insert(cuotas.slice(i, i + 50)); if (error) throw error; }
-    const filas = S.cands.map(c => { const rf = registroDe(c, snap); const r = c.estado === ESTADOS.NONE ? { identity: rf.identity, market: rf.market, signal: rf.signal, compact: true } : rf; return { snapshot_id: snap.snapshot_id, signal_id: r.identity.signal_id, candidate_key: c.key, slate_date: snap.slate_date, competition_id: c.fx.comp.id, competition: c.fx.comp.nombre, fixture_id: c.fixture_id, home: c.fx.home, away: c.fx.away, kickoff: c.fx.kickoff,
+    // S24: al histórico solo van los candidatos con estado. Los No Signal (EV ≤ 0 o
+    // puerta universal fallida) se resumen en el conteo del snapshot: son miles por corrida
+    // y nunca pueden ser un pick.
+    const filas = S.cands.filter(c => c.estado !== ESTADOS.NONE).map(c => { const r = registroDe(c, snap); return { snapshot_id: snap.snapshot_id, signal_id: r.identity.signal_id, candidate_key: c.key, slate_date: snap.slate_date, competition_id: c.fx.comp.id, competition: c.fx.comp.nombre, fixture_id: c.fixture_id, home: c.fx.home, away: c.fx.away, kickoff: c.fx.kickoff,
       canonical_market: c.mercado, selection: c.sel, line: c.linea, book: c.book || null, odds_decimal: c.dec || null, odds_american: c.am || null, fair_decimal: c.fair_dec || null, p_model: c.p_model ?? null, p_novig: c.p_novig ?? null, edge_pp: c.edge_pp ?? null, ev: c.ev ?? null, ev_lcb: c.ev_lcb ?? null,
       composite: c.scores?.composite ?? null, percentile: c.percentil ?? null, data_quality: c.dq?.dq ?? null, state: c.estado, provisional_tier: c.provisional || null, reason_codes: c.codes || [], min_decimal: c.min_dec || null, expires_at: c.fx.kickoff, validation: 'PAPER', record: r }; });
     for (let i = 0; i < filas.length; i += 100) { const { error } = await db.from('futbol_senales').insert(filas.slice(i, i + 100)); if (error) throw error; }
+    const tb = await guardarTablero(snap, S.tablero);
     const { error: e3 } = await db.from('futbol_pod').insert({ snapshot_id: snap.snapshot_id, slate_date: snap.slate_date, status: S.pod.status, message: S.pod.message, candidates: S.pod.candidates, eliminated: S.pod.eliminated, record: null }); if (e3) throw e3;
     if (S.cierres.length) { const { error } = await db.from('futbol_cierres').insert(S.cierres.map(c => ({ ...c, snapshot_id: snap.snapshot_id }))); if (error) throw error; }
     // Auditoría: transiciones frente al último estado conocido de cada candidato
@@ -740,9 +776,41 @@ async function guardar() {
     const trans = S.cands.filter(c => prev.has(c.key) && prev.get(c.key) !== c.estado).map(c => ({ snapshot_id: snap.snapshot_id, candidate_key: c.key, process: 'analysis', prev_state: prev.get(c.key), new_state: c.estado, reason_codes: c.codes || [], detail: { ev: c.ev, dec: c.dec, downgrade: c.downgrade || [] } }));
     if (trans.length) { const { error } = await db.from('futbol_auditoria').insert(trans); if (error) throw error; }
     S.transiciones = trans;
-    return { ok: true, msg: `guardado ${snap.snapshot_id}: ${filas.length} registros, ${cuotas.length} partidos, ${trans.length} transiciones` };
+    return { ok: true, msg: `guardado ${snap.snapshot_id}: ${filas.length} señales al histórico · tablero ${tb.nuevos} nuevo(s), ${tb.mejorados} mejorado(s), ${tb.iguales} sin cambio, ${tb.fuera} fuera · ${cuotas.length} partidos · ${trans.length} transiciones` };
   } catch (e) { const falta = /futbol_|schema cache|does not exist|relation/i.test(e.message || ''); return { ok: false, msg: (falta ? 'Faltan las tablas: corre futbol-setup.sql en Supabase. ' : '') + (e.message || String(e)) }; }
 }
+// Tablero vigente: se SOBRESCRIBE cuando una corrida posterior trae un pick mejor para el
+// mismo partido. La fila guarda además el mejor edge visto y en qué snapshot, de modo que
+// se puede auditar la mejora sin perder el histórico (que sigue siendo append-only).
+async function guardarTablero(snap, tablero) {
+  const res = { nuevos: 0, mejorados: 0, iguales: 0, fuera: 0 };
+  const picks = [...tablero.values()].flat(); if (!picks.length) return res;
+  const ahora = new Date().toISOString();
+  let previas = [];
+  try { const { data } = await db.from('futbol_tablero').select('candidate_key,fixture_id,visto_primero,corridas,mejor_edge,mejor_snapshot,edge_pp').eq('slate_date', snap.slate_date); previas = data || []; }
+  catch (e) { console.warn('tablero previo:', e.message); }
+  const antes = new Map(previas.map(r => [r.candidate_key, r]));
+  const filas = picks.map(c => { const p = antes.get(c.key), r = registroDe(c, snap);
+    if (!p) res.nuevos++; else if (c.edge_pp > (p.edge_pp ?? -99) + 1e-9) res.mejorados++; else res.iguales++;
+    const mejor = Math.max(c.edge_pp, p?.mejor_edge ?? -Infinity);
+    return { candidate_key: c.key, actualizado: ahora, visto_primero: p?.visto_primero || ahora, snapshot_id: snap.snapshot_id,
+      slate_date: snap.slate_date, competition_id: c.fx.comp.id, competition: c.fx.comp.nombre, fixture_id: c.fixture_id,
+      home: c.fx.home, away: c.fx.away, kickoff: c.fx.kickoff, canonical_market: c.mercado, selection: c.sel, line: c.linea,
+      book: c.book || null, odds_decimal: c.dec || null, odds_american: c.am || null, fair_decimal: c.fair_dec || null,
+      edge_pp: c.edge_pp ?? null, ev: c.ev ?? null, ev_lcb: c.ev_lcb ?? null, score: c.scores?.composite ?? null,
+      score_edge: c.scores?.cinco.edge_strength ?? null, score_confianza: c.scores?.cinco.confidence ?? null, score_calidad: c.dq?.dq ?? null,
+      state: c.estado, provisional_tier: c.provisional || null, posicion: c.posicion, en_tablero: true,
+      mejor_edge: mejor, mejor_snapshot: (p && (p.mejor_edge ?? -Infinity) > c.edge_pp) ? p.mejor_snapshot : snap.snapshot_id,
+      corridas: (p?.corridas || 0) + 1, reason_codes: c.codes || [], min_decimal: c.min_dec || null, expires_at: c.fx.kickoff, record: r }; });
+  const { error } = await db.from('futbol_tablero').upsert(filas, { onConflict: 'candidate_key' });
+  if (error) throw error;
+  // Candidatos que estaban en el tablero de estos partidos y ya no están entre los mejores.
+  const vigentes = new Set(picks.map(c => c.key));
+  const fuera = previas.filter(r => tablero.has(r.fixture_id) && !vigentes.has(r.candidate_key)).map(r => r.candidate_key);
+  if (fuera.length) { const { error: e2 } = await db.from('futbol_tablero').update({ en_tablero: false, actualizado: ahora }).in('candidate_key', fuera); if (!e2) res.fuera = fuera.length; }
+  return res;
+}
+
 // Calificación (SE §9 "signal outcomes" + CLV) sobre señales publicadas de días cerrados
 async function calificar() {
   if (!(typeof requireAuth === 'function' && requireAuth())) return;
@@ -796,7 +864,6 @@ const HTML = String.raw`
   </div>
   <div class="sc-tabs">
     <button class="sc-tab active" data-ac="verPestana('tablero')">Tablero</button>
-    <button class="sc-tab" data-ac="verPestana('partidos')">Partidos</button>
     <button class="sc-tab" data-ac="verPestana('pod')">Prop of the Day</button>
     <button class="sc-tab" data-ac="verPestana('historial')">Historial</button>
     <button class="sc-tab" data-ac="verPestana('auditoria')">Auditoría</button>
@@ -811,7 +878,7 @@ function pintar() {
   const area = $f('sc-area'); if (!area) return;
   const msg = $f('sc-msg'); if (msg) { msg.hidden = !ESTADO.msg; msg.innerHTML = esc(ESTADO.msg); }
   document.querySelectorAll('#dep-futbol .sc-tab').forEach(b => b.classList.toggle('active', (b.dataset.ac || '').includes(`'${pestana}'`)));
-  area.innerHTML = pestana === 'tablero' ? htmlTablero() : pestana === 'partidos' ? htmlPartidos() : pestana === 'pod' ? htmlPOD() : pestana === 'historial' ? htmlHistorial() : pestana === 'auditoria' ? htmlAuditoria() : htmlConfig();
+  area.innerHTML = pestana === 'tablero' ? htmlTablero() : pestana === 'pod' ? htmlPOD() : pestana === 'historial' ? htmlHistorial() : pestana === 'auditoria' ? htmlAuditoria() : htmlConfig();
 }
 function htmlResumen() {
   const S = ESTADO; if (!S.snapshot) return '';
@@ -819,7 +886,7 @@ function htmlResumen() {
   return `<div class="sc-kpis">
     <div class="sc-kpi"><span>Snapshot</span><b class="mono">${esc(S.snapshot.snapshot_id)}</b><small>${esc(S.snapshot.analysis_time.slice(11, 19))} UTC · ${S.snapshot.requests_used} llamadas · ${(S.ms / 1000).toFixed(1)} s</small></div>
     <div class="sc-kpi"><span>Partidos</span><b>${S.partidos.length}</b><small>${S.compet.filter(c => c.con_cuotas).length} competiciones con cuotas</small></div>
-    <div class="sc-kpi"><span>Candidatos</span><b>${S.cands.length}</b><small>${k(ESTADOS.DETECTED)} en watchlist · ${k(ESTADOS.NONE)} sin señal</small></div>
+    <div class="sc-kpi"><span>Picks en tablero</span><b>${[...S.tablero.values()].reduce((n, p) => n + p.length, 0)}</b><small>hasta ${CONFIG.tablero.por_partido} por partido, por edge · ${S.cands.length} evaluadas</small></div>
     <div class="sc-kpi elite"><span>Elite</span><b>${k(ESTADOS.ELITE)}</b><small>EV ≥4.5% · LCB ≥1% · DQ ≥95</small></div>
     <div class="sc-kpi strong"><span>Strong</span><b>${k(ESTADOS.STRONG)}</b><small>EV ≥3% · LCB ≥0 · DQ ≥90</small></div>
     <div class="sc-kpi lean"><span>Lean</span><b>${k(ESTADOS.LEAN)}</b><small>EV ≥1.5% · DQ ≥80</small></div>
@@ -840,6 +907,8 @@ function barras(c) {
     <div class="sc-tot"><span>Score</span><b>${c.scores.composite.toFixed(1)}</b><small>Elite ≥${B.elite} · Strong ≥${B.strong} · Lean ≥${B.lean}<br>no es una probabilidad de ganar</small></div>
   </div>`;
 }
+// Ficha completa de un pick (Master §8): matchup, mercado, línea, cuota, tier,
+// proyección, evidencia, riesgos y timestamp. Va dentro del modal del partido.
 function tarjeta(c, provisional) {
   const fx = c.fx, e = provisional ? c.provisional : c.estado, cl = claseTier(e), r = c.scores || {};
   const evidencia = [
@@ -857,10 +926,10 @@ function tarjeta(c, provisional) {
     c.outliers_excluidos ? `${c.outliers_excluidos} cotización(es) fuera de consenso ignorada(s)` : null,
     `Sin calibración validada: la confianza queda limitada (${CONFIG.score.calibracionSinValidar}/100 en ese cuarto) y la salida es PAPER (SE §9.1)`,
   ].filter(Boolean);
-  return `<div class="sc-card ${cl}" data-ac="abrirPartido(${fx.id})">
-    <div class="sc-card-hd"><span class="sc-tier ${cl}">${etiquetaEstado(e)}${provisional ? ' · PROVISIONAL' : ''}</span><span class="sc-comp">${esc(fx.comp.nombre)}</span></div>
+  return `<div class="sc-ficha ${cl}">
+    <div class="sc-card-hd"><span class="sc-tier ${cl}">${c.posicion ? '#' + c.posicion + ' · ' : ''}${etiquetaEstado(e)}${provisional ? ' · PROVISIONAL' : ''}</span><span class="sc-comp">${esc(fx.comp.nombre)}</span></div>
     <div class="sc-card-sel">${esc(selTxt(c))}<span class="sc-mkt">${esc(c.nombre)}${c.linea != null && c.mercado !== 'ASIAN_HANDICAP' ? ' ' + c.linea : ''}</span></div>
-    <div class="sc-card-mu">${esc(fx.home)} <i>vs</i> ${esc(fx.away)} · ${horaLocal(fx.kickoff)} · ${fx.ventana}</div>
+    <div class="sc-card-mu">${esc(fx.home)} <i>vs</i> ${esc(fx.away)} · ${horaLocal(fx.kickoff)} · ventana ${fx.ventana}</div>
     <div class="sc-card-grid">
       <div><span>Cuota</span><b>${amTxt(c.am)}</b><small>${c.dec} · ${esc(c.book || '')}</small></div>
       <div><span>Cuota justa</span><b>${c.fair_dec ? amTxt(decAAm(c.fair_dec)) : '—'}</b><small>${c.fair_dec ? c.fair_dec.toFixed(2) : '—'} del modelo</small></div>
@@ -877,30 +946,43 @@ function tarjeta(c, provisional) {
 }
 function htmlTablero() {
   const S = ESTADO; if (!S.snapshot) return '<div class="sc-empty">Sin corrida todavía.</div>';
-  const de = e => S.cands.filter(c => c.estado === e).sort((a, b) => b.scores.composite - a.scores.composite);
-  const secciones = [[ESTADOS.ELITE, 'ELITE SIGNAL', 'Primera prioridad de asignación. Raro por diseño.'], [ESTADOS.STRONG, 'STRONG SIGNAL', 'Modelos de acuerdo, EV inferior ≥ 0, precio y XI estables.'], [ESTADOS.LEAN, 'LEAN SIGNAL', 'Elegible, prioridad más baja.']]
-    .map(([e, t, d]) => { const L = de(e); return `<section class="sc-sec ${claseTier(e)}"><header><h3>${t} <span>${L.length}</span></h3><p>${d}</p></header>${L.length ? `<div class="sc-cards">${L.map(c => tarjeta(c)).join('')}</div>` : `<div class="sc-none">Ninguna selección alcanzó ${t}. No se fuerza una señal.</div>`}</section>`; }).join('');
-  const prov = S.cands.filter(c => c.estado === ESTADOS.DETECTED && c.provisional).sort((a, b) => RANGO_ESTADO[b.provisional] - RANGO_ESTADO[a.provisional] || b.scores.composite - a.scores.composite);
-  const watch = S.cands.filter(c => c.estado === ESTADOS.DETECTED && !c.provisional).sort((a, b) => (b.scores?.composite || 0) - (a.scores?.composite || 0)).slice(0, 40);
-  return htmlResumen() + secciones + `
-  <section class="sc-sec detected"><header><h3>WATCHLIST · SIGNAL DETECTED <span>${prov.length + watch.length}</span></h3><p>Edge detectado pero no calificado: falta XI oficial, EV/percentil/DQ insuficientes, o correlación con una señal mejor. Sin asignación automática (SE §7).</p></header>
-    ${prov.length ? `<h4>Calificarían con XI confirmado (tier provisional)</h4><div class="sc-cards">${prov.slice(0, 12).map(c => tarjeta(c, true)).join('')}</div>` : ''}
-    ${watch.length ? `<table class="sc-table"><thead><tr><th>Partido</th><th>Selección</th><th>Cuota</th><th>Edge</th><th>Conf</th><th>Calidad</th><th>Score</th><th>EV</th><th>Motivo</th></tr></thead><tbody>${watch.map(c => `<tr data-ac="abrirPartido(${c.fx.id})"><td>${esc(c.fx.home)} v ${esc(c.fx.away)}<small>${esc(c.fx.comp.nombre)}</small></td><td><b>${esc(selTxt(c))}</b> <small>${esc(c.nombre)}</small></td><td>${amTxt(c.am)}</td><td class="${c.edge_pp > 0 ? 'pos' : ''}">${ppTxt(c.edge_pp)}<small>${c.scores ? Math.round(c.scores.cinco.edge_strength) + '/100' : ''}</small></td><td>${c.scores ? Math.round(c.scores.cinco.confidence) : '—'}</td><td>${c.dq?.dq ?? '—'}</td><td><b>${c.scores ? c.scores.composite.toFixed(1) : '—'}</b></td><td class="${c.ev > 0 ? 'pos' : ''}">${pct1(c.ev)}<small>LCB ${pct1(c.ev_lcb)}</small></td><td><small>${esc((c.downgrade || []).slice(-1)[0] || c.codes.join(', '))}</small></td></tr>`).join('')}</tbody></table>` : ''}
-  </section>`;
-}
-function htmlPartidos() {
-  const S = ESTADO; if (!S.snapshot) return '<div class="sc-empty">Sin corrida todavía.</div>';
   const comps = S.compet.filter(c => c.partidos || c.error);
-  const chips = `<div class="sc-chips">${comps.map(c => `<button class="sc-chip ${filtroComp === c.id ? 'on' : ''} ${c.sin_cuotas || c.error ? 'off' : ''}" data-ac="filtrarComp(${c.id})" title="${esc(c.error || (c.sin_cuotas ? 'sin cuotas en el proveedor' : ''))}">${esc(c.nombre)} <b>${c.con_cuotas || 0}</b>${c.sin_cuotas ? ' · sin cuotas' : ''}${c.error ? ' · error' : ''}</button>`).join('')}</div>`;
-  const lista = S.partidos.filter(p => !filtroComp || p.comp.id === filtroComp).sort((a, b) => +new Date(a.kickoff) - +new Date(b.kickoff));
-  const mejor = fx => S.cands.filter(c => c.fixture_id === fx.id && c.ev != null).sort((a, b) => RANGO_ESTADO[b.estado] - RANGO_ESTADO[a.estado] || (b.scores?.composite || 0) - (a.scores?.composite || 0))[0];
-  return htmlResumen() + chips + `<div class="sc-fixtures">${lista.map(fx => { const m = mejor(fx); const e = m ? m.estado : ESTADOS.NONE;
-    return `<div class="sc-fx ${claseTier(m?.provisional && e === ESTADOS.DETECTED ? m.provisional : e)}" data-ac="abrirPartido(${fx.id})">
-      <div class="sc-fx-top"><span>${esc(fx.comp.nombre)}</span><span>${horaLocal(fx.kickoff)}</span></div>
-      <div class="sc-fx-teams">${esc(fx.home)}<i>vs</i>${esc(fx.away)}</div>
-      <div class="sc-fx-meta">${fx.dist ? `λ ${fx.dist.LA.lh.toFixed(2)} – ${fx.dist.LA.la.toFixed(2)}` : 'sin modelo'} · ${fx.casas} casas · ${fx.lineup === 'CONFIRMED' ? '✓ XI' : 'XI pendiente'} · ${fx.ventana}${fx.bajas.length ? ` · 🩹 ${fx.bajas.length}` : ''}</div>
-      ${m ? `<div class="sc-fx-best"><span class="sc-tier ${claseTier(e)}">${etiquetaEstado(e)}${m.provisional && e === ESTADOS.DETECTED ? ' → ' + etiquetaEstado(m.provisional) : ''}</span> <b>${esc(selTxt(m))}</b> <small>${esc(m.nombre)} · ${amTxt(m.am)} · EV ${pct1(m.ev)}</small></div>` : '<div class="sc-fx-best"><small>sin candidato con EV</small></div>'}
-    </div>`; }).join('')}</div>`;
+  const chips = `<div class="sc-chips">${filtroComp ? '<button class="sc-chip on" data-ac="filtrarComp(0)">✕ ver todas</button>' : ''}${comps.map(c => `<button class="sc-chip ${filtroComp === c.id ? 'on' : ''} ${c.sin_cuotas || c.error ? 'off' : ''}" data-ac="filtrarComp(${c.id})" title="${esc(c.error || (c.sin_cuotas ? 'el proveedor no publica cuotas de esta competición' : ''))}">${esc(c.nombre)} <b>${c.con_cuotas || 0}</b>${c.sin_cuotas ? ' · sin cuotas' : ''}${c.error ? ' · error' : ''}</button>`).join('')}</div>`;
+  // Agrupar por competición; dentro, los partidos ordenados por el mejor tier y edge.
+  const porLiga = new Map();
+  for (const fx of S.partidos) { if (filtroComp && fx.comp.id !== filtroComp) continue;
+    if (!porLiga.has(fx.comp.id)) porLiga.set(fx.comp.id, { comp: fx.comp, partidos: [] });
+    porLiga.get(fx.comp.id).partidos.push(fx); }
+  const rango = fx => { const p = S.tablero.get(fx.id) || []; return p.length ? Math.max(...p.map(c => RANGO_ESTADO[c.provisional || c.estado])) : -1; };
+  const mejorEdge = fx => { const p = S.tablero.get(fx.id) || []; return p.length ? p[0].edge_pp : -99; };
+  const ligas = [...porLiga.values()].map(L => { L.partidos.sort((a, b) => rango(b) - rango(a) || mejorEdge(b) - mejorEdge(a) || +new Date(a.kickoff) - +new Date(b.kickoff));
+    L.picks = L.partidos.reduce((n, fx) => n + (S.tablero.get(fx.id) || []).length, 0);
+    L.tope = Math.max(-1, ...L.partidos.map(rango)); return L; })
+    .sort((a, b) => b.tope - a.tope || b.picks - a.picks || a.comp.nombre.localeCompare(b.comp.nombre));
+  if (!ligas.length) return htmlResumen() + chips + '<div class="sc-empty">Ninguna competición coincide con el filtro.</div>';
+  const bloques = ligas.map(L => `<section class="sc-liga">
+      <header><h3>${esc(L.comp.nombre)}</h3><span>${L.partidos.length} partido${L.partidos.length === 1 ? '' : 's'} · ${L.picks} pick${L.picks === 1 ? '' : 's'}</span></header>
+      <div class="sc-grid">${L.partidos.map(tarjetaPartido).join('')}</div>
+    </section>`).join('');
+  return htmlResumen() + chips + bloques;
+}
+// Tarjeta de un partido con sus ${CONFIG.tablero.por_partido} mejores picks por edge.
+function tarjetaPartido(fx) {
+  const picks = ESTADO.tablero.get(fx.id) || [];
+  const top = picks[0], nivel = top ? (top.provisional || top.estado) : ESTADOS.NONE;
+  const nCand = ESTADO.cands.filter(c => c.fixture_id === fx.id).length;
+  const fila = (c, i) => { const e = c.provisional || c.estado, f = c.scores.cinco;
+    return `<div class="sc-pick ${claseTier(e)}">
+      <div class="sc-pick-a"><span class="sc-pos">${i + 1}</span><b>${esc(selTxt(c))}</b><span class="sc-tier ${claseTier(e)}">${etiquetaEstado(e)}${c.provisional && c.estado === ESTADOS.DETECTED ? ' · PROV' : ''}</span></div>
+      <div class="sc-pick-b"><span>${esc(c.nombre)}</span><span class="sc-am">${amTxt(c.am)}</span><span class="sc-eg">edge <b>${c.edge_pp.toFixed(2)}</b> pp</span><span>EV <b class="${c.ev > 0 ? 'pos' : ''}">${pct1(c.ev)}</b></span><span>score <b>${c.scores.composite.toFixed(0)}</b></span></div>
+    </div>`; };
+  return `<div class="sc-card ${claseTier(nivel)}" data-ac="abrirPartido(${fx.id})">
+    <div class="sc-card-hd"><span class="sc-comp">${horaLocal(fx.kickoff)}</span><span class="sc-vent">${esc(fx.ventana)}</span></div>
+    <div class="sc-teams">${esc(fx.home)}<i>vs</i>${esc(fx.away)}</div>
+    <div class="sc-meta">${fx.dist ? `λ ${fx.dist.LA.lh.toFixed(2)} – ${fx.dist.LA.la.toFixed(2)}` : 'sin modelo'} · ${fx.casas} casas · ${fx.lineup === 'CONFIRMED' ? '✓ XI oficial' : 'XI pendiente'}${fx.bajas.length ? ` · 🩹 ${fx.bajas.length}` : ''}</div>
+    ${picks.length ? `<div class="sc-picks">${picks.map(fila).join('')}</div>` : '<div class="sc-sinpick">Sin pick: ninguna selección con edge positivo superó las puertas.</div>'}
+    <div class="sc-card-ft"><span>${nCand} selección(es) evaluadas</span><span>ver todas →</span></div>
+  </div>`;
 }
 function htmlPOD() {
   const P = ESTADO.pod; if (!P) return '<div class="sc-empty">Sin corrida todavía.</div>';
@@ -976,6 +1058,7 @@ function htmlModal(fx) {
       <div><span>Alineaciones</span><b>${fx.lineup === 'CONFIRMED' ? '✓ XI oficial' : 'sin confirmar'}</b><small>${fx.formacion ? fx.formacion.join(' vs ') : (fx.lineup_error ? esc(fx.lineup_error) : 'se piden a ≤' + CONFIG.lineups_ventana_min + ' min del inicio')}${fx.gk_confirmed ? ' · porteros confirmados' : ''}</small></div>
       <div><span>Bajas reportadas</span><b>${fx.bajas.length}</b><small>${fx.bajas.slice(0, 6).map(b => esc(b.player) + (b.reason ? ' (' + esc(b.reason) + ')' : '')).join(', ') || (fx.injury_feed ? 'ninguna' : 'feed no disponible')}</small></div>
     </div>
+    ${(ESTADO.tablero.get(fx.id) || []).length ? `<div class="sc-fichas"><div class="sc-fichas-h">Los ${(ESTADO.tablero.get(fx.id) || []).length} mejores de este partido, por edge</div>${(ESTADO.tablero.get(fx.id) || []).map(c => tarjeta(c, c.estado === ESTADOS.DETECTED && !!c.provisional)).join('')}</div>` : ''}
     <table class="sc-table wide"><thead><tr><th>Selección</th><th>Cuota</th><th>Consenso</th><th>Modelo</th><th>Edge</th><th>Conf</th><th>Calidad</th><th>Score</th><th>EV</th><th>Estado</th><th>Códigos / motivos</th></tr></thead><tbody>${cs.map(fila).join('')}</tbody></table>
     <p class="sc-note">Mercados de Fase 2 presentes en el snapshot pero no evaluados: ${[...new Set(fx.cuotas.filter(q => q.fase === 2).map(q => MERCADOS[q.mercado]?.nombre))].join(', ') || 'ninguno'}. Props de jugador registrados: ${fx.cuotas.filter(q => CONFIG.pod.mercados[q.bet_id]).length}.</p>
   </div></div>`;
@@ -1015,11 +1098,11 @@ function autoArranca() {
 Deportes.registrar({
   id: 'futbol', nombre: 'SOCCER', icono: '⚽', titulo: 'SOCCER · HAXIOM EDGE', sub: 'Signal Engine v1.1 · Prop of the Day v1.0 · API-Football · Supabase',
   css: 'deportes/futbol.css', html: HTML,
-  tablas: ['futbol_snapshots', 'futbol_cuotas', 'futbol_senales', 'futbol_pod', 'futbol_partidos', 'futbol_cierres', 'futbol_resultados', 'futbol_auditoria'],
+  tablas: ['futbol_snapshots', 'futbol_cuotas', 'futbol_senales', 'futbol_tablero', 'futbol_pod', 'futbol_partidos', 'futbol_cierres', 'futbol_resultados', 'futbol_auditoria'],
   auto: AUTO, iniciar,
   manejadores: { analizar, calificar, verPestana, cambiarFecha, abrirPartido, cerrarPartido, nada, filtrarComp },
 });
 
 // Solo para las pruebas automatizadas (Node/vm): en el navegador `module` no existe y nada sale de aquí.
-if (typeof module !== 'undefined' && module.exports) module.exports = { VERSIONES, CONFIG, COMPETICIONES, MERCADOS, RC, ESTADOS, decAAm, amADec, NOVIG, noVigCasa, consenso, rejillaDC, rejillaBiv, mezclaRejillas, sumaRejilla, unidad, unidadSel, masaEstados, evDeMasa, pJusta, enRiesgo, pCobertura, Fuerzas, ajustar, construirModelo, distribucionesPartido, normalizarCuotas, setsPorCasa, candidatosDe, asignarTiers, dqDe, scoresDe, evaluarPOD, tesisDe, registroDe, hashFNV, prng, correrAnalisis, _estado: () => ESTADO, _modelos: modelos };
+if (typeof module !== 'undefined' && module.exports) module.exports = { VERSIONES, CONFIG, COMPETICIONES, MERCADOS, RC, ESTADOS, decAAm, amADec, NOVIG, noVigCasa, consenso, rejillaDC, rejillaBiv, mezclaRejillas, sumaRejilla, unidad, unidadSel, masaEstados, evDeMasa, pJusta, enRiesgo, pCobertura, Fuerzas, ajustar, construirModelo, distribucionesPartido, normalizarCuotas, setsPorCasa, candidatosDe, asignarTiers, dqDe, scoresDe, evaluarPOD, tableroDe, tesisDe, registroDe, guardar, guardarTablero, hashFNV, prng, correrAnalisis, _estado: () => ESTADO, _modelos: modelos };
 })();

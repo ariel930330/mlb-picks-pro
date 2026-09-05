@@ -70,6 +70,12 @@
 #dep-futbol .sc-tot{background:var(--bg4);justify-content:center}
 #dep-futbol .sc-tot b{font-size:20px;font-variant-numeric:tabular-nums;line-height:1}
 @media(max-width:640px){#dep-futbol .sc-scores{grid-template-columns:repeat(2,1fr)}}
+/* Ficha completa del pick, dentro del modal */
+#dep-futbol .sc-fichas{padding:0 18px 6px;display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:10px}
+#dep-futbol .sc-fichas-h{grid-column:1/-1;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);margin:6px 0 2px}
+#dep-futbol .sc-ficha{background:var(--sc-card);border:1px solid var(--border);border-radius:14px;padding:12px 14px;position:relative;overflow:hidden}
+#dep-futbol .sc-ficha::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--sc-none)}
+#dep-futbol .sc-ficha.elite::before{background:var(--sc-elite)}#dep-futbol .sc-ficha.strong::before{background:var(--sc-strong)}#dep-futbol .sc-ficha.lean::before{background:var(--sc-lean)}#dep-futbol .sc-ficha.detected::before{background:var(--sc-det)}
 /* Tablas */
 #dep-futbol .sc-table{width:100%;border-collapse:collapse;font-size:11px}
 #dep-futbol .sc-table th{text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:6px 8px;border-bottom:1px solid var(--border)}
@@ -79,6 +85,27 @@
 #dep-futbol .sc-table.kv th{width:160px}
 #dep-futbol .sc-table.wide{min-width:820px}
 #dep-futbol .sc-table tr.elite td:first-child{box-shadow:inset 3px 0 var(--sc-elite)}#dep-futbol .sc-table tr.strong td:first-child{box-shadow:inset 3px 0 var(--sc-strong)}#dep-futbol .sc-table tr.lean td:first-child{box-shadow:inset 3px 0 var(--sc-lean)}
+/* Liga → tarjeta de partido → picks */
+#dep-futbol .sc-liga{margin:16px 0}
+#dep-futbol .sc-liga>header{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border)}
+#dep-futbol .sc-liga h3{font-size:12px;font-weight:900;letter-spacing:.9px;margin:0;background:linear-gradient(90deg,var(--purple),var(--green));-webkit-background-clip:text;background-clip:text;color:transparent}
+#dep-futbol .sc-liga>header span{font-size:10px;color:var(--text3);font-weight:700}
+#dep-futbol .sc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px}
+#dep-futbol .sc-vent{font-size:9px;font-weight:800;color:var(--text3);letter-spacing:.4px}
+#dep-futbol .sc-teams{font-size:16px;font-weight:900;line-height:1.25;margin:2px 0 5px}
+#dep-futbol .sc-teams i{font-style:normal;color:var(--text3);font-size:10px;font-weight:700;margin:0 7px}
+#dep-futbol .sc-meta{font-size:10px;color:var(--text3);margin-bottom:9px}
+#dep-futbol .sc-picks{display:flex;flex-direction:column;gap:5px}
+#dep-futbol .sc-pick{background:var(--bg3);border-radius:9px;padding:7px 9px;border-left:3px solid var(--sc-none)}
+#dep-futbol .sc-pick.elite{border-left-color:var(--sc-elite)}#dep-futbol .sc-pick.strong{border-left-color:var(--sc-strong)}#dep-futbol .sc-pick.lean{border-left-color:var(--sc-lean)}#dep-futbol .sc-pick.detected{border-left-color:var(--sc-det)}
+#dep-futbol .sc-pick-a{display:flex;align-items:center;gap:6px;min-width:0}
+#dep-futbol .sc-pick-a b{font-size:13px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+#dep-futbol .sc-pos{font-size:9px;font-weight:900;color:var(--text3);background:var(--bg4);border-radius:5px;padding:1px 5px;flex-shrink:0}
+#dep-futbol .sc-pick-b{display:flex;flex-wrap:wrap;gap:4px 10px;font-size:10px;color:var(--text3);margin-top:3px;font-variant-numeric:tabular-nums}
+#dep-futbol .sc-pick-b b{color:var(--text);font-weight:800}
+#dep-futbol .sc-am{color:var(--text);font-weight:800}
+#dep-futbol .sc-eg b{color:var(--ptx)}
+#dep-futbol .sc-sinpick{font-size:11px;color:var(--text3);padding:10px;text-align:center;border:1px dashed var(--border);border-radius:9px}
 /* Partidos */
 #dep-futbol .sc-chips{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0 12px}
 #dep-futbol .sc-chip{background:var(--bg3);border:1px solid var(--border);color:var(--text2);border-radius:99px;padding:5px 11px;font-size:10px;font-weight:700;cursor:pointer;font-family:inherit}

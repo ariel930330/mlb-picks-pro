@@ -944,6 +944,12 @@ function tarjeta(c, provisional) {
     <div class="sc-card-ft"><span class="mono">${c.codes.map(esc).join(' · ')}</span><span>${esc(ESTADO.snapshot.analysis_time.slice(0, 16).replace('T', ' '))} UTC</span></div>
   </div>`;
 }
+// Leyenda de colores: el nivel de cada señal se lee por color, no solo por texto.
+function leyenda() {
+  const n = e => ESTADO.cands.filter(c => (c.provisional || c.estado) === e && c.en_tablero).length;
+  const items = [[ESTADOS.ELITE, 'Elite'], [ESTADOS.STRONG, 'Strong'], [ESTADOS.LEAN, 'Lean'], [ESTADOS.DETECTED, 'Detected']];
+  return `<div class="sc-leyenda"><span>Nivel de la señal:</span>${items.map(([e, txt]) => `<i class="${claseTier(e)}"><u></u>${txt} <b>${n(e)}</b></i>`).join('')}<span>· el color del partido es el de su mejor pick</span></div>`;
+}
 function htmlTablero() {
   const S = ESTADO; if (!S.snapshot) return '<div class="sc-empty">Sin corrida todavía.</div>';
   const comps = S.compet.filter(c => c.partidos || c.error);
@@ -960,16 +966,21 @@ function htmlTablero() {
     L.tope = Math.max(-1, ...L.partidos.map(rango)); return L; })
     .sort((a, b) => b.tope - a.tope || b.picks - a.picks || a.comp.nombre.localeCompare(b.comp.nombre));
   if (!ligas.length) return htmlResumen() + chips + '<div class="sc-empty">Ninguna competición coincide con el filtro.</div>';
-  const bloques = ligas.map(L => `<section class="sc-liga">
+  const nivelDe = r => r === 4 ? ESTADOS.ELITE : r === 3 ? ESTADOS.STRONG : r === 2 ? ESTADOS.LEAN : r === 1 ? ESTADOS.DETECTED : ESTADOS.NONE;
+  const bloques = ligas.map(L => `<section class="sc-liga ${claseTier(nivelDe(L.tope))}">
       <header><h3>${esc(L.comp.nombre)}</h3><span>${L.partidos.length} partido${L.partidos.length === 1 ? '' : 's'} · ${L.picks} pick${L.picks === 1 ? '' : 's'}</span></header>
       <div class="sc-grid">${L.partidos.map(tarjetaPartido).join('')}</div>
     </section>`).join('');
-  return htmlResumen() + chips + bloques;
+  return htmlResumen() + leyenda() + chips + bloques;
 }
 // Tarjeta de un partido con sus ${CONFIG.tablero.por_partido} mejores picks por edge.
 function tarjetaPartido(fx) {
   const picks = ESTADO.tablero.get(fx.id) || [];
-  const top = picks[0], nivel = top ? (top.provisional || top.estado) : ESTADOS.NONE;
+  // El color de la tarjeta es el del MEJOR nivel que contiene, no el del pick de mayor
+  // edge: dentro de un partido el primero por edge puede ser de un tier mas bajo que otro.
+  const nivel = picks.length
+    ? picks.map(c => c.provisional || c.estado).reduce((a, b) => RANGO_ESTADO[b] > RANGO_ESTADO[a] ? b : a)
+    : ESTADOS.NONE;
   const nCand = ESTADO.cands.filter(c => c.fixture_id === fx.id).length;
   const fila = (c, i) => { const e = c.provisional || c.estado, f = c.scores.cinco;
     return `<div class="sc-pick ${claseTier(e)}">

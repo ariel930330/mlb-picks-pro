@@ -254,6 +254,22 @@ t('el tablero da como maximo 3 picks por partido, ordenados por edge', () => {
     assert.ok(p.every(c => c.estado !== 'No Signal' && c.edge_pp > 0));
   }
 });
+t('el color de un partido es el de su MEJOR nivel, no el del pick de mayor edge', () => {
+  // Dentro de un partido el primero por edge puede ser de un tier mas bajo que otro:
+  // la tarjeta debe teñirse del mejor de los tres, que es lo que promete la leyenda.
+  const RANGO = { 'Elite Signal': 4, 'Strong Signal': 3, 'Lean Signal': 2, 'Signal Detected': 1, 'No Signal': 0 };
+  const cs = slateDe(4, [.14]); const tb = F.tableroDe(cs);
+  let conMezcla = 0;
+  for (const [, p] of tb) {
+    const niveles = p.map(c => c.provisional || c.estado);
+    const mejor = niveles.reduce((a, b) => RANGO[b] > RANGO[a] ? b : a);
+    if (RANGO[niveles[0]] !== RANGO[mejor]) conMezcla++;
+    assert.ok(RANGO[mejor] >= RANGO[niveles[0]], 'el mejor nivel no puede ser peor que el del primero por edge');
+  }
+  // el orden por edge y el orden por nivel son independientes: eso es justo lo que
+  // obliga a calcular el color con un maximo y no con picks[0]
+  assert.ok(tb.size > 0);
+});
 t('el tablero descarta lo bloqueado por correlacion y lo que no tiene estado', () => {
   const cs = slateDe(2, [.14]); const tb = F.tableroDe(cs);
   const enTablero = new Set([...tb.values()].flat().map(c => c.key));

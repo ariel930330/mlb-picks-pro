@@ -1,5 +1,20 @@
 /* SOCCER · HAXIOM EDGE — todo cuelga de #dep-futbol (regla 3 de deportes/LEEME.md) */
-#dep-futbol{--sc-elite:#00e39a;--sc-strong:#7c9dff;--sc-lean:#ffb454;--sc-det:#9a9ab6;--sc-none:#61617c;--sc-card:linear-gradient(160deg,#12121f,#0d0d18)}
+/* Un color por nivel de señal. Cada uno trae su tono plano, su fondo translúcido
+   y su borde, para que el nivel se lea de un vistazo sin depender del texto. */
+#dep-futbol{
+  --sc-elite:#00e39a; --sc-elite-bg:rgba(0,227,154,.13);  --sc-elite-br:rgba(0,227,154,.5);
+  --sc-strong:#7c9dff; --sc-strong-bg:rgba(124,157,255,.13); --sc-strong-br:rgba(124,157,255,.45);
+  --sc-lean:#ffb454;  --sc-lean-bg:rgba(255,180,84,.13);  --sc-lean-br:rgba(255,180,84,.45);
+  --sc-det:#9a9ab6;   --sc-det-bg:rgba(154,154,182,.09);  --sc-det-br:rgba(154,154,182,.28);
+  --sc-none:#61617c;  --sc-none-bg:transparent;           --sc-none-br:var(--border);
+  --sc-card:linear-gradient(160deg,#12121f,#0d0d18)
+}
+/* Leyenda de colores */
+#dep-futbol .sc-leyenda{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:10px 0 4px;font-size:10px;color:var(--text3)}
+#dep-futbol .sc-leyenda i{display:inline-flex;align-items:center;gap:5px;font-style:normal;background:var(--bg3);border:1px solid var(--border);border-radius:99px;padding:3px 9px;font-weight:700}
+#dep-futbol .sc-leyenda u{display:block;width:9px;height:9px;border-radius:3px;text-decoration:none}
+#dep-futbol .sc-leyenda .elite u{background:var(--sc-elite)}#dep-futbol .sc-leyenda .strong u{background:var(--sc-strong)}#dep-futbol .sc-leyenda .lean u{background:var(--sc-lean)}#dep-futbol .sc-leyenda .detected u{background:var(--sc-det)}#dep-futbol .sc-leyenda .none u{background:var(--sc-none)}
+#dep-futbol .sc-leyenda .elite{color:var(--sc-elite);border-color:var(--sc-elite-br)}#dep-futbol .sc-leyenda .strong{color:var(--sc-strong);border-color:var(--sc-strong-br)}#dep-futbol .sc-leyenda .lean{color:var(--sc-lean);border-color:var(--sc-lean-br)}#dep-futbol .sc-leyenda .detected{color:var(--sc-det)}
 #dep-futbol .sc-shell{max-width:1440px;margin:0 auto;padding:14px 16px 40px;font-size:13px}
 #dep-futbol .sc-top{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:12px}
 #dep-futbol .sc-brand{display:flex;align-items:center;gap:12px}
@@ -37,7 +52,14 @@
 #dep-futbol .sc-cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(340px,1fr));gap:12px}
 #dep-futbol .sc-card{background:var(--sc-card);border:1px solid var(--border);border-radius:16px;padding:14px 16px;cursor:pointer;transition:transform .12s,box-shadow .12s;position:relative;overflow:hidden}
 #dep-futbol .sc-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--sc-none)}
-#dep-futbol .sc-card.elite::before{background:var(--sc-elite);box-shadow:0 0 14px var(--sc-elite)}#dep-futbol .sc-card.strong::before{background:var(--sc-strong)}#dep-futbol .sc-card.lean::before{background:var(--sc-lean)}#dep-futbol .sc-card.detected::before{background:var(--sc-det)}
+#dep-futbol .sc-card.elite::before{background:var(--sc-elite);box-shadow:0 0 14px var(--sc-elite)}#dep-futbol .sc-card.strong::before{background:var(--sc-strong);box-shadow:0 0 12px var(--sc-strong)}#dep-futbol .sc-card.lean::before{background:var(--sc-lean);box-shadow:0 0 10px var(--sc-lean)}#dep-futbol .sc-card.detected::before{background:var(--sc-det)}
+#dep-futbol .sc-card.elite{border-color:var(--sc-elite-br);background:linear-gradient(160deg,rgba(0,227,154,.09),#0d0d18 60%)}
+#dep-futbol .sc-card.strong{border-color:var(--sc-strong-br);background:linear-gradient(160deg,rgba(124,157,255,.09),#0d0d18 60%)}
+#dep-futbol .sc-card.lean{border-color:var(--sc-lean-br);background:linear-gradient(160deg,rgba(255,180,84,.09),#0d0d18 60%)}
+#dep-futbol .sc-card.detected{border-color:var(--sc-det-br)}
+#dep-futbol .sc-card.elite:hover{box-shadow:0 14px 44px rgba(0,0,0,.7),0 0 0 1px var(--sc-elite-br)}
+#dep-futbol .sc-card.strong:hover{box-shadow:0 14px 44px rgba(0,0,0,.7),0 0 0 1px var(--sc-strong-br)}
+#dep-futbol .sc-card.lean:hover{box-shadow:0 14px 44px rgba(0,0,0,.7),0 0 0 1px var(--sc-lean-br)}
 #dep-futbol .sc-card:hover{transform:translateY(-2px);box-shadow:var(--shadow-lg)}
 #dep-futbol .sc-card-hd{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:8px}
 #dep-futbol .sc-comp{font-size:10px;font-weight:800;color:var(--text3);letter-spacing:.4px}
@@ -75,7 +97,11 @@
 #dep-futbol .sc-fichas-h{grid-column:1/-1;font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);margin:6px 0 2px}
 #dep-futbol .sc-ficha{background:var(--sc-card);border:1px solid var(--border);border-radius:14px;padding:12px 14px;position:relative;overflow:hidden}
 #dep-futbol .sc-ficha::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--sc-none)}
-#dep-futbol .sc-ficha.elite::before{background:var(--sc-elite)}#dep-futbol .sc-ficha.strong::before{background:var(--sc-strong)}#dep-futbol .sc-ficha.lean::before{background:var(--sc-lean)}#dep-futbol .sc-ficha.detected::before{background:var(--sc-det)}
+#dep-futbol .sc-ficha.elite::before{background:var(--sc-elite);box-shadow:0 0 12px var(--sc-elite)}#dep-futbol .sc-ficha.strong::before{background:var(--sc-strong)}#dep-futbol .sc-ficha.lean::before{background:var(--sc-lean)}#dep-futbol .sc-ficha.detected::before{background:var(--sc-det)}
+#dep-futbol .sc-ficha.elite{border-color:var(--sc-elite-br);background:linear-gradient(160deg,rgba(0,227,154,.10),#0d0d18 65%)}
+#dep-futbol .sc-ficha.strong{border-color:var(--sc-strong-br);background:linear-gradient(160deg,rgba(124,157,255,.10),#0d0d18 65%)}
+#dep-futbol .sc-ficha.lean{border-color:var(--sc-lean-br);background:linear-gradient(160deg,rgba(255,180,84,.10),#0d0d18 65%)}
+#dep-futbol .sc-ficha.elite .sc-card-sel,#dep-futbol .sc-ficha.strong .sc-card-sel,#dep-futbol .sc-ficha.lean .sc-card-sel{color:inherit}
 /* Tablas */
 #dep-futbol .sc-table{width:100%;border-collapse:collapse;font-size:11px}
 #dep-futbol .sc-table th{text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:6px 8px;border-bottom:1px solid var(--border)}
@@ -84,12 +110,17 @@
 #dep-futbol .sc-table tr[data-ac]{cursor:pointer}#dep-futbol .sc-table tr[data-ac]:hover td{background:var(--bg3)}
 #dep-futbol .sc-table.kv th{width:160px}
 #dep-futbol .sc-table.wide{min-width:820px}
-#dep-futbol .sc-table tr.elite td:first-child{box-shadow:inset 3px 0 var(--sc-elite)}#dep-futbol .sc-table tr.strong td:first-child{box-shadow:inset 3px 0 var(--sc-strong)}#dep-futbol .sc-table tr.lean td:first-child{box-shadow:inset 3px 0 var(--sc-lean)}
+#dep-futbol .sc-table tr.elite td:first-child{box-shadow:inset 3px 0 var(--sc-elite)}#dep-futbol .sc-table tr.strong td:first-child{box-shadow:inset 3px 0 var(--sc-strong)}#dep-futbol .sc-table tr.lean td:first-child{box-shadow:inset 3px 0 var(--sc-lean)}#dep-futbol .sc-table tr.detected td:first-child{box-shadow:inset 3px 0 var(--sc-det)}
+#dep-futbol .sc-table tr.elite td{background:var(--sc-elite-bg)}#dep-futbol .sc-table tr.strong td{background:var(--sc-strong-bg)}#dep-futbol .sc-table tr.lean td{background:var(--sc-lean-bg)}
+#dep-futbol .sc-table tr.elite td:nth-child(2),#dep-futbol .sc-table tr.strong td:nth-child(2),#dep-futbol .sc-table tr.lean td:nth-child(2){font-weight:800}
 /* Liga → tarjeta de partido → picks */
 #dep-futbol .sc-liga{margin:16px 0}
 #dep-futbol .sc-liga>header{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-bottom:8px;padding-bottom:6px;border-bottom:1px solid var(--border)}
 #dep-futbol .sc-liga h3{font-size:12px;font-weight:900;letter-spacing:.9px;margin:0;background:linear-gradient(90deg,var(--purple),var(--green));-webkit-background-clip:text;background-clip:text;color:transparent}
 #dep-futbol .sc-liga>header span{font-size:10px;color:var(--text3);font-weight:700}
+#dep-futbol .sc-liga.elite>header{border-bottom-color:var(--sc-elite-br)}#dep-futbol .sc-liga.strong>header{border-bottom-color:var(--sc-strong-br)}#dep-futbol .sc-liga.lean>header{border-bottom-color:var(--sc-lean-br)}
+#dep-futbol .sc-liga>header h3::before{content:'';display:inline-block;width:7px;height:7px;border-radius:2px;background:var(--sc-none);margin-right:7px;vertical-align:middle}
+#dep-futbol .sc-liga.elite>header h3::before{background:var(--sc-elite);box-shadow:0 0 8px var(--sc-elite)}#dep-futbol .sc-liga.strong>header h3::before{background:var(--sc-strong)}#dep-futbol .sc-liga.lean>header h3::before{background:var(--sc-lean)}#dep-futbol .sc-liga.detected>header h3::before{background:var(--sc-det)}
 #dep-futbol .sc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(330px,1fr));gap:12px}
 #dep-futbol .sc-vent{font-size:9px;font-weight:800;color:var(--text3);letter-spacing:.4px}
 #dep-futbol .sc-teams{font-size:16px;font-weight:900;line-height:1.25;margin:2px 0 5px}
@@ -97,7 +128,13 @@
 #dep-futbol .sc-meta{font-size:10px;color:var(--text3);margin-bottom:9px}
 #dep-futbol .sc-picks{display:flex;flex-direction:column;gap:5px}
 #dep-futbol .sc-pick{background:var(--bg3);border-radius:9px;padding:7px 9px;border-left:3px solid var(--sc-none)}
-#dep-futbol .sc-pick.elite{border-left-color:var(--sc-elite)}#dep-futbol .sc-pick.strong{border-left-color:var(--sc-strong)}#dep-futbol .sc-pick.lean{border-left-color:var(--sc-lean)}#dep-futbol .sc-pick.detected{border-left-color:var(--sc-det)}
+#dep-futbol .sc-pick.elite{border-left-color:var(--sc-elite);background:var(--sc-elite-bg)}
+#dep-futbol .sc-pick.strong{border-left-color:var(--sc-strong);background:var(--sc-strong-bg)}
+#dep-futbol .sc-pick.lean{border-left-color:var(--sc-lean);background:var(--sc-lean-bg)}
+#dep-futbol .sc-pick.detected{border-left-color:var(--sc-det);background:var(--sc-det-bg)}
+#dep-futbol .sc-pick.elite .sc-pick-a b{color:var(--sc-elite)}
+#dep-futbol .sc-pick.strong .sc-pick-a b{color:var(--sc-strong)}
+#dep-futbol .sc-pick.lean .sc-pick-a b{color:var(--sc-lean)}
 #dep-futbol .sc-pick-a{display:flex;align-items:center;gap:6px;min-width:0}
 #dep-futbol .sc-pick-a b{font-size:13px;font-weight:800;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
 #dep-futbol .sc-pos{font-size:9px;font-weight:900;color:var(--text3);background:var(--bg4);border-radius:5px;padding:1px 5px;flex-shrink:0}

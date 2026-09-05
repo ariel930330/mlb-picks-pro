@@ -6,7 +6,7 @@
 | `deportes/futbol.js` | Motor completo + interfaz (un archivo por deporte, `deportes/LEEME.md`). Módulos internos: VERSIONES/CONFIG, REGISTRO DE MERCADOS, NÚCLEO MATEMÁTICO, MODELO, ADAPTADOR API-FOOTBALL, CANDIDATOS/EV, PUERTAS/SCORES/TIERS, POD, CORRIDA, INTERFAZ |
 | `deportes/futbol.css` | Estilos, todo bajo `#dep-futbol` |
 | `futbol-setup.sql` | Tablas Supabase + RLS. Bloques 1-9 append-only; bloque 10 (`futbol_tablero`) es el tablero vigente, la única tabla que se actualiza en sitio |
-| `tests/futbol.test.mjs` | 65 pruebas (Master §10). `node tests/futbol.test.mjs` |
+| `tests/futbol.test.mjs` | 66 pruebas (Master §10). `node tests/futbol.test.mjs` |
 | `docs/futbol/01-auditoria.md` | Auditoría Master §1 |
 | `docs/futbol/03-informe-fase1.md` | Informe de cierre de fase (implementado / probado / validado / bloqueado) |
 
@@ -59,6 +59,19 @@ Mientras no exista calibración empírica, ese cuarto de la confianza vale 50, a
 - **EV** compara el modelo con el **precio que de verdad puedes tomar**, que ya lleva comisión. Dice si esa discrepancia deja dinero.
 - Por eso una selección puede tener edge positivo y EV negativo: el modelo acierta pero la comisión se lo come. Los tiers se deciden por **EV** (SE §7); el edge se guarda y se muestra como evidencia.
 - En mercados que devuelven parte del importe (asiáticos de cuarto, líneas enteras) la tarjeta indica qué porcentaje se devuelve.
+
+## Color por nivel
+Cada nivel tiene su color y se aplica en todas partes: la pastilla del pick, el fondo y el borde de la fila, el borde y el resplandor de la tarjeta del partido, el punto de la liga y las filas de las tablas.
+
+| Nivel | Color |
+|---|---|
+| ELITE SIGNAL | verde |
+| STRONG SIGNAL | azul |
+| LEAN SIGNAL | ámbar |
+| SIGNAL DETECTED | gris |
+| NO SIGNAL | sin color |
+
+La tarjeta de un partido y la cabecera de una liga toman el **mejor** nivel que contienen, no el del primer pick por edge. El tablero lleva una leyenda con el conteo de cada nivel.
 
 ## Qué significa cada estado
 - **ELITE / STRONG / LEAN · PAPER**: cumple SE §7 con XI confirmado. PAPER = sin calibración validada ni promoción (SE §9.1); se rastrea, no se publica como producción.

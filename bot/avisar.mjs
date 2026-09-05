@@ -131,8 +131,16 @@ if (res.ok && j.ok === true) {
 
 const d = j.description || `HTTP ${res.status}`;
 console.log(`NO se envio: ${d}`);
-if (/chat not found/i.test(d))
-  console.log('  -> El TG_CHAT no existe. Vuelve a sacarlo de getUpdates: es el numero de "chat":{"id":…}, no el update_id ni el message_id. Y tienes que haberle escrito al bot antes.');
+if (/chat not found/i.test(d)) {
+  console.log('  -> El TG_CHAT no existe para este bot.');
+  if (!String(CHAT).startsWith('-'))
+    console.log('     Si es un GRUPO, el id es NEGATIVO y empieza por -100 en los supergrupos.'
+              + ` El tuyo (…${String(CHAT).slice(-4)}) no lleva signo, asi que apunta a un chat personal.`);
+  console.log('     Saca el id correcto con el modo "ver-chats" del workflow.');
+} else if (/kicked|not a member|chat_write_forbidden/i.test(d))
+  console.log('  -> El bot ya no esta en ese grupo, o no tiene permiso para escribir. Vuelve a anadirlo y dale permiso de enviar mensajes.');
+else if (/group chat was upgraded|migrate_to_chat_id/i.test(d))
+  console.log('  -> El grupo se convirtio en SUPERGRUPO y su id CAMBIO. Saca el nuevo con el modo "ver-chats" y actualiza TG_CHAT.');
 else if (/not found|unauthorized/i.test(d))
   console.log('  -> El TG_TOKEN esta mal o el bot fue revocado. Saca uno nuevo con /token en @BotFather.');
 else if (/blocked|deactivated/i.test(d))

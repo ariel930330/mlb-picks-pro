@@ -51,13 +51,14 @@ on:
           - 'solo-si-toca'         # como el cron: solo si hay una oleada en plazo
           - 'probar-telegram'      # solo manda un mensaje de prueba, sin gastar creditos
           - 'avisar-lo-guardado'   # reenvia por Telegram el analisis YA guardado, sin analizar
+          - 'ver-chats'            # dice el id de cada chat/grupo donde puede escribir el bot
 
 # Dos corridas a la vez se pisarían escribiendo en Supabase y gastarían el doble.
 # La PRUEBA de Telegram va en su propio grupo: si no, se quedaría encolada detrás de
 # un job que puede estar durmiendo cinco horas esperando una oleada, y probar un
 # mensaje no puede depender de eso.
 concurrency:
-  group: ${{ (inputs.modo == 'probar-telegram' || inputs.modo == 'avisar-lo-guardado') && 'prueba-telegram' || 'analisis-auto' }}
+  group: ${{ (inputs.modo == 'probar-telegram' || inputs.modo == 'avisar-lo-guardado' || inputs.modo == 'ver-chats') && 'prueba-telegram' || 'analisis-auto' }}
   cancel-in-progress: false
 
 jobs:
@@ -104,13 +105,22 @@ jobs:
           node bot/armar-desde-supabase.mjs
           node bot/avisar.mjs
 
+      # Dice a que chats puede escribir el bot y con que id. Existe porque sacar el
+      # id de un GRUPO tiene tres trampas: es negativo, el modo privacidad esconde
+      # los mensajes normales, y al pasar a supergrupo el id CAMBIA.
+      - name: Ver chats de Telegram
+        if: inputs.modo == 'ver-chats'
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+        run: node bot/listar-chats.mjs
+
       - name: ¿Toca correr?
-        if: ${{ inputs.modo != 'probar-telegram' && inputs.modo != 'avisar-lo-guardado' }}
+        if: ${{ inputs.modo != 'probar-telegram' && inputs.modo != 'avisar-lo-guardado' && inputs.modo != 'ver-chats' }}
         id: portero
         run: node bot/toca-correr.mjs
 
       - name: Instalar Chromium
-        if: (steps.portero.outputs.correr == 'true' || inputs.modo == 'analizar-ya') && inputs.modo != 'probar-telegram' && inputs.modo != 'avisar-lo-guardado'
+        if: (steps.portero.outputs.correr == 'true' || inputs.modo == 'analizar-ya') && inputs.modo != 'probar-telegram' && inputs.modo != 'avisar-lo-guardado' && inputs.modo != 'ver-chats'
         run: |
           npm init -y >/dev/null 2>&1
           npm i --no-save playwright@1.47.2
@@ -120,7 +130,7 @@ jobs:
       # oleada mas tarde, espera dormida hasta ella y la analiza tambien. Asi UN disparo
       # puede cubrir toda la tarde. Termina cuando no queda nada o se agota el tiempo.
       - name: Analizar las oleadas del día
-        if: (steps.portero.outputs.correr == 'true' || inputs.modo == 'analizar-ya') && inputs.modo != 'probar-telegram' && inputs.modo != 'avisar-lo-guardado'
+        if: (steps.portero.outputs.correr == 'true' || inputs.modo == 'analizar-ya') && inputs.modo != 'probar-telegram' && inputs.modo != 'avisar-lo-guardado' && inputs.modo != 'ver-chats'
         env:
           BOT_EMAIL:    ${{ secrets.BOT_EMAIL }}
           BOT_PASSWORD: ${{ secrets.BOT_PASSWORD }}
@@ -188,5 +198,5 @@ jobs:
           retention-days: 7
 
       - name: No tocaba
-        if: steps.portero.outputs.correr != 'true' && inputs.modo != 'analizar-ya' && inputs.modo != 'probar-telegram' && inputs.modo != 'avisar-lo-guardado'
+        if: steps.portero.outputs.correr != 'true' && inputs.modo != 'analizar-ya' && inputs.modo != 'probar-telegram' && inputs.modo != 'avisar-lo-guardado' && inputs.modo != 'ver-chats' && inputs.modo != 'ver-chats'
         run: echo "Sin corrida. ${{ steps.portero.outputs.motivo }}" >> $GITHUB_STEP_SUMMARY

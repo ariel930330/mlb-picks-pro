@@ -737,7 +737,7 @@ async function correrAnalisis(fecha, opciones = {}) {
   const insumo = partidos.map(p => ({ id: p.id, q: p.quote_time, n: p.cuotas.length, l: p.lineup })).concat([VERSIONES, { slate }]);
   const hash = hashFNV(JSON.stringify(insumo));
   const snapshot = { snapshot_id: `SNAP-SOC-${slate}-${ahora.toISOString().slice(11, 19).replace(/:/g, '')}-${hash.slice(0, 6)}`, slate_date: slate, analysis_time: ahora.toISOString(), versions: VERSIONES,
-    competitions: compet, input_hash: hash, requests_used: AF.usados(), ventana_min: opciones.ventanaMin ?? null, counts: contar(partidos, cands) };
+    competitions: compet, input_hash: hash, requests_used: AF.usados(), counts: { ...contar(partidos, cands), ventana_min: opciones.ventanaMin ?? null } };
   ESTADO = { snapshot, partidos, cands, tablero, pod, compet, ms: Date.now() - t0, guardado: null, msg: '', origen: 'vivo', fecha: slate };
   // Cierres: partidos a ≤15 min del inicio → última cotización válida
   ESTADO.cierres = partidos.filter(p => p.minutos <= 15 && p.minutos > -5).map(p => ({ fixture_id: p.id, minutes_to_ko: +p.minutos.toFixed(1), consensus: Object.fromEntries(cands.filter(c => c.fixture_id === p.id && c.cons).map(c => [`${c.mercado}|${c.sel}|${c.linea ?? ''}`, { p_novig: +c.p_novig.toFixed(4), best_dec: c.dec, books: c.filas }])) }));

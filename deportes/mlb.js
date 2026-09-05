@@ -2669,7 +2669,14 @@ function renderPOD(){
   const pit = vivos('pitcher'), bat = vivos('batter');
   const nTot = pit.length + bat.length;
   const official = (haxPod && haxPod.status==='Official') ? haxPod.official : null;
-  const isKing = c => !!official && c.player_id===official.player_id && c.mkt===official.mkt && c.side===official.side;
+  // OJO con el !!c: `mio` es pit[0]||null, o sea NULL cuando esa pestaña se queda sin
+  // candidatos vivos. Sin esa comprobación, isKing(null) reventaba con
+  // "Cannot read properties of null (reading 'player_id')" — y como renderPOD corre
+  // dentro del arranque (restoreBest), el fallo tumbaba TODO el init: autoArranca()
+  // no llegaba a ejecutarse, window.__auto nunca se marcaba listo y el robot se
+  // quedaba esperando hasta agotar el tiempo. Solo pasaba con dos cosas a la vez:
+  // que HAXIOM tuviera un oficial Y que una de las dos pestañas estuviera vacía.
+  const isKing = c => !!official && !!c && c.player_id===official.player_id && c.mkt===official.mkt && c.side===official.side;
   podBest = null;
   podShown = { pitcher: pit[0]||null, batter: bat[0]||null };
   [['pod-pitcher','pitcher'],['pod-batter','batter']].forEach(([id,kind])=>{

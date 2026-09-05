@@ -46,7 +46,7 @@ jobs:
           MODO:         grade
           BOT_EMAIL:    ${{ secrets.BOT_EMAIL }}
           BOT_PASSWORD: ${{ secrets.BOT_PASSWORD }}
-          APP_URL:      https://ariel930330.github.io/mlb-picks-pro/index.html
+          APP_URL:      https://mlb-picks-pro.vercel.app/
         run: node bot/correr-analisis.mjs
 
       # El aviso va aunque la calificación se queje: si algo se calificó, el récord

@@ -17,7 +17,7 @@
 // ============================================================================
 import { chromium } from 'playwright';
 
-const URL   = process.env.APP_URL || 'https://ariel930330.github.io/mlb-picks-pro/index.html';
+const URL   = process.env.APP_URL || 'https://mlb-picks-pro.vercel.app/';
 const EMAIL = process.env.BOT_EMAIL;
 const PASS  = process.env.BOT_PASSWORD;
 // MODO=grade abre la página en modo calificar (auto=grade): califica el día que
@@ -41,8 +41,13 @@ const pg  = await ctx.newPage();
 
 // Los errores de la página se ven en el log del workflow: sin esto, un fallo de JS
 // dentro del navegador sería invisible desde fuera.
+// Los errores de la página se GUARDAN además de imprimirse: el log completo de un
+// workflow solo lo puede leer quien tenga permisos de admin del repositorio, así que
+// si algo revienta dentro del navegador y solo va al log, no hay forma de verlo desde
+// fuera. Al resumen del run sí llega cualquiera.
+const erroresPagina = [];
 pg.on('console', m => { if (['error','warning'].includes(m.type())) console.log(`  [navegador] ${m.text()}`); });
-pg.on('pageerror', e => console.log(`  [navegador] ERROR ${e.message}`));
+pg.on('pageerror', e => { erroresPagina.push(e.message); console.log(`  [navegador] ERROR ${e.message}`); });
 
 let codigo = 0;
 try {
@@ -98,6 +103,19 @@ try {
 
 } catch (e) {
   console.error(`FALLO: ${e.message}`);
+  // El motivo, al RESUMEN del run, no solo al log: el resumen se ve sin ser admin.
+  if (process.env.GITHUB_STEP_SUMMARY) {
+    const { appendFileSync } = await import('node:fs');
+    const est = await pg.evaluate(() => window.__auto || null).catch(() => null);
+    appendFileSync(process.env.GITHUB_STEP_SUMMARY,
+      `### ❌ Falló\n\n- **Motivo:** \`${e.message}\`\n`
+      + (est ? `- **Estado de la página:** listo=${est.listo} · done=${est.done} · ok=${est.ok}`
+             + ` · guardado=${est.guardado}${est.msg ? ` · ${est.msg}` : ''}\n`
+             : `- **Estado de la página:** no se pudo leer \`window.__auto\`\n`)
+      + (erroresPagina.length
+          ? `- **Errores dentro del navegador:**\n${erroresPagina.map(x => `  - \`${x}\``).join('\n')}\n`
+          : '- **Errores dentro del navegador:** ninguno\n'));
+  }
   await pg.screenshot({ path: 'bot/fallo.png', fullPage: false }).catch(() => {});
   codigo = 1;
 } finally {

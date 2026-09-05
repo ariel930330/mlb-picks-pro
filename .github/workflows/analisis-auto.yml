@@ -107,7 +107,7 @@ jobs:
         env:
           BOT_EMAIL:    ${{ secrets.BOT_EMAIL }}
           BOT_PASSWORD: ${{ secrets.BOT_PASSWORD }}
-          APP_URL:      https://ariel930330.github.io/mlb-picks-pro/index.html
+          APP_URL:      https://mlb-picks-pro.vercel.app/
           TG_TOKEN:     ${{ secrets.TG_TOKEN }}
           TG_CHAT:      ${{ secrets.TG_CHAT }}
         run: |

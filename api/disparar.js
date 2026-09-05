@@ -12,8 +12,9 @@
 //  Una función de Vercel no puede hacerlo: necesitaría Chromium empaquetado y
 //  un análisis completo tarda minutos, muy por encima del tope de ejecución.
 //
-//  QUIÉN PUEDE LLAMARLO. Nadie sin la clave: cada disparo gasta ~94 créditos de
-//  The Odds API, así que un endpoint abierto sería una factura ajena.
+//  QUIÉN PUEDE LLAMARLO. Nadie sin la clave: cada disparo gasta ~183 créditos de
+//  The Odds API (12 por juego × 15 juegos + 3), así que un endpoint abierto sería
+//  una factura ajena.
 //    · El cron de Vercel manda solo la cabecera Authorization con CRON_SECRET.
 //    · A mano: ?clave=<CRON_SECRET>
 //

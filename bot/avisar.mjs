@@ -15,7 +15,10 @@ import { readFileSync } from 'node:fs';
 
 const TOKEN = process.env.TG_TOKEN;
 const CHAT  = process.env.TG_CHAT;
-if (!TOKEN || !CHAT) {
+// --ver imprime el mensaje TAL CUAL y no envia nada. Sirve para revisar el formato
+// sin gastar un mensaje ni depender de que el token este puesto.
+const SOLO_VER = process.argv.includes('--ver');
+if ((!TOKEN || !CHAT) && !SOLO_VER) {
   console.log('Sin TG_TOKEN / TG_CHAT: no se manda aviso. (Ver bot/LEEME.md)');
   process.exit(0);
 }
@@ -48,10 +51,40 @@ const hora = new Date().toLocaleTimeString('es-MX',
 const rec = (o) => o && o.n ? `${o.w}-${o.l}` : '0-0';
 const marca = (o) => o && o.n ? (o.w/o.n>=0.6?'🟢':o.w/o.n>=0.5?'🟡':'🔴') : '⚪';
 
+// ── SOCCER ────────────────────────────────────────────────────────────────
+// El algoritmo del futbol no tiene nada que ver con el del beisbol, asi que su
+// aviso tampoco: aqui lo que importa es el nivel de la senal, el edge y hasta que
+// cuota sigue valiendo la pena. El "tier" va con su color para que se lea de un
+// vistazo, igual que en la pagina.
+const ICONO = { 'Elite Signal': '\u{1F7E2}', 'Strong Signal': '\u{1F535}', 'Lean Signal': '\u{1F7E0}' };
+const pp = v => v == null ? '\u2014' : `${v >= 0 ? '+' : ''}${(+v).toFixed(2)} pp`;
+function mensajeFutbol(s) {
+  const cab = `\u26BD <b>SOCCER \u00b7 HAXIOM EDGE</b> \u00b7 ${esc(s.fecha || '')} \u00b7 ${hora}`;
+  const n = s.por_estado || {};
+  const linea = `${s.partidos} partido(s)${s.ventana ? ` en ventana de ${s.ventana} min` : ''} \u00b7 ${s.candidatos} selecciones`
+    + `\n${s.xi_confirmados || 0} con XI confirmado${s.cierres ? ` \u00b7 ${s.cierres} cierre(s) capturado(s)` : ''}`;
+  const sen = (s.senales || []).slice(0, 6);
+  if (!sen.length) {
+    return `${cab}\n\n${linea}\n\n<i>Sin se\u00f1ales publicables en esta corrida.`
+      + `${n['Signal Detected'] ? ` ${n['Signal Detected']} en watchlist.` : ''} No se fuerza una jugada.</i>`;
+  }
+  const cuerpo = sen.map(x => `${ICONO[x.tier] || '\u26AA'} <b>${esc(x.seleccion)}</b> \u00b7 ${esc(x.mercado)}`
+    + `\n   ${esc(x.partido)} <i>(${esc(x.competicion)})</i>`
+    + `\n   <code>${am(x.cuota)}</code> en ${esc(x.casa || '?')} \u00b7 edge <b>${pp(x.edge_pp)}</b> \u00b7 EV ${pct(x.ev)}`
+    + `\n   score ${Math.round(x.score)} \u00b7 vale hasta <code>${am(x.minimo)}</code>`).join('\n\n');
+  return `${cab}\n\n${linea}\n\n${cuerpo}`
+    + `${(s.senales || []).length > sen.length ? `\n\n<i>y ${s.senales.length - sen.length} m\u00e1s en la p\u00e1gina</i>` : ''}`
+    + `\n\n<i>PAPER: sin calibraci\u00f3n validada todav\u00eda (SE \u00a79.1).</i>`;
+}
+
 let txt;
 if (!r.ok) {
-  const que = (r.resumen && r.resumen.modo === 'grade') ? 'La calificación falló' : 'El análisis falló';
+  const que = (r.resumen && r.resumen.deporte === 'futbol') ? 'El análisis de SOCCER falló'
+            : (r.resumen && r.resumen.modo === 'grade') ? 'La calificación falló' : 'El análisis falló';
   txt = `⚠️ <b>${que}</b>\n<code>${esc(r.msg)}</code>\n\n<i>${hora}</i>`;
+} else if (r.resumen && r.resumen.deporte === 'futbol') {
+  txt = mensajeFutbol(r.resumen);
+  if (r.resumen.guardado === false) txt += `\n\n\u26A0 <b>No se guard\u00f3 en Supabase.</b>`;
 } else if (r.resumen && r.resumen.modo === 'grade') {
   // Resumen de RESULTADOS de ayer (job de medianoche ET).
   const s = r.resumen;
@@ -96,6 +129,7 @@ if (!r.ok) {
   if (s.guardado === false) txt += `\n\n⚠️ <b>No se guardó en Supabase.</b>`;
 }
 
+if (SOLO_VER) { console.log(txt); process.exit(0); }
 if (PRUEBA) txt = `🧪 <b>Prueba de conexión</b>\n<i>Mensaje de ejemplo, no es un pick real.</i>\n\n` + txt;
 
 // Diagnostico: sin esto, cuando el mensaje no llega no hay forma de saber si el

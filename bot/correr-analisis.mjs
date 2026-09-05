@@ -27,6 +27,11 @@ const MODO  = process.env.MODO === 'grade' ? 'grade' : '1';
 // con el del beisbol, asi que no comparten window.__auto. La pagina expone el del
 // deporte que se pida aqui, y solo ese.
 const DEPORTE = process.env.DEPORTE || 'mlb';
+// VENTANA (solo SOCCER): analiza unicamente los partidos que empiezan dentro de N
+// minutos. El robot corre en la ventana de alineaciones de cada racimo, asi que
+// analizar las 20 competiciones enteras en cada pasada gastaria llamadas en partidos
+// que faltan seis horas. Vacio = todo el dia.
+const VENTANA = (process.env.VENTANA || '').trim();
 const TIMEOUT_MS = 9 * 60 * 1000;   // un análisis completo ronda los 6 s, pero la
                                      // primera carga en frío del runner es lenta
 
@@ -50,8 +55,9 @@ pg.on('pageerror', e => { erroresPagina.push(e.message); console.log(`  [navegad
 let codigo = 0;
 let pista = null;   // pista sobre los secretos, sin enseñarlos
 try {
-  const url = `${URL}?auto=${MODO}&deporte=${DEPORTE}&cb=${Date.now()}`;   // cb: evita la caché de Pages
-  console.log(`Abriendo ${URL}?auto=${MODO}&deporte=${DEPORTE}${MODO === 'grade' ? ' (calificar)' : ''}`);
+  const extra = VENTANA ? `&ventana=${encodeURIComponent(VENTANA)}` : '';
+  const url = `${URL}?auto=${MODO}&deporte=${DEPORTE}${extra}&cb=${Date.now()}`;   // cb: evita la caché de Pages
+  console.log(`Abriendo ${URL}?auto=${MODO}&deporte=${DEPORTE}${extra}${MODO === 'grade' ? ' (calificar)' : ''}`);
   await pg.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
 
   // Login. El modal puede estar oculto: se abre con el botón de sesión si hace falta.

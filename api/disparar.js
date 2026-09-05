@@ -18,6 +18,13 @@
 //    · El cron de Vercel manda solo la cabecera Authorization con CRON_SECRET.
 //    · A mano: ?clave=<CRON_SECRET>
 //
+//  QUÉ SE PUEDE DISPARAR:
+//    (nada)                        análisis de MLB
+//    ?modo=calificar               calificación de MLB
+//    ?deporte=futbol               SOCCER en la ventana de alineaciones
+//    ?deporte=futbol&forzar=1      SOCCER ahora mismo, sin esperar la ventana
+//    ?deporte=futbol&ventana=45    SOCCER solo con los partidos a ≤45 min del inicio
+//
 //  VARIABLES DE ENTORNO (Vercel → Settings → Environment Variables):
 //    CRON_SECRET   cualquier texto largo que inventes. Protege este endpoint.
 //    GH_TOKEN      token de GitHub de permiso FINO, con UN solo permiso:
@@ -46,13 +53,19 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({ ok: false, error: 'falta GH_TOKEN en Vercel' });
   }
 
-  // Qué workflow y con qué modo. Por defecto, el análisis normal.
+  // Qué workflow y con qué modo. Por defecto, el análisis de MLB.
+  //   ?deporte=futbol  → SOCCER, que corre en la ventana de alineaciones
+  //   ?modo=calificar  → calificación de MLB
+  const deporte = req.query?.deporte === 'futbol' ? 'futbol' : 'mlb';
   const modo = req.query?.modo === 'calificar' ? 'calificar' : 'analisis';
-  const archivo = modo === 'calificar' ? 'calificar-auto.yml' : 'analisis-auto.yml';
+  const archivo = deporte === 'futbol' ? 'futbol-auto.yml'
+                : modo === 'calificar' ? 'calificar-auto.yml' : 'analisis-auto.yml';
   // forzar=1 analiza YA, sin esperar a que toque la oleada (para probar a mano).
   // Sin forzar se comporta como el cron: el portero decide y casi siempre dice que no.
   const forzar = req.query?.forzar === '1';
   const modoWf = forzar ? 'analizar-ya' : 'solo-si-toca';
+  // Solo SOCCER: limitar la corrida a los partidos que empiezan dentro de N minutos.
+  const ventana = /^\d{1,4}$/.test(String(req.query?.ventana || '')) ? String(req.query.ventana) : '';
 
   try {
     const r = await fetch(
@@ -67,13 +80,14 @@ module.exports = async function handler(req, res) {
         },
         body: JSON.stringify({
           ref: 'main',
-          ...(modo === 'analisis' ? { inputs: { modo: modoWf } } : {}),
+          ...(deporte === 'futbol' ? { inputs: { modo: modoWf, ventana } }
+             : modo === 'analisis' ? { inputs: { modo: modoWf } } : {}),
         }),
       });
 
     // GitHub contesta 204 sin cuerpo cuando acepta el disparo.
     if (r.status === 204) {
-      return res.status(200).json({ ok: true, modo, archivo, forzar, cuando: new Date().toISOString() });
+      return res.status(200).json({ ok: true, deporte, modo, archivo, forzar, ventana: ventana || null, cuando: new Date().toISOString() });
     }
     // Si no, se devuelve el motivo TAL CUAL: un 401 aquí casi siempre es el token
     // caducado o sin el permiso de Actions, y conviene verlo sin adivinar.

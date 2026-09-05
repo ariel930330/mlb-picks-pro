@@ -22,7 +22,33 @@
 4. **Calificar**: liquida las señales de días cerrados contra el marcador final (`/fixtures?id=`) y calcula CLV contra el cierre capturado. Requiere sesión.
 
 ## Robot
-`?deporte=futbol&auto=1` analiza el slate de HOY y guarda; `?deporte=futbol&auto=grade` califica. El núcleo expone `window.__auto` con `listo/done/ok/msg/resumen` (mismo contrato que MLB). Para señales OFICIALES (no watchlist) el robot debe correr con XI publicado: ventana ≈T-40 a T-5 de cada partido, y una corrida ≤T-15 captura el cierre (`futbol_cierres`).
+`.github/workflows/futbol-auto.yml` corre el análisis **en la ventana de alineaciones de cada racimo de partidos**, que es lo único que produce señales oficiales: sin XI confirmado el motor solo puede dar watchlist (SE §8).
+
+**El portero** (`bot/toca-correr-futbol.mjs`) cuesta **una** llamada a API-Football: `/fixtures?date=` devuelve los ~1,170 partidos del día en una sola página y de ahí se filtran las 20 competiciones. Con el calendario calcula dos momentos por racimo:
+
+| Momento | Para qué | Ventana que pasa al motor |
+|---|---|---|
+| T-35 min | Alineaciones publicadas → señales oficiales | 120 min |
+| T-10 min | Última cotización → CLV en `futbol_cierres` | 25 min |
+
+Un momento se da por cubierto si ya hubo una corrida posterior, así que el cron puede disparar de más sin gastar. Si el momento está en el futuro, el job **duerme despierto** hasta él: un solo disparo cubre toda la tarde, que es lo que compensa que GitHub entregue una fracción de los crones.
+
+**La ventana recorta el gasto.** `?ventana=N` hace que el motor solo mire los partidos que empiezan dentro de N minutos y ni siquiera pida cuotas de las competiciones que no tienen ninguno. Medido: el slate completo cuesta 36 llamadas y la corrida de cierre con `ventana=25` cuesta 25, tocando un solo partido.
+
+| Cómo se lanza | Qué hace |
+|---|---|
+| Cron (cada 20 min) | El portero decide; casi siempre termina sin abrir el navegador |
+| Actions → *SOCCER · análisis automático* → `analizar-ya` | Analiza ahora, todo el día |
+| Actions → `solo-si-toca` | Como el cron |
+| `/api/disparar?clave=…&deporte=futbol` | Igual que el cron, desde Vercel |
+| `/api/disparar?clave=…&deporte=futbol&forzar=1` | Analiza ya |
+| `/api/disparar?clave=…&deporte=futbol&ventana=45` | Solo partidos a ≤45 min |
+
+**Secreto nuevo:** `AF_KEY` en *Settings → Secrets and variables → Actions*, con la key de API-Football. Lo usa **solo el portero** para leer el calendario; la app sigue leyendo la suya de `app_config.af_key`. Sin ese secreto el workflow no corre y lo dice con claridad.
+
+A mano: `?deporte=futbol&auto=1` analiza y guarda, `&ventana=N` lo limita, `?deporte=futbol&auto=grade` califica. El núcleo expone `window.__auto` con `listo/done/ok/msg/resumen` (mismo contrato que MLB).
+
+**Aviso de Telegram:** el fútbol tiene su propio mensaje, con el nivel de cada señal en color, edge, EV, score y hasta qué cuota sigue valiendo. Para verlo sin enviarlo: `node bot/avisar.mjs --ver`.
 
 ## Ventanas (SE §8) tal como se aplican
 | Ventana | Cuándo | Efecto |

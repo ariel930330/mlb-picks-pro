@@ -59,6 +59,17 @@ Reporte del dueño: al refrescar la página no se veían los análisis ya hechos
 - **El modal de un partido guardado** carga del histórico el resto de selecciones evaluadas, no solo las tres del tablero.
 - El modal ya no depende del modelo en memoria: en modo guardado usa las medias de goles del registro y omite lo que no se guarda (la rejilla conjunta).
 
+## ROBOT EN LA VENTANA DE ALINEACIONES (5-sep-2026)
+Sin corridas dentro de la ventana de alineaciones el motor solo puede publicar watchlist, y el CLV se pierde para siempre. Implementado:
+- **`.github/workflows/futbol-auto.yml`** con el mismo patrón de bucle que MLB: el job duerme despierto hasta el siguiente momento y cubre varios seguidos.
+- **`bot/toca-correr-futbol.mjs`**: portero de **una sola llamada** (`/fixtures?date=` trae los ~1,170 partidos del día en una página). Agrupa en racimos de 15 min y calcula dos momentos por racimo, T-35 (alineaciones) y T-10 (cierre). Un momento está cubierto si ya hubo una corrida posterior.
+- **`?ventana=N` en el motor**: solo los partidos a ≤N minutos del inicio, y ni se piden cuotas de las competiciones sin ninguno. Medido en vivo: slate completo 36 llamadas, corrida de cierre con `ventana=25` 25 llamadas y un solo partido.
+- **`api/disparar.js`** acepta `?deporte=futbol`, `&forzar=1` y `&ventana=N`.
+- **Aviso de Telegram propio de SOCCER**, con el nivel en color, edge, EV, score y precio mínimo. `node bot/avisar.mjs --ver` lo imprime sin enviarlo.
+- Secreto nuevo `AF_KEY`, solo para el portero. Sin él, el workflow no corre y lo dice.
+
+Verificado contra el calendario real: el portero detectó 8 partidos en 2 racimos, vio las 4 corridas ya hechas y pidió correr el cierre del racimo de las 7:00 PM ET con `ventana=25`.
+
 ## PROBADO
 - `tests/futbol.test.mjs`: 67 pruebas, todas pasan (conversión de cuotas; no-vig 3 vías; DNB push y bloqueo; DC unión; AH cuartos/enteros/medios; totales de cuarto; separación de periodos; coherencia BTTS/1X2/totales; bivariado; insumos faltantes/stale/outlier/línea; fronteras de tier; sin señales forzadas; XI provisional; frescura; pesos; S19; formato AH del proveedor; correlación; precio mínimo; expiración; determinismo; edge presente en todo mercado; EV igual a la suma por estados; EV cero a la cuota justa con empuje y cuartos; fórmula del compuesto y de la confianza; edge minúsculo no califica aunque el EV sea positivo; calidad baja bloquea sola; el percentil ya no decide; tope de 3 picks por partido y orden por edge; el tablero descarta correlacionados; sobrescritura con mejor/peor edge; salida del top 3 sin borrar filas; el color de un partido es el de su mejor nivel; el tablero guardado se reconstruye igual al releerlo; walk-forward sin fuga; fuerzas/ESS; fixture dorado independiente; POD no-selección).
 - Verificación sobre la jornada real del 6-sep-2026: 5,872 candidatos con masa de liquidación en 7 mercados, **0 sin edge**, identidad EV = riesgo·(p·d − 1) intacta en todos, EV exactamente 0 a la cuota justa en todos, 1,716 líneas de cuarto con masa en riesgo media 0.908.

@@ -1,0 +1,152 @@
+# ============================================================================
+#  SOCCER · análisis automático en la ventana de alineaciones
+# ----------------------------------------------------------------------------
+#  POR QUÉ ESTE WORKFLOW ES DISTINTO AL DE MLB. Una señal de fútbol solo puede
+#  ser OFICIAL con el XI confirmado (Signal Engine §8), y API-Football publica las
+#  alineaciones unos 40 minutos antes del inicio. Correr a media mañana solo
+#  produce watchlist. Además, el valor de línea (CLV) necesita la última cotización
+#  antes del pitido inicial, que el motor captura cuando quedan ≤15 minutos.
+#
+#  El portero (bot/toca-correr-futbol.mjs) cuesta UNA llamada a API-Football:
+#  /fixtures?date= devuelve los 1,170 partidos del día en una sola página. Con eso
+#  calcula dos momentos por racimo de partidos, T-35 (alineaciones) y T-10 (cierre),
+#  y dice si toca correr, cuánto dormir y con qué ventana.
+#
+#  SECRETOS (Settings > Secrets and variables > Actions):
+#    BOT_EMAIL / BOT_PASSWORD  cuenta de Supabase del robot (las mismas que MLB)
+#    AF_KEY                    key de API-Football, SOLO para el portero.
+#                              La app sigue leyendo la suya de app_config.af_key.
+#    TG_TOKEN / TG_CHAT        Telegram (opcionales)
+# ============================================================================
+name: SOCCER · análisis automático
+
+on:
+  schedule:
+    # Cada 20 min. Los partidos de las 20 competiciones van desde la mañana europea
+    # hasta la noche americana, así que la ventana es ancha.
+    #
+    # MINUTOS 3, 23 Y 43, NO 0/20/40: GitHub retrasa o PIERDE los disparos cuando hay
+    # carga, y la carga se concentra en los minutos redondos. Aun así entrega una
+    # fracción de lo programado; por eso el portero no exige una franja estrecha y el
+    # job se queda DORMIDO esperando el siguiente momento. Basta con que caiga uno.
+    - cron: '3,23,43 * * * *'
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: '¿Qué quieres hacer?'
+        type: choice
+        default: 'analizar-ya'
+        options:
+          - 'analizar-ya'     # analiza AHORA el slate completo, sin esperar ventana
+          - 'solo-si-toca'    # como el cron: solo en la ventana de alineaciones o el cierre
+      ventana:
+        description: 'Solo partidos que empiezan dentro de N minutos (vacío = todo el día)'
+        type: string
+        default: ''
+
+# Dos corridas a la vez se pisarían escribiendo en Supabase y gastarían el doble.
+concurrency:
+  group: futbol-auto
+  cancel-in-progress: false
+
+jobs:
+  analizar:
+    runs-on: ubuntu-latest
+    # Hasta 4h30: el job puede quedarse esperando despierto a varias ventanas
+    # seguidas, porque el cron de GitHub no es de fiar.
+    timeout-minutes: 280
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: ¿Toca correr?
+        id: portero
+        env:
+          AF_KEY: ${{ secrets.AF_KEY }}
+        run: node bot/toca-correr-futbol.mjs
+
+      - name: Instalar Chromium
+        if: steps.portero.outputs.correr == 'true' || inputs.modo == 'analizar-ya'
+        run: |
+          npm init -y >/dev/null 2>&1
+          npm i --no-save playwright@1.47.2
+          npx playwright install --with-deps chromium
+
+      # Bucle: cubre una ventana, y después vuelve a preguntar. Si queda otra más
+      # tarde, duerme hasta ella y la cubre también. Un solo disparo puede cubrir
+      # toda la tarde de fútbol.
+      - name: Cubrir las ventanas del día
+        if: steps.portero.outputs.correr == 'true' || inputs.modo == 'analizar-ya'
+        env:
+          BOT_EMAIL:    ${{ secrets.BOT_EMAIL }}
+          BOT_PASSWORD: ${{ secrets.BOT_PASSWORD }}
+          AF_KEY:       ${{ secrets.AF_KEY }}
+          APP_URL:      https://mlb-picks-pro.vercel.app/
+          DEPORTE:      futbol
+          TG_TOKEN:     ${{ secrets.TG_TOKEN }}
+          TG_CHAT:      ${{ secrets.TG_CHAT }}
+        run: |
+          set -u
+          LIMITE=$(( $(date +%s) + 255*60 ))   # margen bajo el timeout del job
+          DORMIR="${{ steps.portero.outputs.dormir || '0' }}"
+          VENTANA="${{ steps.portero.outputs.ventana || '' }}"
+          # "analizar-ya" tiene que significar AHORA y sobre TODO el día, no sobre la
+          # ventana que tocara. Si no, un arranque manual se quedaba dormido y parecía
+          # colgado. Después de esta primera corrida el bucle sigue normal.
+          if [ "${{ inputs.modo }}" = "analizar-ya" ]; then
+            echo "Arranque manual: se analiza YA."
+            DORMIR=0
+            VENTANA="${{ inputs.ventana }}"
+          fi
+          VUELTA=0
+          while :; do
+            VUELTA=$((VUELTA+1))
+            if [ "${DORMIR:-0}" -gt 0 ]; then
+              if [ $(( $(date +%s) + DORMIR )) -gt "$LIMITE" ]; then
+                echo "La espera de $((DORMIR/60)) min no cabe en el tiempo del job. Fin."
+                break
+              fi
+              DESPIERTA=$(TZ=America/New_York date -d "+$((DORMIR/60)) minutes" '+%-I:%M %p' 2>/dev/null || echo '?')
+              echo "Vuelta $VUELTA · esperando $((DORMIR/60)) min…"
+              {
+                echo "### ⏳ Durmiendo $((DORMIR/60)) min"
+                echo ""
+                echo "No está colgado: espera despierto y corre a las **$DESPIERTA ET**."
+                echo "Motivo: ${{ steps.portero.outputs.motivo }}"
+              } >> $GITHUB_STEP_SUMMARY
+              sleep "$DORMIR"
+            fi
+            echo "Vuelta $VUELTA · analizando${VENTANA:+ (ventana ${VENTANA} min)}"
+            echo "### ▶️ SOCCER · vuelta $VUELTA · $(TZ=America/New_York date '+%-I:%M %p') ET${VENTANA:+ · ventana ${VENTANA} min}" >> $GITHUB_STEP_SUMMARY
+            VENTANA="$VENTANA" node bot/correr-analisis.mjs || echo "::warning::La corrida $VUELTA falló"
+            # El aviso va DESPUÉS de cada corrida, no al final del job: el job puede
+            # dormir horas, y un aviso que llega tarde no sirve para apostar nada.
+            node bot/avisar.mjs || true
+            [ "$(date +%s)" -ge "$LIMITE" ] && { echo "Tiempo agotado. Fin."; break; }
+            AF_KEY="${AF_KEY}" node bot/toca-correr-futbol.mjs > /tmp/portero-futbol.txt 2>&1 || true
+            cat /tmp/portero-futbol.txt
+            LINEA=$(grep '^RESULTADO' /tmp/portero-futbol.txt | tail -1)
+            case "$LINEA" in
+              *correr=true*)
+                DORMIR=$(echo "$LINEA" | sed -n 's/.*dormir=\([0-9]*\).*/\1/p')
+                VENTANA=$(echo "$LINEA" | sed -n 's/.*ventana=\([0-9]*\).*/\1/p')
+                ;;
+              *) echo "No quedan ventanas. Fin."; break ;;
+            esac
+          done
+
+      - name: Guardar captura del fallo
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fallo-futbol-${{ github.run_id }}
+          path: bot/fallo.png
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: No tocaba
+        if: steps.portero.outputs.correr != 'true' && inputs.modo != 'analizar-ya'
+        run: echo "Sin corrida. ${{ steps.portero.outputs.motivo }}" >> $GITHUB_STEP_SUMMARY

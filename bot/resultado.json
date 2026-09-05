@@ -1,0 +1,27 @@
+{
+  "ok": true,
+  "msg": "reenvío del análisis guardado del 2026-09-05",
+  "guardado": true,
+  "resumen": {
+    "fecha": "2026-09-05",
+    "partidos": 15,
+    "picks": 14,
+    "guardado": true,
+    "aviso": null,
+    "pod": {
+      "nombre": "Garrett Mitchell",
+      "equipo": "MIL",
+      "rival": "Rhett Lowder",
+      "mercado": "Hits",
+      "lado": "over",
+      "linea": 0.5,
+      "unidad": "H",
+      "precio": -174,
+      "edge": 0.0621,
+      "conf": 1,
+      "stake": null,
+      "proy": 0.81,
+      "casas": 3
+    }
+  }
+}

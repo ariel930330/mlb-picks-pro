@@ -50,13 +50,14 @@ on:
           - 'analizar-ya'          # analiza AHORA, sin esperar a la oleada
           - 'solo-si-toca'         # como el cron: solo si hay una oleada en plazo
           - 'probar-telegram'      # solo manda un mensaje de prueba, sin gastar creditos
+          - 'avisar-lo-guardado'   # reenvia por Telegram el analisis YA guardado, sin analizar
 
 # Dos corridas a la vez se pisarían escribiendo en Supabase y gastarían el doble.
 # La PRUEBA de Telegram va en su propio grupo: si no, se quedaría encolada detrás de
 # un job que puede estar durmiendo cinco horas esperando una oleada, y probar un
 # mensaje no puede depender de eso.
 concurrency:
-  group: ${{ inputs.modo == 'probar-telegram' && 'prueba-telegram' || 'analisis-auto' }}
+  group: ${{ (inputs.modo == 'probar-telegram' || inputs.modo == 'avisar-lo-guardado') && 'prueba-telegram' || 'analisis-auto' }}
   cancel-in-progress: false
 
 jobs:
@@ -90,13 +91,26 @@ jobs:
           fi
           node bot/avisar.mjs --prueba
 
+      # Reenvia por Telegram el analisis que YA esta guardado en Supabase. No abre
+      # el navegador y no gasta creditos: sirve para comprobar el aviso con picks
+      # REALES cuando el analisis en si esta dando problemas. Usa el MISMO avisar.mjs
+      # que una corrida normal, asi que lo que llega es identico.
+      - name: Avisar con lo ya guardado
+        if: inputs.modo == 'avisar-lo-guardado'
+        env:
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT:  ${{ secrets.TG_CHAT }}
+        run: |
+          node bot/armar-desde-supabase.mjs
+          node bot/avisar.mjs
+
       - name: ¿Toca correr?
-        if: ${{ inputs.modo != 'probar-telegram' }}
+        if: ${{ inputs.modo != 'probar-telegram' && inputs.modo != 'avisar-lo-guardado' }}
         id: portero
         run: node bot/toca-correr.mjs
 
       - name: Instalar Chromium
-        if: (steps.portero.outputs.correr == 'true' || inputs.modo == 'analizar-ya') && inputs.modo != 'probar-telegram'
+        if: (steps.portero.outputs.correr == 'true' || inputs.modo == 'analizar-ya') && inputs.modo != 'probar-telegram' && inputs.modo != 'avisar-lo-guardado'
         run: |
           npm init -y >/dev/null 2>&1
           npm i --no-save playwright@1.47.2
@@ -106,7 +120,7 @@ jobs:
       # oleada mas tarde, espera dormida hasta ella y la analiza tambien. Asi UN disparo
       # puede cubrir toda la tarde. Termina cuando no queda nada o se agota el tiempo.
       - name: Analizar las oleadas del día
-        if: (steps.portero.outputs.correr == 'true' || inputs.modo == 'analizar-ya') && inputs.modo != 'probar-telegram'
+        if: (steps.portero.outputs.correr == 'true' || inputs.modo == 'analizar-ya') && inputs.modo != 'probar-telegram' && inputs.modo != 'avisar-lo-guardado'
         env:
           BOT_EMAIL:    ${{ secrets.BOT_EMAIL }}
           BOT_PASSWORD: ${{ secrets.BOT_PASSWORD }}
@@ -174,5 +188,5 @@ jobs:
           retention-days: 7
 
       - name: No tocaba
-        if: steps.portero.outputs.correr != 'true' && inputs.modo != 'analizar-ya' && inputs.modo != 'probar-telegram'
+        if: steps.portero.outputs.correr != 'true' && inputs.modo != 'analizar-ya' && inputs.modo != 'probar-telegram' && inputs.modo != 'avisar-lo-guardado'
         run: echo "Sin corrida. ${{ steps.portero.outputs.motivo }}" >> $GITHUB_STEP_SUMMARY

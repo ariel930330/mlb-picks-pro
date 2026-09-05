@@ -80,7 +80,11 @@ if (!r.ok) {
         + `<b>${esc(p.nombre)}</b> (${esc(p.equipo)}) vs ${esc(p.rival)}\n`
         + `<b>${p.lado === 'over' ? 'OVER' : 'UNDER'} ${p.linea}${esc(p.unidad)}</b>  <code>${am(p.precio)}</code>\n`
         + `<i>${esc(p.mercado)}</i> · proyección ${p.proy}${esc(p.unidad)}\n\n`
-        + `Edge <b>${pct(p.edge)}</b> · Confianza <b>${Math.round((p.conf ?? 0) * 100)}%</b> · Stake <b>${p.stake}%</b>\n`
+        // El stake se OMITE si no viene, en vez de escribir "null%". Pasa cuando el
+        // aviso se rearma desde lo guardado en Supabase, que no almacena el tamaño
+        // de apuesta. Mejor no decirlo que decir una cifra inventada.
+        + `Edge <b>${pct(p.edge)}</b> · Confianza <b>${Math.round((p.conf ?? 0) * 100)}%</b>`
+        + (p.stake != null ? ` · Stake <b>${p.stake}%</b>` : '') + `\n`
         + (p.casas ? `<i>${p.casas} casa(s) en esta línea</i>\n` : '')
         + `\n${s.picks} pick(s) con valor · ${s.partidos} partidos`;
   } else {

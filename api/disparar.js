@@ -48,8 +48,10 @@ module.exports = async function handler(req, res) {
   // Qué workflow y con qué modo. Por defecto, el análisis normal.
   const modo = req.query?.modo === 'calificar' ? 'calificar' : 'analisis';
   const archivo = modo === 'calificar' ? 'calificar-auto.yml' : 'analisis-auto.yml';
-  // forzar=1 analiza YA, sin esperar a que toque la oleada. Se usa para probar.
+  // forzar=1 analiza YA, sin esperar a que toque la oleada (para probar a mano).
+  // Sin forzar se comporta como el cron: el portero decide y casi siempre dice que no.
   const forzar = req.query?.forzar === '1';
+  const modoWf = forzar ? 'analizar-ya' : 'solo-si-toca';
 
   try {
     const r = await fetch(
@@ -64,7 +66,7 @@ module.exports = async function handler(req, res) {
         },
         body: JSON.stringify({
           ref: 'main',
-          ...(modo === 'analisis' ? { inputs: { forzar: forzar ? 'true' : 'false' } } : {}),
+          ...(modo === 'analisis' ? { inputs: { modo: modoWf } } : {}),
         }),
       });
 

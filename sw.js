@@ -7,7 +7,9 @@
 // en una version vieja y las correcciones no llegarian nunca. Se pide siempre a la
 // red; la copia solo entra si la red falla.
 const CACHE = 'mlb-picks-v1';
-const BASE  = ['./', './index.html', './manifest.webmanifest',
+const BASE  = ['./', './index.html', './core.js',
+               './deportes/mlb.js', './deportes/mlb.css',
+               './manifest.webmanifest',
                './icons/icon-192.png', './icons/icon-512.png'];
 
 self.addEventListener('install', e => {

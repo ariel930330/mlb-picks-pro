@@ -1,6 +1,3 @@
 {
-  "crons": [
-    { "path": "/api/disparar", "schedule": "0 17 * * *" },
-    { "path": "/api/disparar", "schedule": "30 22 * * *" }
-  ]
+  "_nota": "Sin crons a proposito. El disparador /api/disparar esta listo y funciona a mano con ?clave=, pero no esta programado: por ahora manda el cron de GitHub Actions, que con 3 oleadas al dia da abasto. Para encenderlo, ver bot/DISPARADOR-VERCEL.md."
 }

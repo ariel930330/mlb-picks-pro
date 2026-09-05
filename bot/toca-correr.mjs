@@ -2,7 +2,7 @@
 //  ¿Toca correr un análisis ahora?
 // ----------------------------------------------------------------------------
 //  El cron dispara cada 30 minutos durante la ventana de béisbol, pero un
-//  análisis completo cuesta ~94 créditos de The Odds API y la cuota es de 20,000
+//  análisis completo cuesta ~183 créditos de The Odds API con 15 juegos y la cuota es de 20,000
 //  al mes. Correr en cada disparo serían ~1,400/día: no cabe.
 //
 //  Este portero usa SOLO la API de MLB, que es gratis, para decidir. Si no toca,
@@ -34,12 +34,27 @@ import { appendFileSync } from 'node:fs';
 // se cubrio, no se gasta. Un retraso hace que el analisis salga mas cerca del juego,
 // que es peor que a los 60 minutos, pero infinitamente mejor que no salir.
 const MIN_ANTES   = 75;   // se analiza si el primer juego del grupo entra en este plazo
-// Cuanto mas chico, mas cerca de cada juego se analiza — y mas se gasta. Estuvo en
-// 120 unas semanas por falta de creditos (el backtest de agosto se comio 10,000).
-// Con la cuota ya reiniciada vuelve a 45, que es el valor de criterio: con 45 la
-// jornada de hoy sale en 5 oleadas en vez de 3, asi que ningun juego se analiza con
-// mas de ~2h de antelacion y las alineaciones ya estan puestas.
-const RACIMO_MIN  = 45;   // juegos que arrancan dentro de estos minutos = una sola oleada
+// Cuanto mas chico, mas cerca de cada juego se analiza — y mas se gasta.
+//
+// EL PRESUPUESTO MANDA, y la cuenta que habia aqui estaba MAL. Se decia "~94
+// creditos por analisis"; el numero real, contado sobre los mercados que el codigo
+// pide hoy, es 12 por juego (3 de F5 + 3 de props de abridor + 6 de props de
+// bateador) mas 3 de la llamada general. Con los 15 juegos de una jornada normal
+// son 183, no 94.
+//
+//   RACIMO_MIN  oleadas/dia   al mes
+//        120         3         16,470   cabe en la cuota de 20,000
+//         75         4         21,960   NO cabe
+//         45         5         27,450   NO cabe (un 37% de mas)
+//
+// Por eso se queda en 120. El coste es real: un juego que arranca 2 horas despues
+// del primero de su grupo se analiza con ~3 horas de antelacion en vez de 1, asi
+// que le tocan alineaciones mas verdes.
+//
+// PARA BAJARLO A 45 sin pasarse habria que apagar los props de bateador, que son
+// 6 de los 12 creditos por juego: 5 oleadas saldrian a 93 por analisis, 13,950 al
+// mes. Es la unica combinacion que da ambas cosas.
+const RACIMO_MIN  = 120;  // juegos que arrancan dentro de estos minutos = una sola oleada
 // Una oleada se da por CUBIERTA si ya hubo un analisis despues de que ella entrara en
 // el plazo. Asi no se paga dos veces por la misma, aunque el cron dispare varias veces
 // dentro de su hora y cuarto.

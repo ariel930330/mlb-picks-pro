@@ -6,7 +6,7 @@
 #  usa solo la API de MLB, que es gratis, para decidir si toca.
 #
 #  Solo cuando falta ~1 hora para el primer juego de una oleada se abre el
-#  navegador y se corre el análisis de verdad (~94 créditos de The Odds API).
+#  navegador y se corre el análisis de verdad (~183 créditos de The Odds API con 15 juegos).
 #  Con eso salen unas 4-5 corridas al día, ~11,000 créditos al mes contra una
 #  cuota de 20,000.
 #
@@ -73,7 +73,7 @@ jobs:
 
       # Prueba aislada del aviso. Manda un mensaje de ejemplo y termina: no abre el
       # navegador, no analiza y no gasta un solo credito de The Odds API. Sirve para
-      # comprobar TG_TOKEN y TG_CHAT sin pagar 94 creditos por ver si llega un mensaje.
+      # comprobar TG_TOKEN y TG_CHAT sin pagar ~183 creditos por ver si llega un mensaje.
       # Este paso SI falla si el envio falla: es lo unico que se le pidio.
       - name: Probar Telegram
         if: inputs.probar_telegram

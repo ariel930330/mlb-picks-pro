@@ -21,7 +21,7 @@ if (!TOKEN || !CHAT) {
 }
 
 // Modo prueba: manda un mensaje de ejemplo SIN correr ningun analisis. Existe para
-// poder comprobar que el token y el chat estan bien sin gastar 94 creditos de The
+// poder comprobar que el token y el chat estan bien sin gastar ~183 creditos de The
 // Odds API solo para ver si llega un mensaje.
 const PRUEBA = process.argv.includes('--prueba');
 

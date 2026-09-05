@@ -56,7 +56,7 @@ esos dan acceso a toda tu cuenta, y ya tuvimos uno expuesto en una captura.
 ### 2 · Inventar la clave del endpoint
 
 Cualquier texto largo y aleatorio. Sirve para que nadie más pueda disparar
-análisis a tu costa: cada uno gasta ~94 créditos de The Odds API.
+análisis a tu costa: cada uno gasta ~183 créditos de The Odds API.
 
 ### 3 · Guardarlos en Vercel
 

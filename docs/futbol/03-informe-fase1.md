@@ -29,8 +29,19 @@ Reporte del dueño: "el modelo no calcula edge". Confirmado; eran cuatro defecto
 
 Además, los valores se guardan sin redondear y el redondeo pasó a ser solo de presentación (SE §13 / POD §13).
 
+## CAMBIO DE CRITERIO PEDIDO POR EL DUEÑO (5-sep-2026)
+"Que los picks los dé por Edge, Confianza y Data Quality". Implementado como el esquema del **Master §6**:
+- **Score = 0.4375 · Edge Strength + 0.3125 · Confianza + 0.25 · Data Quality**. Los pesos son el bootstrap del Master §6 (0.35 / 0.25 / 0.20) restringido a los tres que nombró el dueño y renormalizado a 1. Bandas **85 / 72 / 60**, las del propio Master §6.
+- **Cada tier exige además un mínimo en los tres por separado**: Elite 70 / 75 / 95, Strong 50 / 65 / 90, Lean 30 / 55 / 80. Los de calidad son los valores literales de SE §7. Los de edge equivalen a 3.5 / 2.5 / 1.5 puntos porcentuales.
+- **Edge Strength** = mín(100, 20 · edge_pp): 5 pp = 100 (S21).
+- **Confianza** = media a peso igual de los cuatro insumos que el Master §6 nombra: calibración validada, certeza del EV, soporte de muestra (ESS) y acuerdo entre las dos familias de modelo (S22). Sin calibración empírica ese cuarto se limita a 50, así que hoy la confianza no puede pasar de 87.5. Sube sola cuando exista calibración.
+- **Se conservan como puertas obligatorias** los mínimos de EV y EV inferior de SE §7, más XI confirmado, acuerdo de modelos, frescura, estabilidad y correlación. El propio Master §6 exige configurarlos: "Composite score alone cannot qualify a signal".
+- **Conflicto declarado (Master §1.6)**: SE §7 pedía además percentil ≥85/95/98 del slate. Ya no decide; se calcula y se guarda para auditoría. Ventaja: el criterio pasa a ser absoluto y deja de depender de cuántos partidos haya ese día.
+
+Efecto medido sobre la jornada real del 6-sep-2026 (forzando XI confirmado y cotización de 4 minutos, que es el escenario de la ventana de publicación): **6 Strong y 10 Lean**, con edge de 3.1 a 7.0 puntos porcentuales. Con el criterio anterior bastaba el EV y entraban selecciones con edge de 2 pp.
+
 ## PROBADO
-- `tests/futbol.test.mjs`: 54 pruebas, todas pasan (conversión de cuotas; no-vig 3 vías; DNB push y bloqueo; DC unión; AH cuartos/enteros/medios; totales de cuarto; separación de periodos; coherencia BTTS/1X2/totales; bivariado; insumos faltantes/stale/outlier/línea; fronteras de tier; sin señales forzadas; XI provisional; frescura; pesos; S19; formato AH del proveedor; correlación; precio mínimo; expiración; determinismo; edge presente en todo mercado; EV igual a la suma por estados; EV cero a la cuota justa con empuje y cuartos; walk-forward sin fuga; fuerzas/ESS; fixture dorado independiente; POD no-selección).
+- `tests/futbol.test.mjs`: 59 pruebas, todas pasan (conversión de cuotas; no-vig 3 vías; DNB push y bloqueo; DC unión; AH cuartos/enteros/medios; totales de cuarto; separación de periodos; coherencia BTTS/1X2/totales; bivariado; insumos faltantes/stale/outlier/línea; fronteras de tier; sin señales forzadas; XI provisional; frescura; pesos; S19; formato AH del proveedor; correlación; precio mínimo; expiración; determinismo; edge presente en todo mercado; EV igual a la suma por estados; EV cero a la cuota justa con empuje y cuartos; fórmula del compuesto y de la confianza; edge minúsculo no califica aunque el EV sea positivo; calidad baja bloquea sola; el percentil ya no decide; walk-forward sin fuga; fuerzas/ESS; fixture dorado independiente; POD no-selección).
 - Verificación sobre la jornada real del 6-sep-2026: 5,872 candidatos con masa de liquidación en 7 mercados, **0 sin edge**, identidad EV = riesgo·(p·d − 1) intacta en todos, EV exactamente 0 a la cuota justa en todos, 1,716 líneas de cuarto con masa en riesgo media 0.908.
 - Corrida real 2026-09-06 (17 competiciones con cuotas, 52 partidos, 5,922 candidatos, 84 llamadas, 51 s): sin errores; render de todas las pestañas y del modal.
 
@@ -54,4 +65,6 @@ Además, los valores se guardan sin redondear y el redondeo pasó a ser solo de 
 ## RIESGOS QUE DEBE VIGILAR EL PAPER TRACKING
 1. Sesgo favorito-longshot del modelo (EV grandes en cuotas +300 o más). El Signal Engine no fija rango de cuotas para señales (solo el POD lo hace): se registra tal cual y la calibración por banda de cuota (SE §9) decidirá.
 2. Percentil dentro del slate (A1): en días con pocos candidatos, Elite/Strong dependen de la posición relativa, no de un umbral absoluto.
-3. Sin corridas en ventana XI (≈T-40 a T-5) no habrá señales oficiales, solo watchlist.
+3. Sin corridas en ventana XI (≈T-40 a T-5) no habrá señales oficiales, solo watchlist. En la prueba del 6-sep las cotizaciones del proveedor tenían 3 a 4 horas de antigüedad y la puerta de frescura (S11) las bloqueaba; cerca del inicio eso no ocurre.
+4. **Sesgo observado hacia el UNDER**: en la prueba forzada, las 16 señales eran totales por debajo. Puede ser real (el modelo proyecta menos goles que el mercado) o un sesgo del ajuste. Es lo primero que debe vigilar el paper tracking, segmentando por lado y por banda de cuota.
+5. Con comisión normal, un EV apenas positivo ya implica un edge de ~2 pp, así que parte del edge medido es comisión y no habilidad del modelo. Por eso se exigen **las dos cosas** (edge y EV) y no una sola.

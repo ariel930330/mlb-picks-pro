@@ -6,7 +6,7 @@
 | `deportes/futbol.js` | Motor completo + interfaz (un archivo por deporte, `deportes/LEEME.md`). Módulos internos: VERSIONES/CONFIG, REGISTRO DE MERCADOS, NÚCLEO MATEMÁTICO, MODELO, ADAPTADOR API-FOOTBALL, CANDIDATOS/EV, PUERTAS/SCORES/TIERS, POD, CORRIDA, INTERFAZ |
 | `deportes/futbol.css` | Estilos, todo bajo `#dep-futbol` |
 | `futbol-setup.sql` | Tablas Supabase (append-only) + RLS |
-| `tests/futbol.test.mjs` | 54 pruebas (Master §10). `node tests/futbol.test.mjs` |
+| `tests/futbol.test.mjs` | 59 pruebas (Master §10). `node tests/futbol.test.mjs` |
 | `docs/futbol/01-auditoria.md` | Auditoría Master §1 |
 | `docs/futbol/03-informe-fase1.md` | Informe de cierre de fase (implementado / probado / validado / bloqueado) |
 
@@ -31,6 +31,19 @@
 | XI | ≤60 min o alineaciones publicadas (≈T-40) | pueden abrirse Lean/Strong/Elite (PAPER) |
 | T-30 / T-5 | ≤30 / ≤5 min | recheck de precio; frescura por tier (S11) |
 | INICIADO | kickoff pasado | no se evalúa (estado ≠ NS) |
+
+## Qué decide un pick
+Tres números de 0 a 100, combinados en un score único (Master §6, instrucción del dueño del 5-sep-2026):
+
+| Score | Peso | Cómo se calcula |
+|---|---|---|
+| **Edge** | 43.75% | mín(100, 20 × edge en puntos porcentuales). 5 pp = 100 |
+| **Confianza** | 31.25% | media de calibración validada, certeza del EV, soporte de muestra y acuerdo entre las dos familias de modelo |
+| **Calidad de dato** | 25% | completitud, frescura, acuerdo entre casas y estado de la alineación |
+
+Bandas: **Elite ≥85 · Strong ≥72 · Lean ≥60**. Cada tier exige además un mínimo en los tres por separado (Elite 70/75/95, Strong 50/65/90, Lean 30/55/80) y sigue exigiendo EV positivo por encima del umbral de su tier, EV inferior, XI confirmado, acuerdo de modelos y frescura. El score **no es una probabilidad de ganar**.
+
+Mientras no exista calibración empírica, ese cuarto de la confianza vale 50, así que la confianza máxima hoy es 87.5. Sube sola cuando la calibración se valide.
 
 ## Edge y EV no son lo mismo (SE §3)
 - **Edge** (en puntos porcentuales) compara la probabilidad del modelo con la del mercado **sin comisión**. Dice si el modelo discrepa del mercado.

@@ -35,6 +35,28 @@ const CONFIG = Object.freeze({
   derivada_max_pp: 0.05,                                      // coherencia DC vs 1X2 (SE 4.1 mkt_derivative_gap)
   estabilidad_min: 50,                                        // Lean: "no fragile input dominates"
   ess_pleno: 20,
+  // ── DECISIÓN DEL PICK · Master §6 ──────────────────────────────────────────
+  // Instrucción del dueño (5-sep-2026): "que los picks los dé por Edge, Confianza
+  // y Data Quality". Master §6 lo contempla: produce los cinco scores, ordena por
+  // el compuesto y exige mínimos por tier. Los pesos son el bootstrap del Master §6
+  // (0.35 edge / 0.25 confianza / 0.20 calidad) RESTRINGIDO a esos tres y
+  // renormalizado a 1; las bandas 85/72/60 son las del propio Master §6.
+  // CONFLICTO DECLARADO (Master §1.6): SE §7 pedía además "rank ≥ p85/p95/p98"
+  // dentro del slate. Ese percentil se sigue calculando y guardando para auditoría,
+  // pero YA NO decide: manda la regla del dueño, que además es absoluta y no
+  // depende de cuántos partidos haya ese día.
+  score: {
+    pesos: { edge: 0.4375, confianza: 0.3125, calidad: 0.25 },
+    bandas: { elite: 85, strong: 72, lean: 60 },
+    edgeK: 20,                    // Edge Strength = min(100, 20·edge_pp) → 5 pp = 100 (POD §13 usa 10·gap con piso de 5.5 pp, que es escala de props)
+    calibracionSinValidar: 50,    // Master §6 define Confidence con "validated calibration": sin calibración empírica ese cuarto se limita
+    seFull: 0.05,                 // incertidumbre: un SE del EV de 5 pp anula ese cuarto
+    minimos: {                    // Master §6: "Configure tier-specific minimums"; la calidad son los valores literales de SE §7
+      elite:  { edge: 70, confianza: 75, calidad: 95 },   // edge 70/100 = 3.5 pp
+      strong: { edge: 50, confianza: 65, calidad: 90 },   // 2.5 pp
+      lean:   { edge: 30, confianza: 55, calidad: 80 },   // 1.5 pp
+    },
+  },
   calibracion: { metodo: 'market_prior_shrinkage', K_m: 60 },   // S19: p_cal = p_mkt + w·(p_model − p_mkt), w = ESS/(ESS+K_m)
   xg: { peso: 0.6, cobertura_min: 0.6, stats_por_corrida: 120 },   // S13
   lineups_ventana_min: 120,                                   // se piden alineaciones a ≤120 min del inicio
@@ -72,6 +94,9 @@ const CONFIG = Object.freeze({
     'S9 sin caps de publicación', 'S10 todas las casas aprobadas; Pinnacle única sharp', 'S11 frescura por tier (min)',
     'S12 λ3 bivariado 0.12', 'S13 mezcla xG 0.6 / goles 0.4 en familia B', 'S14 desacuerdo máximo 6 pp',
     'S15 outlier de precio 3 pp', 'S16 una tesis por partido y lado', 'S18 SD de λ = 0.5·√(1/ESS_att + 1/ESS_def)', 'S19 calibración provisional: shrinkage al prior de mercado con K_m=60 (sustituir por calibración empírica SE §9)',
+    'S20 el pick lo deciden Edge Strength, Confianza y Data Quality (Master §6), pesos 0.4375/0.3125/0.25 y bandas 85/72/60; el percentil del slate de SE §7 se guarda pero no decide (instrucción del dueño 5-sep-2026)',
+    'S21 Edge Strength = min(100, 20·edge_pp); mínimos por tier 3.5/2.5/1.5 pp',
+    'S22 Confianza = media de calibración validada, incertidumbre del EV, soporte de muestra (ESS) y acuerdo entre familias (los cuatro insumos que nombra Master §6)',
   ],
 });
 // S1 · Competiciones del dueño (ids verificados contra /leagues el 5-sep-2026)
@@ -472,14 +497,32 @@ function scoresDe(c, ctx, dq) {
   const context = (ctx.rest_known ? 50 : 0) + (ctx.injury_feed ? 25 : 0) + (ctx.fx.referee ? 25 : 0);
   const evPart = c.ev != null ? clamp(c.ev / .08, 0, 1) : 0, lcbPart = c.ev_lcb != null && c.ev_lcb > 0 ? 1 : 0;
   const marketValue = clamp(100 * (.5 * evPart + .2 * lcbPart + .15 * Math.min(1, (c.filas || 0) / 8) + .15 * (1 - Math.min(1, (c.dispersion || 0) / .05))), 0, 100);
+  // Los siete componentes de SE §7.1 se siguen calculando y guardando para auditoría,
+  // pero el pick lo deciden los tres scores del Master §6 (instrucción del dueño, S20).
   const comp = [teamXg, xiGk, roleMin, tactics, context, marketValue, dq.dq];
   const pesos = CONFIG.pesos[MERCADOS[c.mercado].pesos] || CONFIG.pesos.resultado;
-  const composite = sum(comp.map((v, i) => v * pesos[i])) / 100;
-  const acuerdo = c.p_A != null && c.p_B != null && Math.abs(c.p_A - c.p_B) <= CONFIG.acuerdo_max_pp / 100;
+  const compuestoSE71 = sum(comp.map((v, i) => v * pesos[i])) / 100;
+  const S = CONFIG.score;
+  // ── 1 · EDGE STRENGTH · magnitud del edge de probabilidad, en puntos porcentuales ──
+  const edgeStrength = clamp(S.edgeK * (c.edge_pp ?? 0), 0, 100);
+  // ── 2 · CONFIANZA · los cuatro insumos que nombra Master §6, a peso igual ──
+  //   "validated calibration, uncertainty, relevant sample support, and model agreement"
+  const cCalib = /market_prior|uncalibrated/.test(VERSIONES.calibracion) ? S.calibracionSinValidar : 100;
+  const cIncert = c.se != null ? clamp(100 * (1 - Math.min(1, c.se / S.seFull)), 0, 100) : 0;
+  const cMuestra = clamp(100 * Math.min(1, ess / CONFIG.ess_pleno), 0, 100);
+  const difPP = (c.p_A != null && c.p_B != null) ? Math.abs(c.p_A - c.p_B) * 100 : null;
+  const cAcuerdo = difPP == null ? 0 : clamp(100 * (1 - difPP / CONFIG.acuerdo_max_pp), 0, 100);
+  const confianza = .25 * cCalib + .25 * cIncert + .25 * cMuestra + .25 * cAcuerdo;
+  const acuerdo = difPP != null && difPP <= CONFIG.acuerdo_max_pp;
   const estabilidad = c.se != null ? clamp(100 * (1 - Math.min(1, c.se / .05)), 0, 100) : 0;
-  const cinco = { edge_strength: Math.round(100 * evPart), confidence: Math.round(100 * (acuerdo ? 1 : .5) * Math.min(1, ess / CONFIG.ess_pleno)), data_quality: dq.dq,
-                  stability: Math.round(estabilidad), market_quality: Math.round(100 * (.5 * Math.min(1, (c.filas || 0) / 8) + .3 * (1 - Math.min(1, (c.overround || .1) / .1)) + .2 * (1 - Math.min(1, (c.dispersion || 0) / .05)))) };
-  return { componentes: { team_xg: teamXg, xi_gk: xiGk, role_min: roleMin, tactics, context, market_value: marketValue, quality: dq.dq }, pesos, composite: +composite.toFixed(2), acuerdo, estabilidad, cinco, unavailable: ['tactics'] };
+  // ── 3 · DATA QUALITY · ya calculada ──
+  // Compuesto que DECIDE (Master §6, pesos renormalizados sobre los tres)
+  const composite = S.pesos.edge * edgeStrength + S.pesos.confianza * confianza + S.pesos.calidad * dq.dq;
+  const cinco = { edge_strength: edgeStrength, confidence: confianza, data_quality: dq.dq, stability: estabilidad,
+                  market_quality: 100 * (.5 * Math.min(1, (c.filas || 0) / 8) + .3 * (1 - Math.min(1, (c.overround || .1) / .1)) + .2 * (1 - Math.min(1, (c.dispersion || 0) / .05))) };
+  return { componentes: { team_xg: teamXg, xi_gk: xiGk, role_min: roleMin, tactics, context, market_value: marketValue, quality: dq.dq }, pesos, compuesto_se71: compuestoSE71,
+           confianza_partes: { calibracion: cCalib, incertidumbre: cIncert, muestra: cMuestra, acuerdo: cAcuerdo }, pesos_decision: S.pesos,
+           composite, acuerdo, estabilidad, cinco, unavailable: ['tactics'] };
 }
 // Puertas duras SE §7 (universales) → si falla alguna: No Signal
 function puertasUniversales(c, ctx) {
@@ -498,7 +541,8 @@ function asignarTiers(cands, ctxDe) {
     const pu = puertasUniversales(c, ctx); c.detalles = pu.det;
     if (!pu.ok) { c.estado = ESTADOS.NONE; c.codes = [...new Set([...(c.codes || []), ...pu.codes])]; continue; }
     c.dq = dqDe(c, ctx); c.scores = scoresDe(c, ctx, c.dq); }
-  // 2 · percentil dentro del slate (A1): candidatos ejecutables con EV > 0
+  // 2 · percentil dentro del slate: se calcula y se guarda para auditoría, pero YA NO
+  //     decide el tier (S20: manda la banda absoluta del compuesto Master §6).
   const ejec = cands.filter(c => c.estado !== ESTADOS.NONE && c.ev != null && c.ev > 0).sort((a, b) => b.scores.composite - a.scores.composite || b.ev - a.ev);
   ejec.forEach((c, i) => { c.percentil = +((ejec.length - i) / ejec.length).toFixed(4); c.rank = i + 1; });
   // 3 · tier de Elite hacia abajo con razón de downgrade; XI sin confirmar → Signal Detected con tier provisional
@@ -506,14 +550,28 @@ function asignarTiers(cands, ctxDe) {
     const ctx = ctxDe(c), T = CONFIG.tiers, codes = [], down = [];
     if (!(c.ev > 0)) { c.estado = ESTADOS.NONE; c.codes = [RC.VALUE + '_ABSENT']; c.detalles.push('EV ≤ 0 al precio ejecutable'); continue; }
     codes.push(RC.VALUE); if (c.scores.acuerdo) codes.push('MODEL_AGREEMENT'); if (c.ev_lcb > 0) codes.push(RC.LOWER_BOUND_PASS); if (!c.outliers_excluidos) codes.push(RC.MARKET_COHERENT);
-    const fresca = lim => ctx.quote_age_min <= lim;
-    const elite = c.ev >= T.elite.ev && c.percentil >= T.elite.pct && c.ev_lcb >= T.elite.lcb && c.dq.dq >= T.elite.dq && c.scores.acuerdo && fresca(CONFIG.frescura_min.elite);
-    if (!elite) down.push('Elite: ' + [c.ev < T.elite.ev && `EV ${(c.ev * 100).toFixed(1)}% < 4.5%`, c.percentil < T.elite.pct && `percentil ${Math.round(c.percentil * 100)} < 98`, c.ev_lcb < T.elite.lcb && `EV_LCB ${(c.ev_lcb * 100).toFixed(1)}% < 1.0%`, c.dq.dq < T.elite.dq && `DQ ${c.dq.dq} < 95`, !c.scores.acuerdo && 'modelos en desacuerdo', !fresca(CONFIG.frescura_min.elite) && 'cotización no fresca'].filter(Boolean).join(', '));
-    const strong = !elite && c.ev >= T.strong.ev && c.percentil >= T.strong.pct && c.ev_lcb >= T.strong.lcb && c.dq.dq >= T.strong.dq && c.scores.acuerdo && fresca(CONFIG.frescura_min.strong);
-    if (!elite && !strong) down.push('Strong: ' + [c.ev < T.strong.ev && `EV < 3.0%`, c.percentil < T.strong.pct && `percentil ${Math.round(c.percentil * 100)} < 95`, c.ev_lcb < T.strong.lcb && 'EV_LCB < 0', c.dq.dq < T.strong.dq && `DQ ${c.dq.dq} < 90`, !c.scores.acuerdo && 'modelos en desacuerdo', !fresca(CONFIG.frescura_min.strong) && 'cotización no fresca'].filter(Boolean).join(', '));
-    const lean = !elite && !strong && c.ev >= T.lean.ev && c.percentil >= T.lean.pct && c.dq.dq >= T.lean.dq && c.scores.estabilidad >= CONFIG.estabilidad_min && fresca(CONFIG.frescura_min.lean);
-    if (!elite && !strong && !lean) down.push('Lean: ' + [c.ev < T.lean.ev && `EV < 1.5%`, c.percentil < T.lean.pct && `percentil ${Math.round(c.percentil * 100)} < 85`, c.dq.dq < T.lean.dq && `DQ ${c.dq.dq} < 80`, c.scores.estabilidad < CONFIG.estabilidad_min && 'insumo frágil domina (estabilidad baja)', !fresca(CONFIG.frescura_min.lean) && 'cotización no fresca'].filter(Boolean).join(', '));
-    const tier = elite ? ESTADOS.ELITE : strong ? ESTADOS.STRONG : lean ? ESTADOS.LEAN : null;
+    // ── El pick lo deciden EDGE, CONFIANZA y DATA QUALITY (Master §6 · S20) ──
+    // Banda del compuesto + mínimo de cada uno de los tres. Encima siguen las puertas
+    // obligatorias que el propio Master §6 exige configurar: EV positivo, valor
+    // conservador (EV inferior), frescura, acuerdo de modelos y estabilidad.
+    const sc = c.scores, M = CONFIG.score.minimos, B = CONFIG.score.bandas;
+    const falla = nivel => {
+      const m = M[nivel], t = T[nivel], L = [];
+      if (sc.composite < B[nivel]) L.push(`score ${sc.composite.toFixed(1)} < ${B[nivel]}`);
+      if (sc.cinco.edge_strength < m.edge) L.push(`edge ${(c.edge_pp ?? 0).toFixed(2)} pp = ${Math.round(sc.cinco.edge_strength)}/100 < ${m.edge}`);
+      if (sc.cinco.confidence < m.confianza) L.push(`confianza ${Math.round(sc.cinco.confidence)} < ${m.confianza}`);
+      if (c.dq.dq < m.calidad) L.push(`calidad de dato ${c.dq.dq} < ${m.calidad}`);
+      if (c.ev < t.ev) L.push(`EV ${(c.ev * 100).toFixed(1)}% < ${(t.ev * 100).toFixed(1)}%`);
+      if (t.lcb != null && c.ev_lcb < t.lcb) L.push(`EV inferior ${(c.ev_lcb * 100).toFixed(1)}% < ${(t.lcb * 100).toFixed(1)}%`);
+      if (nivel !== 'lean' && !sc.acuerdo) L.push('las dos familias de modelo discrepan');
+      if (nivel === 'lean' && sc.estabilidad < CONFIG.estabilidad_min) L.push('insumo frágil domina (estabilidad baja)');
+      if (ctx.quote_age_min > CONFIG.frescura_min[nivel]) L.push(`cotización de ${Math.round(ctx.quote_age_min)} min (máx ${CONFIG.frescura_min[nivel]})`);
+      return L;
+    };
+    const fE = falla('elite'); if (fE.length) down.push('Elite: ' + fE.join(', '));
+    const fS = fE.length ? falla('strong') : []; if (fE.length && fS.length) down.push('Strong: ' + fS.join(', '));
+    const fL = (fE.length && fS.length) ? falla('lean') : []; if (fE.length && fS.length && fL.length) down.push('Lean: ' + fL.join(', '));
+    const tier = !fE.length ? ESTADOS.ELITE : !fS.length ? ESTADOS.STRONG : !fL.length ? ESTADOS.LEAN : null;
     if (!c.scores.acuerdo) codes.push(RC.MODEL_DISAGREEMENT);
     c.downgrade = down;
     if (tier && ctx.lineup !== 'CONFIRMED') { c.estado = ESTADOS.DETECTED; c.provisional = tier; codes.push(RC.LINEUP_BLOCK); c.detalles.push('XI oficial no disponible todavía: calificaría como ' + tier + ' (SE §8 "qualify provisionally")'); }
@@ -656,7 +714,7 @@ function registroDe(c, snap) {
     model: c.masa ? { home_goals_mean: +c.fx.dist.LA.lh.toFixed(3), away_goals_mean: +c.fx.dist.LA.la.toFixed(3), family_A: { p: c.p_A, lambdas: [c.fx.dist.LA.lh, c.fx.dist.LA.la] }, family_B: { p: c.p_B, lambdas: [c.fx.dist.LB.lh, c.fx.dist.LB.la] }, families: c.fx.dist.familias, p_model_raw: c.p_raw, model_weight: c.w_modelo, calibrated_probability: c.p_model, calibration_version: VERSIONES.calibracion, ev_model_raw: c.ev_modelo, ev_market: c.ev_mercado, fair_decimal: c.fair_dec, fair_american: c.fair_dec ? decAAm(c.fair_dec) : null, settlement_mass: c.masa, at_risk_mass: c.riesgo, expected_cover: c.cobertura, edge_pp: c.edge_pp, edge_percent: c.edge_rel, edge_units: c.ev, ev: c.ev, ev_se: c.se, ev_lower_bound: c.ev_lcb, lcb_method: `parametric bootstrap ${CONFIG.lcb.draws} draws, k=${CONFIG.lcb.k}`, ess: c.fx.dist.ess, distribution_version: VERSIONES.modelo } : null,
     market_state: c.cons ? { consensus_novig_p: c.p_novig, novig_method: CONFIG.novig.referencia, devig_spread: c.devig_spread, sharp_novig_p: c.sharp_p, price_dispersion: c.dispersion, overround: c.overround, derivative_gap: c.cons.derivative_gap ?? null, stale_quote: c.ctx_resumen?.quote_age_min > CONFIG.frescura_min.detected, quote_age_min: c.ctx_resumen?.quote_age_min } : { unavailable_reason: c.detalle || 'sin set completo' },
     context: { lineup_state: fx.lineup, lineup_time: fx.lineup_time || null, formation: fx.formacion, goalkeeper_confirmed: fx.gk_confirmed, injuries_reported: fx.bajas, injury_feed: fx.injury_feed, referee: fx.referee, venue: fx.venue, round: fx.round, window: fx.ventana, weather: 'unavailable (S5)', tactics: 'unavailable (4.7/4.9 no disponibles)' },
-    quality: c.dq ? { data_quality: c.dq.dq, dq_parts: c.dq, model_agreement: c.scores.acuerdo, components: c.scores.componentes, weights: c.scores.pesos, composite: c.scores.composite, five_scores: c.scores.cinco, unavailable_components: c.scores.unavailable, hard_gates_passed: c.estado !== ESTADOS.NONE } : null,
+    quality: c.dq ? { data_quality: c.dq.dq, dq_parts: c.dq, model_agreement: c.scores.acuerdo, five_scores: c.scores.cinco, decision_scores: { edge_strength: c.scores.cinco.edge_strength, confidence: c.scores.cinco.confidence, data_quality: c.dq.dq }, decision_weights: c.scores.pesos_decision, confidence_parts: c.scores.confianza_partes, composite: c.scores.composite, bands: CONFIG.score.bandas, minimums: CONFIG.score.minimos, se71_components: c.scores.componentes, se71_weights: c.scores.pesos, se71_composite: c.scores.compuesto_se71, unavailable_components: c.scores.unavailable, hard_gates_passed: c.estado !== ESTADOS.NONE } : null,
     signal: { state: c.estado, provisional_tier: c.provisional || null, rank_percentile: c.percentil ?? null, rank: c.rank ?? null, reason_codes: c.codes, downgrade_reasons: c.downgrade || [], details: c.detalles || [], correlation_family: `${fx.id}|${c.tesis}`, expires_at: fx.kickoff, recheck_at: null, validation_status: 'PAPER' },
     audit: { snapshot_id: snap.snapshot_id, input_hash: snap.input_hash, versions: VERSIONES, assumptions: CONFIG.supuestos },
   };
@@ -768,11 +826,26 @@ function htmlResumen() {
   </div>
   <div class="sc-note">${S.guardado ? (S.guardado.ok ? '☁ ' : '⚠ ') + esc(S.guardado.msg) : ''} ${S.partidos.some(p => p.lineup !== 'CONFIRMED') ? '· Las señales oficiales requieren XI confirmado (SE §8); antes de eso los candidatos que califican aparecen en la watchlist con su tier provisional.' : ''}</div>`;
 }
+// Los tres scores que deciden el pick (Master §6 · S20), con su barra y la banda alcanzada.
+function barras(c) {
+  if (!c.scores) return '';
+  const f = c.scores.cinco, B = CONFIG.score.bandas, M = CONFIG.score.minimos;
+  const nivel = c.provisional || c.estado;
+  const min = nivel === ESTADOS.ELITE ? M.elite : nivel === ESTADOS.STRONG ? M.strong : M.lean;
+  const barra = (etq, val, minimo, extra) => `<div class="sc-m${val < minimo ? ' bajo' : ''}"><span>${etq}</span><b>${Math.round(val)}</b><i><u style="width:${clamp(val, 0, 100)}%"></u></i><small>${extra}</small></div>`;
+  return `<div class="sc-scores">
+    ${barra('Edge', f.edge_strength, min.edge, `${(c.edge_pp ?? 0).toFixed(2)} pp · mín ${(min.edge / CONFIG.score.edgeK).toFixed(1)} pp`)}
+    ${barra('Confianza', f.confidence, min.confianza, `mín ${min.confianza}`)}
+    ${barra('Calidad', f.data_quality, min.calidad, `mín ${min.calidad}`)}
+    <div class="sc-tot"><span>Score</span><b>${c.scores.composite.toFixed(1)}</b><small>Elite ≥${B.elite} · Strong ≥${B.strong} · Lean ≥${B.lean}<br>no es una probabilidad de ganar</small></div>
+  </div>`;
+}
 function tarjeta(c, provisional) {
   const fx = c.fx, e = provisional ? c.provisional : c.estado, cl = claseTier(e), r = c.scores || {};
   const evidencia = [
     c.p_A != null ? `Familia A (Dixon-Coles, goles) ${p0(c.p_A)} · Familia B (bivariado, ${fx.xg_suficiente ? 'xG' : 'goles'}) ${p0(c.p_B)} → ensamble ${p0(c.p_raw)}; con peso ${Math.round(c.w_modelo * 100)}% sobre el consenso ${p0(c.p_novig)}${c.sharp_p != null ? ` (Pinnacle ${p0(c.sharp_p)})` : ''} → calibrada ${p0(c.p_model)}` : null,
     c.edge_pp != null ? `Edge ${ppTxt(c.edge_pp)} (${p0(c.p_model)} del modelo vs ${p0(c.p_novig)} del mercado sin comisión) · cuota justa ${amTxt(decAAm(c.fair_dec))} contra ${amTxt(c.am)} disponible` : null,
+    r.cinco ? `Decide el score ${r.composite.toFixed(1)}: edge ${Math.round(r.cinco.edge_strength)}, confianza ${Math.round(r.cinco.confidence)}, calidad ${Math.round(r.cinco.data_quality)} (pesos ${Math.round(CONFIG.score.pesos.edge * 100)}/${Math.round(CONFIG.score.pesos.confianza * 100)}/${Math.round(CONFIG.score.pesos.calidad * 100)})` : null,
     c.ev != null ? `EV ${pct1(c.ev)} a ${amTxt(c.am)} (${c.dec}) en ${esc(c.book)} · EV inferior ${pct1(c.ev_lcb)} (k=${CONFIG.lcb.k}, ${CONFIG.lcb.draws} draws)${c.riesgo < 1 ? ` · ${Math.round((1 - c.riesgo) * 100)}% de la apuesta se devuelve (empuje)` : ''}` : null,
     `${c.filas} casas en la línea exacta · dispersión ${c.dispersion != null ? (c.dispersion * 100).toFixed(1) + ' pp' : '—'} · overround ${c.overround != null ? (c.overround * 100).toFixed(1) + '%' : '—'}`,
   ].filter(Boolean);
@@ -782,7 +855,7 @@ function tarjeta(c, provisional) {
     !r.acuerdo ? 'Las dos familias de modelo discrepan más de 6 pp' : null,
     !fx.xg_suficiente ? 'xG con cobertura insuficiente: familia B usa goles' : null,
     c.outliers_excluidos ? `${c.outliers_excluidos} cotización(es) fuera de consenso ignorada(s)` : null,
-    'Sin calibración validada: salida PAPER (SE §9.1)',
+    `Sin calibración validada: la confianza queda limitada (${CONFIG.score.calibracionSinValidar}/100 en ese cuarto) y la salida es PAPER (SE §9.1)`,
   ].filter(Boolean);
   return `<div class="sc-card ${cl}" data-ac="abrirPartido(${fx.id})">
     <div class="sc-card-hd"><span class="sc-tier ${cl}">${etiquetaEstado(e)}${provisional ? ' · PROVISIONAL' : ''}</span><span class="sc-comp">${esc(fx.comp.nombre)}</span></div>
@@ -795,9 +868,8 @@ function tarjeta(c, provisional) {
       <div><span>Edge</span><b class="${c.edge_pp > 0 ? 'pos' : ''}">${ppTxt(c.edge_pp)}</b><small>${p0(c.p_model)} vs ${p0(c.p_novig)}</small></div>
       <div><span>EV</span><b class="${c.ev > 0 ? 'pos' : ''}">${pct1(c.ev)}</b><small>LCB ${pct1(c.ev_lcb)}</small></div>
       <div><span>Proyección</span><b>${fx.dist ? fx.dist.LA.lh.toFixed(2) + ' – ' + fx.dist.LA.la.toFixed(2) : '—'}</b><small>goles esperados</small></div>
-      <div><span>Score</span><b>${r.composite ?? '—'}</b><small>percentil ${c.percentil != null ? Math.round(c.percentil * 100) : '—'} · no es prob.</small></div>
-      <div><span>DQ</span><b>${c.dq ? c.dq.dq : '—'}</b><small>calidad de dato</small></div>
     </div>
+    ${barras(c)}
     <div class="sc-card-ev"><b>Evidencia</b><ol>${evidencia.map(t => `<li>${t}</li>`).join('')}</ol></div>
     <div class="sc-card-ev risk"><b>Riesgos</b><ul>${riesgos.map(t => `<li>${t}</li>`).join('')}</ul></div>
     <div class="sc-card-ft"><span class="mono">${c.codes.map(esc).join(' · ')}</span><span>${esc(ESTADO.snapshot.analysis_time.slice(0, 16).replace('T', ' '))} UTC</span></div>
@@ -813,7 +885,7 @@ function htmlTablero() {
   return htmlResumen() + secciones + `
   <section class="sc-sec detected"><header><h3>WATCHLIST · SIGNAL DETECTED <span>${prov.length + watch.length}</span></h3><p>Edge detectado pero no calificado: falta XI oficial, EV/percentil/DQ insuficientes, o correlación con una señal mejor. Sin asignación automática (SE §7).</p></header>
     ${prov.length ? `<h4>Calificarían con XI confirmado (tier provisional)</h4><div class="sc-cards">${prov.slice(0, 12).map(c => tarjeta(c, true)).join('')}</div>` : ''}
-    ${watch.length ? `<table class="sc-table"><thead><tr><th>Partido</th><th>Selección</th><th>Cuota</th><th>Edge</th><th>EV</th><th>LCB</th><th>DQ</th><th>Score</th><th>Pct</th><th>Motivo</th></tr></thead><tbody>${watch.map(c => `<tr data-ac="abrirPartido(${c.fx.id})"><td>${esc(c.fx.home)} v ${esc(c.fx.away)}<small>${esc(c.fx.comp.nombre)}</small></td><td><b>${esc(selTxt(c))}</b> <small>${esc(c.nombre)}</small></td><td>${amTxt(c.am)}</td><td class="${c.edge_pp > 0 ? 'pos' : ''}">${ppTxt(c.edge_pp)}</td><td class="${c.ev > 0 ? 'pos' : ''}">${pct1(c.ev)}</td><td>${pct1(c.ev_lcb)}</td><td>${c.dq?.dq ?? '—'}</td><td>${c.scores?.composite ?? '—'}</td><td>${c.percentil != null ? Math.round(c.percentil * 100) : '—'}</td><td><small>${esc((c.downgrade || []).slice(-1)[0] || c.codes.join(', '))}</small></td></tr>`).join('')}</tbody></table>` : ''}
+    ${watch.length ? `<table class="sc-table"><thead><tr><th>Partido</th><th>Selección</th><th>Cuota</th><th>Edge</th><th>Conf</th><th>Calidad</th><th>Score</th><th>EV</th><th>Motivo</th></tr></thead><tbody>${watch.map(c => `<tr data-ac="abrirPartido(${c.fx.id})"><td>${esc(c.fx.home)} v ${esc(c.fx.away)}<small>${esc(c.fx.comp.nombre)}</small></td><td><b>${esc(selTxt(c))}</b> <small>${esc(c.nombre)}</small></td><td>${amTxt(c.am)}</td><td class="${c.edge_pp > 0 ? 'pos' : ''}">${ppTxt(c.edge_pp)}<small>${c.scores ? Math.round(c.scores.cinco.edge_strength) + '/100' : ''}</small></td><td>${c.scores ? Math.round(c.scores.cinco.confidence) : '—'}</td><td>${c.dq?.dq ?? '—'}</td><td><b>${c.scores ? c.scores.composite.toFixed(1) : '—'}</b></td><td class="${c.ev > 0 ? 'pos' : ''}">${pct1(c.ev)}<small>LCB ${pct1(c.ev_lcb)}</small></td><td><small>${esc((c.downgrade || []).slice(-1)[0] || c.codes.join(', '))}</small></td></tr>`).join('')}</tbody></table>` : ''}
   </section>`;
 }
 function htmlPartidos() {
@@ -870,14 +942,24 @@ function htmlAuditoria() {
 }
 function htmlConfig() {
   const T = CONFIG.tiers;
-  return `<div class="sc-audit"><h3>Umbrales de tier (Signal Engine §7, literales)</h3>
-    <table class="sc-table"><thead><tr><th>Estado</th><th>EV</th><th>Percentil</th><th>EV inferior</th><th>DQ</th><th>Otros</th></tr></thead><tbody>
-    <tr><td>ELITE SIGNAL</td><td>≥ ${T.elite.ev * 100}%</td><td>≥ ${T.elite.pct * 100}</td><td>≥ ${T.elite.lcb * 100}%</td><td>≥ ${T.elite.dq}</td><td>XI confirmado, modelos de acuerdo, cotización ≤${CONFIG.frescura_min.elite} min, sin correlación</td></tr>
-    <tr><td>STRONG SIGNAL</td><td>≥ ${T.strong.ev * 100}%</td><td>≥ ${T.strong.pct * 100}</td><td>≥ 0</td><td>≥ ${T.strong.dq}</td><td>XI confirmado, modelos de acuerdo, cotización ≤${CONFIG.frescura_min.strong} min</td></tr>
-    <tr><td>LEAN SIGNAL</td><td>≥ ${T.lean.ev * 100}%</td><td>≥ ${T.lean.pct * 100}</td><td>—</td><td>≥ ${T.lean.dq}</td><td>XI confirmado, estabilidad ≥${CONFIG.estabilidad_min}, cotización ≤${CONFIG.frescura_min.lean} min</td></tr>
-    <tr><td>SIGNAL DETECTED</td><td>&gt; 0</td><td>—</td><td>—</td><td>—</td><td>watchlist; sin asignación</td></tr><tr><td>NO SIGNAL</td><td colspan="5">falla de puerta universal (precio, frescura, integridad, modelo, coherencia, liquidación)</td></tr></tbody></table>
-    <h3>Pesos por mercado (SE §7.1)</h3><table class="sc-table"><thead><tr><th>Grupo</th><th>Team/xG</th><th>XI/GK</th><th>Role/min</th><th>Tactics</th><th>Context</th><th>Market/value</th><th>Quality</th></tr></thead><tbody>${Object.entries(CONFIG.pesos).map(([k, v]) => `<tr><td>${k}</td>${v.map(x => `<td>${x}</td>`).join('')}</tr>`).join('')}</tbody></table>
-    <p class="sc-note">"Tactics" no tiene insumo en el proveedor (familias 4.7 y 4.9 del diccionario): se puntúa 0 y se marca como no disponible. El score compuesto ordena candidatos; <b>no es una probabilidad de ganar</b>.</p>
+  const S = CONFIG.score, M = S.minimos, B = S.bandas;
+  return `<div class="sc-audit"><h3>Cómo se decide un pick</h3>
+    <p class="sc-note">El pick lo deciden <b>Edge</b>, <b>Confianza</b> y <b>Calidad de dato</b> (Master §6). Cada uno va de 0 a 100 y se combinan con pesos ${Math.round(S.pesos.edge * 100)} / ${Math.round(S.pesos.confianza * 100)} / ${Math.round(S.pesos.calidad * 100)} en un score único. Además de la banda, cada tier exige un mínimo en los tres por separado, y por encima siguen las puertas obligatorias de valor.</p>
+    <table class="sc-table"><thead><tr><th>Estado</th><th>Score</th><th>Edge</th><th>Confianza</th><th>Calidad</th><th>EV</th><th>EV inferior</th><th>Otros</th></tr></thead><tbody>
+    <tr><td>ELITE SIGNAL</td><td>≥ ${B.elite}</td><td>≥ ${M.elite.edge} (${(M.elite.edge / S.edgeK).toFixed(1)} pp)</td><td>≥ ${M.elite.confianza}</td><td>≥ ${M.elite.calidad}</td><td>≥ ${T.elite.ev * 100}%</td><td>≥ ${T.elite.lcb * 100}%</td><td>XI confirmado, modelos de acuerdo, cotización ≤${CONFIG.frescura_min.elite} min, sin correlación</td></tr>
+    <tr><td>STRONG SIGNAL</td><td>≥ ${B.strong}</td><td>≥ ${M.strong.edge} (${(M.strong.edge / S.edgeK).toFixed(1)} pp)</td><td>≥ ${M.strong.confianza}</td><td>≥ ${M.strong.calidad}</td><td>≥ ${T.strong.ev * 100}%</td><td>≥ 0</td><td>XI confirmado, modelos de acuerdo, cotización ≤${CONFIG.frescura_min.strong} min</td></tr>
+    <tr><td>LEAN SIGNAL</td><td>≥ ${B.lean}</td><td>≥ ${M.lean.edge} (${(M.lean.edge / S.edgeK).toFixed(1)} pp)</td><td>≥ ${M.lean.confianza}</td><td>≥ ${M.lean.calidad}</td><td>≥ ${T.lean.ev * 100}%</td><td>—</td><td>XI confirmado, estabilidad ≥${CONFIG.estabilidad_min}, cotización ≤${CONFIG.frescura_min.lean} min</td></tr>
+    <tr><td>SIGNAL DETECTED</td><td colspan="7">EV &gt; 0 pero no alcanza ningún tier, o el XI todavía no está confirmado. Watchlist, sin asignación.</td></tr>
+    <tr><td>NO SIGNAL</td><td colspan="7">falla una puerta universal: sin precio ejecutable, cotización vieja, sin modelo, etiqueta sin tipar, incoherencia derivada o EV ≤ 0.</td></tr></tbody></table>
+    <h3>Cómo se construye cada score</h3>
+    <table class="sc-table"><thead><tr><th>Score</th><th>Fórmula</th><th>Qué mide</th></tr></thead><tbody>
+    <tr><td><b>Edge</b></td><td class="mono">mín(100, ${S.edgeK} × edge_pp)</td><td>Cuánto discrepa el modelo del mercado sin comisión, en puntos porcentuales. ${(100 / S.edgeK).toFixed(1)} pp = 100.</td></tr>
+    <tr><td><b>Confianza</b></td><td class="mono">(calibración + certeza + muestra + acuerdo) / 4</td><td>Los cuatro insumos que nombra el Master §6. Sin calibración validada ese cuarto se limita a ${S.calibracionSinValidar}, así que hoy la confianza no puede pasar de ${(75 + S.calibracionSinValidar / 4).toFixed(0)}.</td></tr>
+    <tr><td><b>Calidad</b></td><td class="mono">0.40 completitud + 0.25 frescura + 0.20 acuerdo entre casas + 0.15 alineación</td><td>Si el insumo es completo, reciente y consistente.</td></tr>
+    <tr><td><b>Score</b></td><td class="mono">${S.pesos.edge} × Edge + ${S.pesos.confianza} × Confianza + ${S.pesos.calidad} × Calidad</td><td>Ordena y asigna banda. <b>No es una probabilidad de ganar.</b></td></tr></tbody></table>
+    <p class="sc-note"><b>Conflicto declarado (Master §1.6):</b> el Signal Engine §7 pedía además que el candidato estuviera en el percentil 85/95/98 del día. Por instrucción del dueño (5-sep-2026) manda el criterio de Edge, Confianza y Calidad, que es absoluto y no depende de cuántos partidos haya esa fecha. El percentil se sigue calculando y guardando para auditoría.</p>
+    <h3>Pesos por mercado (SE §7.1, solo auditoría)</h3><table class="sc-table"><thead><tr><th>Grupo</th><th>Team/xG</th><th>XI/GK</th><th>Role/min</th><th>Tactics</th><th>Context</th><th>Market/value</th><th>Quality</th></tr></thead><tbody>${Object.entries(CONFIG.pesos).map(([k, v]) => `<tr><td>${k}</td>${v.map(x => `<td>${x}</td>`).join('')}</tr>`).join('')}</tbody></table>
+    <p class="sc-note">Estos siete componentes se siguen calculando y guardando en cada registro, pero ya no deciden el tier. "Tactics" no tiene insumo en el proveedor (familias 4.7 y 4.9 del diccionario): se puntúa 0 y se marca como no disponible.</p>
     <h3>Registro de mercados</h3><table class="sc-table"><thead><tr><th>Canónico</th><th>Etiqueta del proveedor</th><th>Periodo</th><th>Estados</th><th>Fase</th></tr></thead><tbody>${Object.entries(MERCADOS).map(([k, m]) => `<tr><td class="mono">${k}</td><td>${esc(m.etiqueta || m.etiquetaAmbigua || '—')}${m.bloqueo ? ' <b>(bloqueado: ' + m.bloqueo + ')</b>' : ''}</td><td class="mono">${esc(m.periodo)}</td><td class="mono">${(m.estados || []).join(', ')}</td><td>${m.fase}</td></tr>`).join('')}</tbody></table>
     <h3>Supuestos de configuración (auditoría §7)</h3><ul class="sc-list">${CONFIG.supuestos.map(s => `<li>${esc(s)}</li>`).join('')}</ul>
     <p class="sc-note">Versiones: <span class="mono">${esc(Object.entries(VERSIONES).map(([k, v]) => k + '=' + v).join(' · '))}</span></p></div>`;
@@ -885,7 +967,7 @@ function htmlConfig() {
 function htmlModal(fx) {
   const cs = ESTADO.cands.filter(c => c.fixture_id === fx.id).sort((a, b) => RANGO_ESTADO[b.estado] - RANGO_ESTADO[a.estado] || (b.scores?.composite || 0) - (a.scores?.composite || 0) || (b.ev || -9) - (a.ev || -9));
   const d = fx.dist;
-  const fila = c => `<tr class="${claseTier(c.estado)}"><td><b>${esc(selTxt(c))}</b><small>${esc(c.nombre)}${c.derivado ? ' (derivado del 1X2)' : ''}</small></td><td>${amTxt(c.am)}<small>${c.dec ?? ''} ${esc(c.book || '')}</small></td><td>${p0(c.p_novig)}</td><td>${p0(c.p_model)}<small>A ${p0(c.p_A)} · B ${p0(c.p_B)}</small></td><td class="${c.edge_pp > 0 ? 'pos' : ''}">${ppTxt(c.edge_pp)}</td><td class="${c.ev > 0 ? 'pos' : ''}">${pct1(c.ev)}<small>LCB ${pct1(c.ev_lcb)}</small></td><td>${c.dq?.dq ?? '—'}</td><td>${c.scores?.composite ?? '—'}<small>${c.percentil != null ? 'p' + Math.round(c.percentil * 100) : ''}</small></td><td><span class="sc-tier ${claseTier(c.estado)}">${etiquetaEstado(c.estado)}</span>${c.provisional ? `<small>→ ${etiquetaEstado(c.provisional)}</small>` : ''}</td><td><small>${esc(c.codes.join(', '))}${(c.detalles || []).length ? '<br>' + esc(c.detalles.join(' · ')) : ''}${(c.downgrade || []).length ? '<br>' + esc(c.downgrade.join(' | ')) : ''}</small></td></tr>`;
+  const fila = c => `<tr class="${claseTier(c.estado)}"><td><b>${esc(selTxt(c))}</b><small>${esc(c.nombre)}${c.derivado ? ' (derivado del 1X2)' : ''}</small></td><td>${amTxt(c.am)}<small>${c.dec ?? ''} ${esc(c.book || '')}</small></td><td>${p0(c.p_novig)}</td><td>${p0(c.p_model)}<small>A ${p0(c.p_A)} · B ${p0(c.p_B)}</small></td><td class="${c.edge_pp > 0 ? 'pos' : ''}">${ppTxt(c.edge_pp)}<small>${c.scores ? Math.round(c.scores.cinco.edge_strength) + '/100' : ''}</small></td><td>${c.scores ? Math.round(c.scores.cinco.confidence) : '—'}</td><td>${c.dq?.dq ?? '—'}</td><td><b>${c.scores ? c.scores.composite.toFixed(1) : '—'}</b></td><td class="${c.ev > 0 ? 'pos' : ''}">${pct1(c.ev)}<small>LCB ${pct1(c.ev_lcb)}</small></td><td><span class="sc-tier ${claseTier(c.estado)}">${etiquetaEstado(c.estado)}</span>${c.provisional ? `<small>→ ${etiquetaEstado(c.provisional)}</small>` : ''}</td><td><small>${esc(c.codes.join(', '))}${(c.detalles || []).length ? '<br>' + esc(c.detalles.join(' · ')) : ''}${(c.downgrade || []).length ? '<br>' + esc(c.downgrade.join(' | ')) : ''}</small></td></tr>`;
   return `<div class="sc-overlay" data-ac="cerrarPartido()"><div class="sc-mbox" data-ac="nada()">
     <div class="sc-mhd"><div><div class="sc-mtitle">${esc(fx.home)} <i>vs</i> ${esc(fx.away)}</div><div class="sc-msub">${esc(fx.comp.nombre)} · ${horaLocal(fx.kickoff)} · ${esc(fx.venue || '')}${fx.referee ? ' · árbitro ' + esc(fx.referee) : ''} · ${fx.casas} casas · ventana ${fx.ventana}</div></div><button class="sc-close" data-ac="cerrarPartido()">✕</button></div>
     <div class="sc-mgrid">
@@ -894,7 +976,7 @@ function htmlModal(fx) {
       <div><span>Alineaciones</span><b>${fx.lineup === 'CONFIRMED' ? '✓ XI oficial' : 'sin confirmar'}</b><small>${fx.formacion ? fx.formacion.join(' vs ') : (fx.lineup_error ? esc(fx.lineup_error) : 'se piden a ≤' + CONFIG.lineups_ventana_min + ' min del inicio')}${fx.gk_confirmed ? ' · porteros confirmados' : ''}</small></div>
       <div><span>Bajas reportadas</span><b>${fx.bajas.length}</b><small>${fx.bajas.slice(0, 6).map(b => esc(b.player) + (b.reason ? ' (' + esc(b.reason) + ')' : '')).join(', ') || (fx.injury_feed ? 'ninguna' : 'feed no disponible')}</small></div>
     </div>
-    <table class="sc-table wide"><thead><tr><th>Selección</th><th>Cuota</th><th>Consenso</th><th>Modelo</th><th>Edge</th><th>EV</th><th>DQ</th><th>Score</th><th>Estado</th><th>Códigos / motivos</th></tr></thead><tbody>${cs.map(fila).join('')}</tbody></table>
+    <table class="sc-table wide"><thead><tr><th>Selección</th><th>Cuota</th><th>Consenso</th><th>Modelo</th><th>Edge</th><th>Conf</th><th>Calidad</th><th>Score</th><th>EV</th><th>Estado</th><th>Códigos / motivos</th></tr></thead><tbody>${cs.map(fila).join('')}</tbody></table>
     <p class="sc-note">Mercados de Fase 2 presentes en el snapshot pero no evaluados: ${[...new Set(fx.cuotas.filter(q => q.fase === 2).map(q => MERCADOS[q.mercado]?.nombre))].join(', ') || 'ninguno'}. Props de jugador registrados: ${fx.cuotas.filter(q => CONFIG.pod.mercados[q.bet_id]).length}.</p>
   </div></div>`;
 }

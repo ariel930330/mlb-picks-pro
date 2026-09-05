@@ -47,7 +47,7 @@
 #dep-futbol .sc-mkt{font-size:10px;font-weight:700;color:var(--ptx);background:var(--pbg);padding:2px 7px;border-radius:6px}
 #dep-futbol .sc-card-mu{font-size:11px;color:var(--text2);margin:4px 0 10px}
 #dep-futbol .sc-card-mu i,#dep-futbol .sc-fx-teams i,#dep-futbol .sc-mtitle i{font-style:normal;color:var(--text3);font-size:10px;margin:0 6px}
-#dep-futbol .sc-card-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px}
+#dep-futbol .sc-card-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px}
 #dep-futbol .sc-card-grid div{background:var(--bg3);border-radius:9px;padding:7px 9px;display:flex;flex-direction:column}
 #dep-futbol .sc-card-grid span{font-size:9px;color:var(--text3);font-weight:800;text-transform:uppercase}
 #dep-futbol .sc-card-grid b{font-size:14px;font-variant-numeric:tabular-nums}
@@ -57,6 +57,19 @@
 #dep-futbol .sc-card-ev ol,#dep-futbol .sc-card-ev ul{margin:0;padding-left:18px;line-height:1.45}
 #dep-futbol .sc-card-ev.risk li{color:var(--atx)}
 #dep-futbol .sc-card-ft{display:flex;justify-content:space-between;gap:8px;margin-top:10px;padding-top:8px;border-top:1px solid var(--border);font-size:9px;color:var(--text3)}
+/* Los tres scores que deciden */
+#dep-futbol .sc-scores{display:grid;grid-template-columns:repeat(3,1fr) 1.1fr;gap:6px;margin:2px 0 10px;align-items:stretch}
+#dep-futbol .sc-m,#dep-futbol .sc-tot{background:var(--bg3);border-radius:9px;padding:7px 9px;display:flex;flex-direction:column;gap:3px;min-width:0}
+#dep-futbol .sc-m span,#dep-futbol .sc-tot span{font-size:9px;color:var(--text3);font-weight:800;text-transform:uppercase;letter-spacing:.4px}
+#dep-futbol .sc-m b{font-size:15px;font-variant-numeric:tabular-nums;line-height:1}
+#dep-futbol .sc-m i{display:block;height:4px;border-radius:3px;background:var(--bg4);overflow:hidden}
+#dep-futbol .sc-m u{display:block;height:100%;background:linear-gradient(90deg,var(--purple),var(--green));text-decoration:none}
+#dep-futbol .sc-m.bajo u{background:var(--sc-none)}
+#dep-futbol .sc-m.bajo b{color:var(--text3)}
+#dep-futbol .sc-m small,#dep-futbol .sc-tot small{font-size:9px;color:var(--text3);line-height:1.3}
+#dep-futbol .sc-tot{background:var(--bg4);justify-content:center}
+#dep-futbol .sc-tot b{font-size:20px;font-variant-numeric:tabular-nums;line-height:1}
+@media(max-width:640px){#dep-futbol .sc-scores{grid-template-columns:repeat(2,1fr)}}
 /* Tablas */
 #dep-futbol .sc-table{width:100%;border-collapse:collapse;font-size:11px}
 #dep-futbol .sc-table th{text-align:left;font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:var(--text3);padding:6px 8px;border-bottom:1px solid var(--border)}

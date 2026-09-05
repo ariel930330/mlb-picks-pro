@@ -73,14 +73,14 @@ t('mercado de proveedor no registrado se ignora sin inventar liquidación', () =
 console.log('\n8 · Fronteras de tier, puertas universales y sin señales forzadas');
 const pHome = F.sumaRejilla(distDe(1.9, 0.8).G, (x, y) => x > y);
 const precioPara = (ev, p) => +((1 + ev) / p).toFixed(3);
-t('Elite: EV ≥4.5%, LCB ≥1%, DQ ≥95, XI confirmado, modelos de acuerdo', () => { const cs = corre(fxDe(20), cuotas1x2(precioPara(.07, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8)); const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME'); assert.equal(h.estado, 'Elite Signal', JSON.stringify({ ev: h.ev, lcb: h.ev_lcb, dq: h.dq.dq, pct: h.percentil, down: h.downgrade })); assert.ok(h.codes.includes('LINEUP_CONFIRMED') && h.codes.includes('LOWER_BOUND_PASS')); });
-t('Strong: EV entre 3% y 4.5% baja de Elite con razón registrada', () => { const cs = corre(fxDe(21), cuotas1x2(precioPara(.035, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8)); const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME'); assert.equal(h.estado, 'Strong Signal', JSON.stringify(h.downgrade)); assert.ok(h.downgrade[0].startsWith('Elite:')); });
-t('Lean: EV entre 1.5% y 3%', () => { const cs = corre(fxDe(22), cuotas1x2(precioPara(.02, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8)); const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME'); assert.equal(h.estado, 'Lean Signal', JSON.stringify(h.downgrade)); });
+t('Elite: banda >=85 con edge, confianza y calidad en minimo, mas EV >=4.5% y LCB >=1%', () => { const cs = corre(fxDe(20), cuotas1x2(precioPara(.14, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8)); const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME'); assert.equal(h.estado, 'Elite Signal', JSON.stringify({ ev: h.ev, lcb: h.ev_lcb, dq: h.dq.dq, pct: h.percentil, down: h.downgrade })); assert.ok(h.codes.includes('LINEUP_CONFIRMED') && h.codes.includes('LOWER_BOUND_PASS')); });
+t('Strong: no alcanza la banda de Elite y baja con la razon registrada', () => { const cs = corre(fxDe(21), cuotas1x2(precioPara(.07, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8)); const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME'); assert.equal(h.estado, 'Strong Signal', JSON.stringify(h.downgrade)); assert.ok(h.downgrade[0].startsWith('Elite:')); });
+t('Lean: banda >= 60 con los tres minimos mas bajos', () => { const cs = corre(fxDe(22), cuotas1x2(precioPara(.035, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8)); const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME'); assert.equal(h.estado, 'Lean Signal', JSON.stringify(h.downgrade)); });
 t('EV positivo pero < 1.5% → Signal Detected (watchlist), nunca se fuerza', () => { const cs = corre(fxDe(23), cuotas1x2(precioPara(.008, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8)); const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME'); assert.equal(h.estado, 'Signal Detected'); });
 t('sin EV positivo en ningún candidato → ninguna señal (No Signal), nunca se fuerza', () => { const cs = corre(fxDe(24), cuotas1x2(2.0, 3.4, 2.5, 4), distDe(1.5, 1.4)); const c1 = cs.filter(c => c.mercado === '1X2'); assert.ok(c1.every(c => c.ev < 0), JSON.stringify(c1.map(c => c.ev))); assert.ok(c1.every(c => c.estado === 'No Signal' && c.codes.includes('VALUE_ABSENT'))); });
-t('XI sin confirmar → Signal Detected con tier provisional y LINEUP_BLOCK', () => { const cs = corre(fxDe(25, { lineup: 'UNCONFIRMED' }), cuotas1x2(precioPara(.07, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8), 5, 'UNCONFIRMED'); const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME'); assert.equal(h.estado, 'Signal Detected'); assert.ok(h.provisional && h.codes.includes('LINEUP_BLOCK')); });
-t('cotización de 90 min: Elite/Strong caen por frescura y queda Lean (S11)', () => { const cs = corre(fxDe(26), cuotas1x2(precioPara(.07, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8), 90); const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME'); assert.equal(h.estado, 'Lean Signal'); assert.ok(h.downgrade.join(' ').includes('fresca')); });
-t('los pesos SE §7.1 suman 100 y el score compuesto no es una probabilidad', () => { for (const k in F.CONFIG.pesos) assert.equal(F.CONFIG.pesos[k].reduce((a, b) => a + b, 0), 100, k); const cs = corre(fxDe(27), cuotas1x2(precioPara(.07, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8)); const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME'); assert.ok(h.scores.composite <= 100 && h.scores.cinco.data_quality === h.dq.dq && h.scores.unavailable.includes('tactics')); });
+t('XI sin confirmar → Signal Detected con tier provisional y LINEUP_BLOCK', () => { const cs = corre(fxDe(25, { lineup: 'UNCONFIRMED' }), cuotas1x2(precioPara(.14, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8), 5, 'UNCONFIRMED'); const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME'); assert.equal(h.estado, 'Signal Detected'); assert.ok(h.provisional && h.codes.includes('LINEUP_BLOCK')); });
+t('cotizacion de 90 min: Elite y Strong caen por frescura y queda Lean (S11)', () => { const cs = corre(fxDe(26), cuotas1x2(precioPara(.14, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8), 90); const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME'); assert.equal(h.estado, 'Lean Signal'); assert.ok(h.downgrade.join(' ').includes('min (max') || h.downgrade.join(' ').includes('min (m'), h.downgrade.join(' | ')); });
+t('los pesos SE §7.1 suman 100 y el score compuesto no es una probabilidad', () => { for (const k in F.CONFIG.pesos) assert.equal(F.CONFIG.pesos[k].reduce((a, b) => a + b, 0), 100, k); const cs = corre(fxDe(27), cuotas1x2(precioPara(.14, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8)); const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME'); assert.ok(h.scores.composite <= 100 && h.scores.cinco.data_quality === h.dq.dq && h.scores.unavailable.includes('tactics')); });
 
 t('S19: con ESS finito la probabilidad calibrada queda entre el modelo y el consenso, y el EV también', () => { const cs = corre(fxDe(28), cuotas1x2(precioPara(.07, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8, 30)); const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME'); cerca(h.w_modelo, 30 / 90, 1e-3); assert.ok(h.p_model > h.p_novig && h.p_model < h.p_raw); assert.ok(h.ev < h.ev_modelo && h.ev > h.ev_mercado); });
 t('hándicap asiático del proveedor: "Home -1" y "Away -1" son los dos lados de la misma línea (visitante +1)', () => { const o = { bookmakers: [{ id: 8, name: 'Bet365', bets: [{ id: 4, name: 'Asian Handicap', values: [{ value: 'Home -1', odd: '2.00' }, { value: 'Away -1', odd: '1.80' }, { value: 'Home +0', odd: '1.23' }, { value: 'Away +0', odd: '4.10' }] }] }] }; const n = F.normalizarCuotas(o); const a1 = n.find(q => q.sel === 'AWAY' && q.valor === 'Away -1'); assert.equal(a1.linea, 1); const sets = F.setsPorCasa(n, 'ASIAN_HANDICAP', -1); assert.equal(sets.length, 1); assert.equal(JSON.stringify([...sets[0].decs]), JSON.stringify([2, 1.8])); assert.equal(F.setsPorCasa(n, 'ASIAN_HANDICAP', 0).length, 1); });
@@ -148,11 +148,66 @@ t('el registro lleva edge_pp, edge_percent, edge_units y la cuota justa (SE 1.2)
   assert.equal(r.model.edge_units, r.model.ev);
 });
 
+t('el pick lo decide el compuesto de Edge, Confianza y Calidad con los pesos del Master 6', () => {
+  const cs = corre(fxDe(70), cuotas1x2(precioPara(.14, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8));
+  const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME'), w = F.CONFIG.score.pesos, f = h.scores.cinco;
+  cerca(h.scores.composite, w.edge * f.edge_strength + w.confianza * f.confidence + w.calidad * f.data_quality, 1e-9);
+  cerca(w.edge + w.confianza + w.calidad, 1, 1e-9);
+  cerca(f.edge_strength, Math.min(100, F.CONFIG.score.edgeK * h.edge_pp), 1e-9);
+  assert.equal(f.data_quality, h.dq.dq);
+});
+t('la confianza son los cuatro insumos que nombra el Master 6, a peso igual', () => {
+  const cs = corre(fxDe(71), cuotas1x2(precioPara(.14, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8, 30));
+  const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME'), p = h.scores.confianza_partes;
+  for (const k of ['calibracion', 'incertidumbre', 'muestra', 'acuerdo']) assert.ok(p[k] >= 0 && p[k] <= 100, k + ' = ' + p[k]);
+  cerca(h.scores.cinco.confidence, (p.calibracion + p.incertidumbre + p.muestra + p.acuerdo) / 4, 1e-9);
+  assert.equal(p.calibracion, F.CONFIG.score.calibracionSinValidar, 'sin calibracion validada ese cuarto esta limitado');
+});
+t('mercado casi eficiente: edge minusculo NO califica aunque el EV sea positivo', () => {
+  // Con comision baja y precio apenas por encima del justo, el modelo casi no discrepa:
+  // el EV es positivo pero el edge se queda por debajo del minimo de Lean (1.5 pp).
+  const D = distDe(1.5, 1.4, 1e6);
+  const pH = F.masaEstados(D.G, '1X2', 'HOME', null).win, pD = F.masaEstados(D.G, '1X2', 'DRAW', null).win, pA = F.masaEstados(D.G, '1X2', 'AWAY', null).win;
+  const qH = pH / 1.005, resto = 1.01 - qH, qD = resto * pD / (pD + pA), qA = resto * pA / (pD + pA);
+  const cs = corre(fxDe(72), cuotas1x2(1 / qH, 1 / qD, 1 / qA, 6), D);
+  const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME');
+  assert.ok(h.ev > 0, 'el EV debe ser positivo: ' + h.ev);
+  assert.ok(h.edge_pp > 0 && h.edge_pp < 1.5, 'edge del fixture: ' + h.edge_pp);
+  assert.equal(h.estado, 'Signal Detected', JSON.stringify(h.downgrade));
+  assert.ok(h.downgrade.join(' ').includes('edge'), h.downgrade.join(' | '));
+});
+t('calidad de dato baja bloquea sola, por bueno que sea el edge', () => {
+  const D = distDe(1.9, 0.8);
+  const fx = fxDe(73, { referee: null, venue: null, injury_feed: false });
+  fx.dist = D;
+  const cs = F.candidatosDe(fx, cuotas1x2(precioPara(.14, pHome), 4.4, 6.0, 6), D, {});
+  cs.forEach(c => c.fx = fx);
+  F.asignarTiers(cs, c => ({ fx: c.fx, dist: c.fx.dist, lineup: 'CONFIRMED', gk_confirmed: true, injury_feed: false, bajas: 0, quote_age_min: 5, ventana: 'XI', xg_suficiente: true, rest_known: false }));
+  const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME');
+  assert.ok(h.scores.cinco.edge_strength >= 70, 'el edge sigue siendo alto: ' + h.scores.cinco.edge_strength);
+  assert.ok(h.dq.dq < 95, 'la calidad debe bajar sin arbitro, sede ni feed de bajas: ' + h.dq.dq);
+  assert.notEqual(h.estado, 'Elite Signal');
+  assert.ok(h.downgrade.join(' ').includes('calidad de dato'), h.downgrade.join(' | '));
+});
+t('el percentil del slate se guarda pero YA NO decide el tier (S20)', () => {
+  const D = distDe(1.9, 0.8);
+  let cs = [];
+  for (let i = 0; i < 30; i++) { const fx = fxDe(400 + i); fx.dist = D; const c = F.candidatosDe(fx, cuotas1x2(precioPara(.14, pHome), 4.4, 6.0, 6), D, {}); c.forEach(x => x.fx = fx); cs = cs.concat(c); }
+  F.asignarTiers(cs, ctxFab());
+  const home = cs.filter(c => c.mercado === '1X2' && c.sel === 'HOME' && !c.codes.includes('CORRELATION_BLOCK'));
+  assert.ok(home.length >= 25);
+  // todos tienen el mismo edge/confianza/calidad: con el criterio absoluto TODOS son Elite,
+  // aunque por percentil solo el 2% superior lo habria sido.
+  const elites = home.filter(c => c.estado === 'Elite Signal');
+  assert.ok(elites.length >= 25, 'elites: ' + elites.length + ' de ' + home.length);
+  assert.ok(home.every(c => c.percentil != null), 'el percentil se sigue guardando');
+  assert.ok(home.some(c => c.percentil < 0.98), 'hay elites por debajo del percentil 98');
+});
 console.log('\n9 · Correlación, deduplicación, expiración y precio');
-t('misma tesis (HOME) en 1X2 y AH → la peor recibe CORRELATION_BLOCK', () => { const D = distDe(1.9, 0.8); let cs = []; for (let i = 0; i < 10; i++) { const fx = fxDe(300 + i); fx.dist = D; const c = F.candidatosDe(fx, cuotas1x2(precioPara(.02, pHome), 4.4, 6.0, 6), D, {}); c.forEach(x => x.fx = fx); cs = cs.concat(c); } const fx = fxDe(30); fx.dist = D; const q = [...cuotas1x2(precioPara(.07, pHome), 4.4, 6.0, 6), ...[1, 2, 3, 4].flatMap(b => [{ book_id: b, book: 'B' + b, mercado: 'ASIAN_HANDICAP', sel: 'HOME', linea: -0.5, dec: precioPara(.06, pHome) }, { book_id: b, book: 'B' + b, mercado: 'ASIAN_HANDICAP', sel: 'AWAY', linea: 0.5, dec: 2.0 }])]; const c30 = F.candidatosDe(fx, q, D, {}); c30.forEach(x => x.fx = fx); cs = cs.concat(c30); F.asignarTiers(cs, ctxFab()); const home = c30.filter(c => c.tesis === 'HOME' && c.ev > 0); const reservada = home.filter(c => ['Elite Signal', 'Strong Signal', 'Lean Signal'].includes(c.estado)); assert.equal(reservada.length, 1, JSON.stringify(home.map(c => [c.mercado, c.estado, c.percentil]))); assert.ok(home.some(c => c.codes.includes('CORRELATION_BLOCK') && c.estado === 'Signal Detected')); });
-t('precio mínimo aceptable: en ese precio el EV es exactamente el umbral del tier', () => { const cs = corre(fxDe(31), cuotas1x2(precioPara(.07, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8)); const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME'); cerca(F.evDeMasa(h.masa, h.min_dec), F.CONFIG.tiers.elite.ev, 1e-3); assert.ok(h.min_dec < h.dec && h.min_am != null); });
-t('si el precio cae por debajo del mínimo, el EV ya no cumple (PRICE_EXPIRED en la siguiente corrida)', () => { const cs = corre(fxDe(32), cuotas1x2(precioPara(.07, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8)); const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME'); assert.ok(F.evDeMasa(h.masa, h.min_dec - 0.05) < F.CONFIG.tiers.elite.ev); });
-t('expira al inicio del partido y el registro lleva expires_at = kickoff', () => { const cs = corre(fxDe(33), cuotas1x2(precioPara(.07, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8)); const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME'); const r = F.registroDe(h, { snapshot_id: 'SNAP-SOC-x-000000-abcdef', analysis_time: '2026-09-06T12:05:00Z', input_hash: 'h' }); assert.equal(r.signal.expires_at, h.fx.kickoff); assert.equal(r.signal.validation_status, 'PAPER'); assert.ok(r.market.minimum_acceptable_price && r.model.settlement_mass && r.audit.versions.calibracion === 'market_prior_shrinkage_v0' && r.model.calibrated_probability != null && r.model.model_weight > 0.99); });
+t('misma tesis (HOME) en 1X2 y AH → la peor recibe CORRELATION_BLOCK', () => { const D = distDe(1.9, 0.8); let cs = []; for (let i = 0; i < 10; i++) { const fx = fxDe(300 + i); fx.dist = D; const c = F.candidatosDe(fx, cuotas1x2(precioPara(.05, pHome), 4.4, 6.0, 6), D, {}); c.forEach(x => x.fx = fx); cs = cs.concat(c); } const fx = fxDe(30); fx.dist = D; const q = [...cuotas1x2(precioPara(.14, pHome), 4.4, 6.0, 6), ...[1, 2, 3, 4].flatMap(b => [{ book_id: b, book: 'B' + b, mercado: 'ASIAN_HANDICAP', sel: 'HOME', linea: -0.5, dec: precioPara(.12, pHome) }, { book_id: b, book: 'B' + b, mercado: 'ASIAN_HANDICAP', sel: 'AWAY', linea: 0.5, dec: 2.0 }])]; const c30 = F.candidatosDe(fx, q, D, {}); c30.forEach(x => x.fx = fx); cs = cs.concat(c30); F.asignarTiers(cs, ctxFab()); const home = c30.filter(c => c.tesis === 'HOME' && c.ev > 0); const reservada = home.filter(c => ['Elite Signal', 'Strong Signal', 'Lean Signal'].includes(c.estado)); assert.equal(reservada.length, 1, JSON.stringify(home.map(c => [c.mercado, c.estado, c.percentil]))); assert.ok(home.some(c => c.codes.includes('CORRELATION_BLOCK') && c.estado === 'Signal Detected')); });
+t('precio minimo aceptable: en ese precio el EV es exactamente el umbral de SU tier', () => { const cs = corre(fxDe(31), cuotas1x2(precioPara(.14, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8)); const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME'); const req = F.CONFIG.tiers[{ 'Elite Signal': 'elite', 'Strong Signal': 'strong' }[h.estado] || 'lean'].ev; cerca(F.evDeMasa(h.masa, h.min_dec), req, 1e-3); assert.ok(h.min_dec < h.dec && h.min_am != null); });
+t('si el precio cae por debajo del mínimo, el EV ya no cumple (PRICE_EXPIRED en la siguiente corrida)', () => { const cs = corre(fxDe(32), cuotas1x2(precioPara(.14, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8)); const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME'); const req = F.CONFIG.tiers[{ 'Elite Signal': 'elite', 'Strong Signal': 'strong' }[h.estado] || 'lean'].ev; assert.ok(F.evDeMasa(h.masa, h.min_dec - 0.05) < req); });
+t('expira al inicio del partido y el registro lleva expires_at = kickoff', () => { const cs = corre(fxDe(33), cuotas1x2(precioPara(.14, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8)); const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME'); const r = F.registroDe(h, { snapshot_id: 'SNAP-SOC-x-000000-abcdef', analysis_time: '2026-09-06T12:05:00Z', input_hash: 'h' }); assert.equal(r.signal.expires_at, h.fx.kickoff); assert.equal(r.signal.validation_status, 'PAPER'); assert.ok(r.market.minimum_acceptable_price && r.model.settlement_mass && r.audit.versions.calibracion === 'market_prior_shrinkage_v0' && r.model.calibrated_probability != null && r.model.model_weight > 0.99); });
 
 console.log('\n10 · Punto en el tiempo, reproducibilidad y fixture dorado');
 t('el PRNG con la misma semilla reproduce la misma secuencia', () => { const a = F.prng(42), b = F.prng(42); for (let i = 0; i < 10; i++) assert.equal(a(), b()); });

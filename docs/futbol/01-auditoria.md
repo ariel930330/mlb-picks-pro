@@ -208,11 +208,12 @@ Módulos = secciones internas de `deportes/futbol.js` (un archivo por deporte, `
 | C3 | Alcance en lanzamiento | 15 mercados "donde datos lo permitan" | SE §11 fases | Se sigue SE §11 |
 | C4 | Staking | no añadir | módulo aparte | **Sin unidades ni Kelly** |
 | C5 | Mínimos de EV | configurables | SE 1.5/3.0/4.5%; POD edge 5.5 pp | Valores SE/POD |
+| C6 | **Qué decide el tier** | §6: composite de los cinco scores + bandas + mínimos por tier | SE §7: EV + **percentil del slate** + EV inferior + DQ | **Instrucción del dueño (5-sep-2026): deciden Edge, Confianza y Data Quality.** Se implementa el esquema del Master §6 restringido a esos tres (S20); los mínimos de EV y EV inferior de SE §7 se conservan como puertas obligatorias, que el propio Master §6 exige configurar. **El percentil del slate deja de decidir** y solo se guarda para auditoría: era además mi interpretación de una línea ambigua (A1) y hacía que el tier dependiera de cuántos partidos hubiera ese día |
 
 ### 6.2 Ambigüedades (interpretación registrada; no bloquean)
 | # | Ambigüedad | Interpretación |
 |---|---|---|
-| A1 | SE §7 percentil de rank: ¿slate, competición o histórico? | Percentil del score compuesto **dentro de los candidatos ejecutables del mismo slate (fecha)**; con slates chicos Elite queda "raro por diseño" |
+| A1 | SE §7 percentil de rank: ¿slate, competición o histórico? | **Resuelta por C6**: el percentil ya no decide. Se sigue calculando sobre los candidatos ejecutables del mismo slate y se guarda en el registro para auditoría |
 | A2 | European handicap en SE §1.1/§6 pero no en §1.1.1 ni Master §2 | Fuera de alcance |
 | A3 | "Approved/sharp books" sin lista | **Q1** |
 | A4 | Ventanas T-24h…T-5 presuponen proceso continuo; el proyecto corre por corridas | Ventana evaluada en cada corrida por tiempo al kickoff; Official solo si la corrida cae ≤T-60 con XI oficial (L3) |
@@ -282,6 +283,9 @@ Cobertura real, por liga, de: (a) bet ids de props POD §3, (b) casas por línea
 | S15 | Outlier de precio: mejor cuota >3 pp sobre la mediana se ignora | SE §4.1 |
 | S16 | Una tesis por partido y lado (cap de correlación 1) | SE §1.3 |
 | S18 | SD de log λ = 0.5·√(1/ESS_att + 1/ESS_def) para el bootstrap de EV_LCB | SE §3 |
+| S20 | **El pick lo deciden Edge Strength, Confianza y Data Quality** (Master §6), pesos 0.4375 / 0.3125 / 0.25 (el bootstrap 0.35/0.25/0.20 restringido a esos tres y renormalizado) y bandas 85 / 72 / 60 del propio Master §6. **Instrucción del dueño, 5-sep-2026** | Master §6 |
+| S21 | Edge Strength = mín(100, 20·edge_pp); mínimos por tier 3.5 / 2.5 / 1.5 pp | Master §6 pide configurar mínimos |
+| S22 | Confianza = media a peso igual de calibración validada, certeza del EV, soporte de muestra (ESS) y acuerdo entre familias — los cuatro insumos que nombra Master §6 | Master §6 |
 | S19 | **Calibración provisional**: shrinkage al prior de mercado, w = ESS/(ESS+60). Sin él, el modelo sin calibrar da EV de 50–300% (Master §6 prohíbe publicarlos). Sustituir por calibración empírica SE §9 | SE §3 shrinkage, §4.1 market prior, §5.1 market residual |
 
 ---

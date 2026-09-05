@@ -1,7 +1,7 @@
 # AUDITORÍA — HAXIOM EDGE SOCCER (Master Prompt §1)
 
 Fecha: 2026-09-05 · Auditor: Claude (Fable 5.1) · Proyecto: mlb-picks-pro / deportes/futbol
-Estado: **auditoría completa; implementación de Fase 1 arranca con los supuestos de §7 y queda pendiente lo de §8**.
+Estado: **auditoría completa · Fase 1 implementada y probada (ver 03-informe-fase1.md) · validación PAPER pendiente**.
 
 ---
 
@@ -242,6 +242,13 @@ Módulos = secciones internas de `deportes/futbol.js` (un archivo por deporte, `
 | Clima | N | S5 |
 | Reglas de liquidación por casa | No las publica el proveedor | `settlement_rule_id` = regla canónica con `book_rule_unverified=true`; mercados cuya regla depende de la casa quedan fuera |
 
+### 6.5b Hallazgos de implementación (5-sep-2026)
+- **Hándicap asiático del proveedor**: "Home −1" y "Away −1" son los dos lados de la misma línea (visitante +1); no son líneas distintas. Implementado y probado.
+- **EUROPA LEAGUE y CONFERENCE LEAGUE**:  reporta  en 2026 → sin candidatos (se muestran "sin cuotas").
+- **No existe "Draw No Bet" de partido completo** en  (solo 1ª y 2ª mitad); "Home/Away" (bet 2) queda bloqueado por SE §1.1.1. La línea asiática 0 cubre la economía del DNB dentro del registro AH.
+- **Props de jugador**: escaleras de un lado ("Jugador - N") con 1-2 casas por línea → POD siempre no-selección (§6.7 confirmado).
+- **Modelo sin calibrar**: log loss walk-forward ≈ 0.93–1.10 por competición; sin S19 los EV eran 50–300%.
+
 ### 6.6 Master §10 sin correlato en el repo
 - "API/schema": no hay backend; el API es el esquema de tablas Supabase + el objeto de decisión SE §10 por fila.
 - "Logging, retries, rate-limit": adaptador con reintentos y respeto de `x-ratelimit`; logs = `futbol_auditoria`.
@@ -267,6 +274,15 @@ Cobertura real, por liga, de: (a) bet ids de props POD §3, (b) casas por línea
 | S7 | "XI oficial" desde que `/fixtures/lineups` responde (≈T-40) | Proveedor |
 | S8 | λ, prior, ρ, k: estimados por competición con temporada actual + anterior, versionados; nunca mirando el partido objetivo | SE §5 |
 | S9 | Caps de publicación: sin cap por defecto, campo presente | Master §7 |
+| S10 | Todas las casas del proveedor aprobadas; Pinnacle (id 4) única sharp — **autorizado por el dueño 5-sep-2026** | SE §4.1/§7 |
+| S11 | Frescura máxima de cotización por tier: Detected 1440 min · Lean 120 · Strong 60 · Elite 30 | SE §7 no fija minutos |
+| S12 | λ3 del bivariado = 0.12 | SE §3 |
+| S13 | Familia B: mezcla 0.6·xG + 0.4·goles; cobertura mínima de xG 60% | SE §5.1 |
+| S14 | Desacuerdo máximo entre familias 6.0 pp (mismo valor que POD §8) | SE §7 |
+| S15 | Outlier de precio: mejor cuota >3 pp sobre la mediana se ignora | SE §4.1 |
+| S16 | Una tesis por partido y lado (cap de correlación 1) | SE §1.3 |
+| S18 | SD de log λ = 0.5·√(1/ESS_att + 1/ESS_def) para el bootstrap de EV_LCB | SE §3 |
+| S19 | **Calibración provisional**: shrinkage al prior de mercado, w = ESS/(ESS+60). Sin él, el modelo sin calibrar da EV de 50–300% (Master §6 prohíbe publicarlos). Sustituir por calibración empírica SE §9 | SE §3 shrinkage, §4.1 market prior, §5.1 market residual |
 
 ---
 

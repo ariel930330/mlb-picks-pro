@@ -244,8 +244,8 @@ Módulos = secciones internas de `deportes/futbol.js` (un archivo por deporte, `
 
 ### 6.5b Hallazgos de implementación (5-sep-2026)
 - **Hándicap asiático del proveedor**: "Home −1" y "Away −1" son los dos lados de la misma línea (visitante +1); no son líneas distintas. Implementado y probado.
-- **EUROPA LEAGUE y CONFERENCE LEAGUE**:  reporta  en 2026 → sin candidatos (se muestran "sin cuotas").
-- **No existe "Draw No Bet" de partido completo** en  (solo 1ª y 2ª mitad); "Home/Away" (bet 2) queda bloqueado por SE §1.1.1. La línea asiática 0 cubre la economía del DNB dentro del registro AH.
+- **EUROPA LEAGUE y CONFERENCE LEAGUE**: `/leagues` reporta `coverage.odds=false` en 2026 → sin candidatos (se muestran "sin cuotas").
+- **No existe "Draw No Bet" de partido completo** en `/odds/bets` (solo 1ª y 2ª mitad); "Home/Away" (bet 2) queda bloqueado por SE §1.1.1. La línea asiática 0 cubre la economía del DNB dentro del registro AH.
 - **Props de jugador**: escaleras de un lado ("Jugador - N") con 1-2 casas por línea → POD siempre no-selección (§6.7 confirmado).
 - **Modelo sin calibrar**: log loss walk-forward ≈ 0.93–1.10 por competición; sin S19 los EV eran 50–300%.
 

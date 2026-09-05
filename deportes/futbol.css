@@ -47,7 +47,7 @@
 #dep-futbol .sc-mkt{font-size:10px;font-weight:700;color:var(--ptx);background:var(--pbg);padding:2px 7px;border-radius:6px}
 #dep-futbol .sc-card-mu{font-size:11px;color:var(--text2);margin:4px 0 10px}
 #dep-futbol .sc-card-mu i,#dep-futbol .sc-fx-teams i,#dep-futbol .sc-mtitle i{font-style:normal;color:var(--text3);font-size:10px;margin:0 6px}
-#dep-futbol .sc-card-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:10px}
+#dep-futbol .sc-card-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin-bottom:10px}
 #dep-futbol .sc-card-grid div{background:var(--bg3);border-radius:9px;padding:7px 9px;display:flex;flex-direction:column}
 #dep-futbol .sc-card-grid span{font-size:9px;color:var(--text3);font-weight:800;text-transform:uppercase}
 #dep-futbol .sc-card-grid b{font-size:14px;font-variant-numeric:tabular-nums}

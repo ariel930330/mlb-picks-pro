@@ -9,6 +9,7 @@ Fecha: 2026-09-05 · Versiones: `haxiom_soccer_policy_v1` · `soccer_joint_score
 - No-vig por casa con cuatro métodos (multiplicativo, aditivo, potencia, Shin) y consenso robusto por mediana de casas aprobadas; Pinnacle como `mkt_sharp_novig_p` separado (S10).
 - Precio ejecutable = mejor cuota aprobada que no sea outlier aislado (S15); línea distinta = candidato distinto.
 - Modelo por competición: fuerzas ataque/defensa local/visita con recencia exponencial y shrinkage; **ajuste walk-forward** de (H, ρ, K) sobre la temporada anterior (S8); dos familias: A Dixon-Coles sobre goles, B bivariado de Poisson sobre mezcla xG/goles (xG desde `/fixtures/statistics`, cacheado en `futbol_partidos`).
+- **Edge en puntos porcentuales para TODO mercado** (SE §3: "edge_pp = p_model − p_no_vig; store both"): la probabilidad del modelo se normaliza a la misma escala que el de-vig del mercado, p = A/(A+B) con A = win + half_win/2 y B = loss + half_loss/2. Así el edge existe también en asiáticos de cuarto y líneas enteras, y EV = riesgo·(p·d − 1) coincide exactamente con la suma por estados. Se guardan edge_pp, edge_percent, edge_units, cuota justa (decimal y americana) y masa en riesgo.
 - EV por estados de liquidación; **EV_LCB = EV − k·SE** con bootstrap paramétrico determinista (64 draws, S3/S18) + varianza entre familias.
 - Calibración provisional **S19**: `p_cal = p_mkt + w·(p_model − p_mkt)`, `w = ESS/(ESS+60)`; EV mezclado igual. Sustituir por calibración empírica en cuanto haya muestra (SE §9).
 - Puertas universales (precio, frescura, integridad del evento, modelo, coherencia derivada, liquidación) → NO SIGNAL con reason codes SE §10.1; puertas de tier SE §7 literales (EV, percentil del slate, LCB, DQ, acuerdo de familias ≤6 pp, frescura por tier S11); XI sin confirmar → SIGNAL DETECTED con `provisional_tier` y LINEUP_BLOCK; correlación por tesis de partido (S16) → CORRELATION_BLOCK; precio mínimo aceptable por línea y tier; expiración al kickoff.
@@ -19,8 +20,18 @@ Fecha: 2026-09-05 · Versiones: `haxiom_soccer_policy_v1` · `soccer_joint_score
 - POD v1.0: snapshot de props, puertas §4/§7 con reason codes §26 y no-selección oficial.
 - Interfaz: tablero por tier (PAPER), watchlist con tier provisional, partidos por competición con modal de todos los candidatos y motivos, POD, historial (récord, unidades, CLV), auditoría, criterios. Bot `?deporte=futbol&auto=1|grade`.
 
+## CORREGIDO TRAS REVISIÓN (5-sep-2026, tarde)
+Reporte del dueño: "el modelo no calcula edge". Confirmado; eran cuatro defectos:
+1. **edge_pp era null en todo mercado con empuje o media apuesta** (hándicaps asiáticos, cuartos, líneas enteras) porque las dos probabilidades no estaban en la misma escala. Ahora se calcula siempre.
+2. **Nunca se mostraba en pantalla.** Ahora está en tarjeta, modal, watchlist e historial, con la cuota justa frente a la disponible.
+3. **Masa en riesgo mal definida en líneas de cuarto**: se usaba 1 − push, que ignora la mitad del importe devuelto en una "media pérdida". Eso inflaba la cuota justa y el EV de TODO asiático de cuarto (1,716 candidatos en la jornada de prueba). Ahora es A + B.
+4. **El EV de mercado de la mezcla S19 ignoraba el empuje**, sobrestimando ese término en asiáticos y líneas enteras.
+
+Además, los valores se guardan sin redondear y el redondeo pasó a ser solo de presentación (SE §13 / POD §13).
+
 ## PROBADO
-- `tests/futbol.test.mjs`: 48 pruebas, todas pasan (conversión de cuotas; no-vig 3 vías; DNB push y bloqueo; DC unión; AH cuartos/enteros/medios; totales de cuarto; separación de periodos; coherencia BTTS/1X2/totales; bivariado; insumos faltantes/stale/outlier/línea; fronteras de tier; sin señales forzadas; XI provisional; frescura; pesos; S19; formato AH del proveedor; correlación; precio mínimo; expiración; determinismo; walk-forward sin fuga; fuerzas/ESS; fixture dorado independiente; POD no-selección).
+- `tests/futbol.test.mjs`: 54 pruebas, todas pasan (conversión de cuotas; no-vig 3 vías; DNB push y bloqueo; DC unión; AH cuartos/enteros/medios; totales de cuarto; separación de periodos; coherencia BTTS/1X2/totales; bivariado; insumos faltantes/stale/outlier/línea; fronteras de tier; sin señales forzadas; XI provisional; frescura; pesos; S19; formato AH del proveedor; correlación; precio mínimo; expiración; determinismo; edge presente en todo mercado; EV igual a la suma por estados; EV cero a la cuota justa con empuje y cuartos; walk-forward sin fuga; fuerzas/ESS; fixture dorado independiente; POD no-selección).
+- Verificación sobre la jornada real del 6-sep-2026: 5,872 candidatos con masa de liquidación en 7 mercados, **0 sin edge**, identidad EV = riesgo·(p·d − 1) intacta en todos, EV exactamente 0 a la cuota justa en todos, 1,716 líneas de cuarto con masa en riesgo media 0.908.
 - Corrida real 2026-09-06 (17 competiciones con cuotas, 52 partidos, 5,922 candidatos, 84 llamadas, 51 s): sin errores; render de todas las pestañas y del modal.
 
 ## VALIDADO

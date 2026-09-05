@@ -85,6 +85,69 @@ t('los pesos SE §7.1 suman 100 y el score compuesto no es una probabilidad', ()
 t('S19: con ESS finito la probabilidad calibrada queda entre el modelo y el consenso, y el EV también', () => { const cs = corre(fxDe(28), cuotas1x2(precioPara(.07, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8, 30)); const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME'); cerca(h.w_modelo, 30 / 90, 1e-3); assert.ok(h.p_model > h.p_novig && h.p_model < h.p_raw); assert.ok(h.ev < h.ev_modelo && h.ev > h.ev_mercado); });
 t('hándicap asiático del proveedor: "Home -1" y "Away -1" son los dos lados de la misma línea (visitante +1)', () => { const o = { bookmakers: [{ id: 8, name: 'Bet365', bets: [{ id: 4, name: 'Asian Handicap', values: [{ value: 'Home -1', odd: '2.00' }, { value: 'Away -1', odd: '1.80' }, { value: 'Home +0', odd: '1.23' }, { value: 'Away +0', odd: '4.10' }] }] }] }; const n = F.normalizarCuotas(o); const a1 = n.find(q => q.sel === 'AWAY' && q.valor === 'Away -1'); assert.equal(a1.linea, 1); const sets = F.setsPorCasa(n, 'ASIAN_HANDICAP', -1); assert.equal(sets.length, 1); assert.equal(JSON.stringify([...sets[0].decs]), JSON.stringify([2, 1.8])); assert.equal(F.setsPorCasa(n, 'ASIAN_HANDICAP', 0).length, 1); });
 
+t('edge_pp existe en TODO mercado, incluidos los que tienen empuje (asiaticos y lineas enteras)', () => {
+  const D = distDe(1.9, 0.8, 30);
+  const q = [...cuotas1x2(2.2, 4.4, 6.0, 6),
+    ...[1, 2, 3, 4].flatMap(b => [{ book_id: b, book: 'B' + b, mercado: 'ASIAN_HANDICAP', sel: 'HOME', linea: -0.25, dec: 1.95 }, { book_id: b, book: 'B' + b, mercado: 'ASIAN_HANDICAP', sel: 'AWAY', linea: 0.25, dec: 1.95 }]),
+    ...[1, 2, 3, 4].flatMap(b => [{ book_id: b, book: 'B' + b, mercado: 'MATCH_GOALS', sel: 'OVER', linea: 3, dec: 2.1 }, { book_id: b, book: 'B' + b, mercado: 'MATCH_GOALS', sel: 'UNDER', linea: 3, dec: 1.75 }]),
+    ...[1, 2, 3, 4].flatMap(b => [{ book_id: b, book: 'B' + b, mercado: 'BTTS', sel: 'YES', linea: null, dec: 1.9 }, { book_id: b, book: 'B' + b, mercado: 'BTTS', sel: 'NO', linea: null, dec: 1.9 }])];
+  const cs = corre(fxDe(60), q, D);
+  const conMasa = cs.filter(c => c.masa);
+  assert.ok(conMasa.length >= 7, 'candidatos con masa: ' + conMasa.length);
+  for (const mk of ['1X2', 'ASIAN_HANDICAP', 'MATCH_GOALS', 'BTTS']) assert.ok(conMasa.some(c => c.mercado === mk), 'falta ' + mk);
+  const sinEdge = conMasa.filter(c => c.edge_pp == null);
+  assert.equal(sinEdge.length, 0, 'sin edge: ' + JSON.stringify(sinEdge.map(c => [c.mercado, c.sel, c.linea])));
+  const ah = cs.find(c => c.mercado === 'ASIAN_HANDICAP' && c.sel === 'HOME');
+  assert.ok(ah.masa.half_loss > 0, 'el AH -0.25 debe tener media perdida');
+  assert.ok(ah.edge_pp != null && Math.abs(ah.edge_pp) < 100);
+  const tot3 = cs.find(c => c.mercado === 'MATCH_GOALS' && c.linea === 3 && c.sel === 'OVER');
+  assert.ok(tot3.masa.push > 0 && tot3.edge_pp != null && tot3.riesgo < 1, 'la linea entera devuelve parte de la apuesta');
+});
+t('EV y edge son cantidades distintas (SE 3): coinciden en signo AL PRECIO JUSTO DEL MERCADO', () => {
+  const D = distDe(1.6, 1.3, 30);
+  const q = [...cuotas1x2(2.2, 3.4, 3.9, 5),
+    ...[-0.25, 0, 0.25, 0.5, 1].flatMap(L => [1, 2, 3, 4].flatMap(b => [{ book_id: b, book: 'B' + b, mercado: 'ASIAN_HANDICAP', sel: 'HOME', linea: L, dec: 1.9 + L / 10 }, { book_id: b, book: 'B' + b, mercado: 'ASIAN_HANDICAP', sel: 'AWAY', linea: -L, dec: 1.9 - L / 10 }])),
+    ...[2, 2.25, 2.5, 3].flatMap(L => [1, 2, 3, 4].flatMap(b => [{ book_id: b, book: 'B' + b, mercado: 'MATCH_GOALS', sel: 'OVER', linea: L, dec: 1.8 + L / 20 }, { book_id: b, book: 'B' + b, mercado: 'MATCH_GOALS', sel: 'UNDER', linea: L, dec: 2.2 - L / 20 }]))];
+  const cs = corre(fxDe(61), q, D).filter(c => c.masa);
+  assert.ok(cs.length >= 20);
+  for (const c of cs) {
+    // identidad del motor: EV = riesgo*(p*d - 1) para cualquier mercado
+    cerca(c.ev, c.riesgo * (c.p_model * c.dec - 1), 1e-12, c.mercado + ' ' + c.sel);
+    // al precio justo del mercado (sin comision) el signo del EV es el del edge
+    const evAlJusto = c.riesgo * (c.p_model / c.p_novig - 1);
+    assert.equal(Math.sign(+evAlJusto.toFixed(9)), Math.sign(+c.edge_pp.toFixed(9)), `${c.mercado} ${c.sel} ${c.linea}`);
+  }
+});
+t('el EV con la mezcla S19 al peso pleno es exactamente la suma por estados de liquidacion', () => {
+  const D = distDe(1.6, 1.3, 1e9);
+  const q = [1, 2, 3, 4].flatMap(b => [{ book_id: b, book: 'B' + b, mercado: 'ASIAN_HANDICAP', sel: 'HOME', linea: -0.25, dec: 2.05 }, { book_id: b, book: 'B' + b, mercado: 'ASIAN_HANDICAP', sel: 'AWAY', linea: 0.25, dec: 1.85 }]);
+  const cs = corre(fxDe(64), q, D).filter(c => c.masa);
+  for (const c of cs) cerca(c.ev, F.evDeMasa(c.masa, c.dec), 1e-7, c.sel + ' ' + c.linea);   // w = ESS/(ESS+60) tiende a 1, no es 1 exacto
+});
+t('a la cuota justa el EV es exactamente 0, con empuje y con lineas de cuarto', () => {
+  const D = distDe(1.7, 1.2, 1e6);
+  for (const [mk, sel, L, d] of [['1X2', 'HOME', null, 2.0], ['ASIAN_HANDICAP', 'HOME', -0.25, 1.9], ['ASIAN_HANDICAP', 'AWAY', 0.75, 2.4], ['ASIAN_HANDICAP', 'HOME', -1, 1.9], ['MATCH_GOALS', 'OVER', 3, 2.0], ['MATCH_GOALS', 'UNDER', 2.75, 1.95], ['BTTS', 'YES', null, 1.9]]) {
+    const m = F.masaEstados(D.G, mk, sel, L), r = F.enRiesgo(m), p = F.pJusta(m);
+    cerca(F.evDeMasa(m, 1 / p), 0, 1e-9, mk + ' a cuota justa');
+    cerca(r * (p * (1 / p) - 1), 0, 1e-12, mk + ' identidad');
+    cerca(r * (p * d - 1), F.evDeMasa(m, d), 1e-9, mk + ' formula equivalente');
+  }
+});
+t('edge en puntos porcentuales: coincide con la diferencia de probabilidades x100', () => {
+  const cs = corre(fxDe(62), cuotas1x2(precioPara(.07, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8, 30));
+  const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME');
+  cerca(h.edge_pp, (h.p_model - h.p_novig) * 100, 1e-12);   // se guarda sin redondear
+  assert.ok(Math.abs(h.edge_pp) > 0.5 && Math.abs(h.edge_pp) < 50, 'magnitud en pp: ' + h.edge_pp);
+  cerca(h.edge_rel, h.p_model / h.p_novig - 1, 1e-12);
+});
+t('el registro lleva edge_pp, edge_percent, edge_units y la cuota justa (SE 1.2)', () => {
+  const cs = corre(fxDe(63), cuotas1x2(precioPara(.07, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8));
+  const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME');
+  const r = F.registroDe(h, { snapshot_id: 'SNAP-SOC-x-000000-abcdef', analysis_time: '2026-09-06T12:05:00Z', input_hash: 'h' });
+  for (const k of ['edge_pp', 'edge_percent', 'edge_units', 'fair_decimal', 'fair_american', 'at_risk_mass', 'expected_cover', 'settlement_mass']) assert.ok(r.model[k] != null, 'falta ' + k);
+  assert.equal(r.model.edge_units, r.model.ev);
+});
+
 console.log('\n9 · Correlación, deduplicación, expiración y precio');
 t('misma tesis (HOME) en 1X2 y AH → la peor recibe CORRELATION_BLOCK', () => { const D = distDe(1.9, 0.8); let cs = []; for (let i = 0; i < 10; i++) { const fx = fxDe(300 + i); fx.dist = D; const c = F.candidatosDe(fx, cuotas1x2(precioPara(.02, pHome), 4.4, 6.0, 6), D, {}); c.forEach(x => x.fx = fx); cs = cs.concat(c); } const fx = fxDe(30); fx.dist = D; const q = [...cuotas1x2(precioPara(.07, pHome), 4.4, 6.0, 6), ...[1, 2, 3, 4].flatMap(b => [{ book_id: b, book: 'B' + b, mercado: 'ASIAN_HANDICAP', sel: 'HOME', linea: -0.5, dec: precioPara(.06, pHome) }, { book_id: b, book: 'B' + b, mercado: 'ASIAN_HANDICAP', sel: 'AWAY', linea: 0.5, dec: 2.0 }])]; const c30 = F.candidatosDe(fx, q, D, {}); c30.forEach(x => x.fx = fx); cs = cs.concat(c30); F.asignarTiers(cs, ctxFab()); const home = c30.filter(c => c.tesis === 'HOME' && c.ev > 0); const reservada = home.filter(c => ['Elite Signal', 'Strong Signal', 'Lean Signal'].includes(c.estado)); assert.equal(reservada.length, 1, JSON.stringify(home.map(c => [c.mercado, c.estado, c.percentil]))); assert.ok(home.some(c => c.codes.includes('CORRELATION_BLOCK') && c.estado === 'Signal Detected')); });
 t('precio mínimo aceptable: en ese precio el EV es exactamente el umbral del tier', () => { const cs = corre(fxDe(31), cuotas1x2(precioPara(.07, pHome), 4.4, 6.0, 6), distDe(1.9, 0.8)); const h = cs.find(c => c.mercado === '1X2' && c.sel === 'HOME'); cerca(F.evDeMasa(h.masa, h.min_dec), F.CONFIG.tiers.elite.ev, 1e-3); assert.ok(h.min_dec < h.dec && h.min_am != null); });

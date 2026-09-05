@@ -6,7 +6,7 @@
 | `deportes/futbol.js` | Motor completo + interfaz (un archivo por deporte, `deportes/LEEME.md`). Módulos internos: VERSIONES/CONFIG, REGISTRO DE MERCADOS, NÚCLEO MATEMÁTICO, MODELO, ADAPTADOR API-FOOTBALL, CANDIDATOS/EV, PUERTAS/SCORES/TIERS, POD, CORRIDA, INTERFAZ |
 | `deportes/futbol.css` | Estilos, todo bajo `#dep-futbol` |
 | `futbol-setup.sql` | Tablas Supabase (append-only) + RLS |
-| `tests/futbol.test.mjs` | 48 pruebas (Master §10). `node tests/futbol.test.mjs` |
+| `tests/futbol.test.mjs` | 54 pruebas (Master §10). `node tests/futbol.test.mjs` |
 | `docs/futbol/01-auditoria.md` | Auditoría Master §1 |
 | `docs/futbol/03-informe-fase1.md` | Informe de cierre de fase (implementado / probado / validado / bloqueado) |
 
@@ -31,6 +31,12 @@
 | XI | ≤60 min o alineaciones publicadas (≈T-40) | pueden abrirse Lean/Strong/Elite (PAPER) |
 | T-30 / T-5 | ≤30 / ≤5 min | recheck de precio; frescura por tier (S11) |
 | INICIADO | kickoff pasado | no se evalúa (estado ≠ NS) |
+
+## Edge y EV no son lo mismo (SE §3)
+- **Edge** (en puntos porcentuales) compara la probabilidad del modelo con la del mercado **sin comisión**. Dice si el modelo discrepa del mercado.
+- **EV** compara el modelo con el **precio que de verdad puedes tomar**, que ya lleva comisión. Dice si esa discrepancia deja dinero.
+- Por eso una selección puede tener edge positivo y EV negativo: el modelo acierta pero la comisión se lo come. Los tiers se deciden por **EV** (SE §7); el edge se guarda y se muestra como evidencia.
+- En mercados que devuelven parte del importe (asiáticos de cuarto, líneas enteras) la tarjeta indica qué porcentaje se devuelve.
 
 ## Qué significa cada estado
 - **ELITE / STRONG / LEAN · PAPER**: cumple SE §7 con XI confirmado. PAPER = sin calibración validada ni promoción (SE §9.1); se rastrea, no se publica como producción.

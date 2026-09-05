@@ -231,7 +231,19 @@ function masaEstados(G, mercado, sel, linea) {
   return m;
 }
 const evDeMasa = (m, d) => m.win * (d - 1) + m.half_win * (d - 1) / 2 - m.half_loss / 2 - m.loss;
-const pCobertura = m => m.win + m.half_win * .5 + m.push * .5;      // solo para mostrar; el edge_pp exige comparabilidad
+// Probabilidad JUSTA del modelo, en la MISMA escala que el de-vig del mercado (SE §3).
+// Con masa de empuje la cuota justa es d = (1−push)/A, con A = win + half_win/2; por tanto
+// la probabilidad implícita justa es A/(1−push), no "win + push/2". Usar esta normalización
+// hace el edge comparable en TODO mercado (asiáticos y líneas enteras incluidos) y garantiza
+// que el signo del edge y el del EV nunca se contradigan:  EV = (1−push)·(p·d − 1).
+// Masa de la apuesta que DE VERDAD se juega. En una línea de cuarto el sello "media
+// pérdida" significa que se pierde la mitad del importe y la otra mitad SE DEVUELVE, así
+// que esa devolución cuenta igual que un empuje. Definirlo como 1 − push (solo el empuje
+// explícito) inflaba la cuota justa y el EV de todo asiático de cuarto.
+//   en riesgo = (win + half_win/2) + (loss + half_loss/2) = A + B
+const enRiesgo = m => (m.win + m.half_win * .5) + (m.loss + m.half_loss * .5);
+const pJusta = m => { const r = enRiesgo(m); return r > 1e-9 ? (m.win + m.half_win * .5) / r : 0.5; };
+const pCobertura = m => m.win + m.half_win * .5 + m.push * .5;      // fracción de unidad esperada (solo para mostrar)
 // PRNG determinista (mismo snapshot ⇒ mismo resultado)
 function prng(seed) { let a = seed >>> 0; return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 const normal = r => { const u = Math.max(1e-12, r()), v = r(); return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v); };
@@ -386,20 +398,34 @@ function candidatosDe(fx, cuotas, dist, ctx) {
     const M = MERCADOS[mercado]; const pM = cons.p[idx];
     const px = precioEjecutable(filas, idx, pM); if (!px) return C.push({ ...base(mercado, sel, linea), sin_precio: true, codes: [RC.DATA_BLOCK], detalle: 'todas las cotizaciones son outliers o no hay precio', estado: ESTADOS.NONE });
     const masa = dist ? masaEstados(dist.G, mercado, sel, linea) : null;
-    const pA = dist ? pCobertura(masaEstados(dist.GA, mercado, sel, linea)) : null, pB = dist ? pCobertura(masaEstados(dist.GB, mercado, sel, linea)) : null;
+    const pA = dist ? pJusta(masaEstados(dist.GA, mercado, sel, linea)) : null, pB = dist ? pJusta(masaEstados(dist.GB, mercado, sel, linea)) : null;
     // S19 · calibración provisional: el consenso es el prior (SE 4.1) y el modelo lo mueve con peso w = ESS/(ESS+K_m)
     const w = dist ? dist.ess / (dist.ess + CONFIG.calibracion.K_m) : 0;
-    const evModelo = masa ? evDeMasa(masa, px.dec) : null, evMercado = pM * (px.dec - 1) - (1 - pM);
-    const ev = masa ? w * evModelo + (1 - w) * evMercado : null;
-    let se = null, lcb = null;
-    if (dist) { const evs = dist.draws.map(g => evDeMasa(masaEstados(g, mercado, sel, linea), px.dec)); const m = media(evs);
-      const within = media(evs.map(e => (e - m) * (e - m))); const evA = evDeMasa(masaEstados(dist.GA, mercado, sel, linea), px.dec), evB = evDeMasa(masaEstados(dist.GB, mercado, sel, linea), px.dec);
-      const between = (evA - evB) * (evA - evB) / 4; se = w * Math.sqrt(within + between); lcb = ev - CONFIG.lcb.k * se; }
+    // EV = (1−push)·(p·d − 1). Con w=1 coincide EXACTAMENTE con la suma por estados de
+    // liquidación (evDeMasa); con w=0 es el EV al propio precio justo del mercado.
+    // La versión anterior de evMercado ignoraba la masa de empuje y sobrestimaba el EV
+    // de mercado en asiáticos y líneas enteras.
+    const riesgo = masa ? enRiesgo(masa) : null;
+    const evModelo = masa ? evDeMasa(masa, px.dec) : null, evMercado = masa ? riesgo * (pM * px.dec - 1) : null;
     const conPush = masa && (masa.push + masa.half_win + masa.half_loss) > 1e-9;
-    const pRaw = masa ? pCobertura(masa) : null, pModel = masa ? pM + w * (pRaw - pM) : null;
+    const pRaw = masa ? pJusta(masa) : null;                          // probabilidad justa del ensamble
+    const pModel = masa ? pM + w * (pRaw - pM) : null;                // S19: shrinkage al prior de mercado
+    const ev = masa ? riesgo * (pModel * px.dec - 1) : null;
+    // §3: el edge es en PUNTOS PORCENTUALES y se guarda aparte del EV; ambos existen para
+    // todo mercado porque las dos probabilidades están en la misma escala.
+    const edgePP = masa ? (pModel - pM) * 100 : null;                 // sin redondear: se ordena con el valor exacto y se redondea al mostrar
+    const edgeRel = masa && pM > 0 ? pModel / pM - 1 : null;
+    const cobertura = masa ? pCobertura(masa) : null;
+    let se = null, lcb = null;
+    if (dist) { const evDe = g => { const mg = masaEstados(g, mercado, sel, linea), rg = enRiesgo(mg); return rg * ((pM + w * (pJusta(mg) - pM)) * px.dec - 1); };
+      const evs = dist.draws.map(evDe), m = media(evs);
+      const within = media(evs.map(e => (e - m) * (e - m)));         // incertidumbre de parámetros
+      const evA = evDe(dist.GA), evB = evDe(dist.GB);
+      const between = (evA - evB) * (evA - evB) / 4;                  // desacuerdo entre familias
+      se = Math.sqrt(within + between); lcb = ev - CONFIG.lcb.k * se; }
     C.push({ ...base(mercado, sel, linea), filas: filas.length, casas: filas.map(f => f.book), cons, p_novig: pM, sharp_p: cons.sharp_p ? cons.sharp_p[idx] : null,
       dispersion: cons.dispersion[idx], overround: cons.overround, devig_spread: cons.devig_spread, book: px.book, book_id: px.book_id, dec: px.dec, am: decAAm(px.dec), outliers_excluidos: px.excluidas,
-      derivado, masa, p_model: pModel, p_raw: pRaw, w_modelo: +w.toFixed(3), ev_modelo: evModelo, ev_mercado: evMercado, p_A: pA, p_B: pB, edge_pp: (masa && !conPush) ? (pModel - pM) : null, ev, se, ev_lcb: lcb, fair_dec: pModel > 0 ? 1 / pModel : null,
+      derivado, masa, riesgo, cobertura, p_model: pModel, p_raw: pRaw, w_modelo: +w.toFixed(3), ev_modelo: evModelo, ev_mercado: evMercado, p_A: pA, p_B: pB, edge_pp: edgePP, edge_rel: edgeRel, ev, se, ev_lcb: lcb, fair_dec: pModel > 0 ? 1 / pModel : null,   // sin redondear (se redondea al mostrar)
       con_push: !!conPush, codes: [], estado: null });
   };
   const base = (mercado, sel, linea) => ({ key: `${fx.id}|${mercado}|${sel}|${linea ?? ''}`, fixture_id: fx.id, mercado, nombre: MERCADOS[mercado].nombre, sel, linea, tesis: tesisDe(mercado, sel, linea), periodo: MERCADOS[mercado].periodo, settlement_rule_id: VERSIONES.reglas + ':' + mercado });
@@ -504,8 +530,9 @@ function asignarTiers(cands, ctxDe) {
   // 5 · precio mínimo aceptable por tier (SE §5 "acceptable price boundary for that exact line") y expiración
   for (const c of cands) { if (!c.masa) continue;
     const req = c.estado === ESTADOS.ELITE ? CONFIG.tiers.elite.ev : c.estado === ESTADOS.STRONG ? CONFIG.tiers.strong.ev : CONFIG.tiers.lean.ev;
-    const wm = c.w_modelo, A = wm * (c.masa.win + c.masa.half_win / 2) + (1 - wm) * c.p_novig, B = wm * (c.masa.loss + c.masa.half_loss / 2) + (1 - wm) * (1 - c.p_novig);   // EV(d) = A·(d−1) − B con la mezcla S19
-    c.min_dec = A > 0 ? +((req + B) / A + 1).toFixed(3) : null; c.min_am = c.min_dec ? decAAm(c.min_dec) : null; }
+    // EV(d) = riesgo·(p·d − 1) ≥ req  ⇒  d ≥ (req/riesgo + 1)/p
+    c.min_dec = c.p_model > 0 && c.riesgo > 1e-9 ? +(((req / c.riesgo) + 1) / c.p_model).toFixed(3) : null;
+    c.min_am = c.min_dec ? decAAm(c.min_dec) : null; }
   return cands;
 }
 
@@ -626,7 +653,7 @@ function registroDe(c, snap) {
   return {
     identity: { signal_id: `SIG-${fx.id}-${c.mercado}-${c.sel}-${c.linea ?? 'na'}-${snap.snapshot_id.slice(-6)}`, candidate_key: c.key, sport: 'SOCCER', competition_id: fx.comp.id, competition: fx.comp.nombre, season: modelos.get(fx.comp.id)?.temporada, fixture_id: fx.id, home: fx.home, away: fx.away, scheduled_start: fx.kickoff, timezone: CONFIG.zona, pregame: true, evaluation_timestamp: snap.analysis_time, quote_timestamp: fx.quote_time },
     market: { source_market_name: M.etiqueta || M.etiquetaAmbigua, canonical_market_id: c.mercado, market_type: M.linea ? 'line' : 'outcome', team_scope: c.mercado.includes('HOME') ? 'HOME' : c.mercado.includes('AWAY') ? 'AWAY' : 'MATCH', period_scope: M.periodo, overtime_scope: 'EXCLUDED', selection: c.sel, line: c.linea, book: c.book, odds_decimal: c.dec, odds_american: c.am, best_available_price: c.dec, minimum_acceptable_price: c.min_dec, minimum_acceptable_american: c.min_am, settlement_rule_id: c.settlement_rule_id, book_rule_unverified: true, active_books: c.filas, outliers_excluded: c.outliers_excluidos },
-    model: c.masa ? { home_goals_mean: +c.fx.dist.LA.lh.toFixed(3), away_goals_mean: +c.fx.dist.LA.la.toFixed(3), family_A: { p: c.p_A, lambdas: [c.fx.dist.LA.lh, c.fx.dist.LA.la] }, family_B: { p: c.p_B, lambdas: [c.fx.dist.LB.lh, c.fx.dist.LB.la] }, families: c.fx.dist.familias, p_model_raw: c.p_raw, model_weight: c.w_modelo, calibrated_probability: c.p_model, calibration_version: VERSIONES.calibracion, ev_model_raw: c.ev_modelo, ev_market: c.ev_mercado, fair_decimal: c.fair_dec, settlement_mass: c.masa, edge_pp: c.edge_pp, ev: c.ev, ev_se: c.se, ev_lower_bound: c.ev_lcb, lcb_method: `parametric bootstrap ${CONFIG.lcb.draws} draws, k=${CONFIG.lcb.k}`, ess: c.fx.dist.ess, distribution_version: VERSIONES.modelo } : null,
+    model: c.masa ? { home_goals_mean: +c.fx.dist.LA.lh.toFixed(3), away_goals_mean: +c.fx.dist.LA.la.toFixed(3), family_A: { p: c.p_A, lambdas: [c.fx.dist.LA.lh, c.fx.dist.LA.la] }, family_B: { p: c.p_B, lambdas: [c.fx.dist.LB.lh, c.fx.dist.LB.la] }, families: c.fx.dist.familias, p_model_raw: c.p_raw, model_weight: c.w_modelo, calibrated_probability: c.p_model, calibration_version: VERSIONES.calibracion, ev_model_raw: c.ev_modelo, ev_market: c.ev_mercado, fair_decimal: c.fair_dec, fair_american: c.fair_dec ? decAAm(c.fair_dec) : null, settlement_mass: c.masa, at_risk_mass: c.riesgo, expected_cover: c.cobertura, edge_pp: c.edge_pp, edge_percent: c.edge_rel, edge_units: c.ev, ev: c.ev, ev_se: c.se, ev_lower_bound: c.ev_lcb, lcb_method: `parametric bootstrap ${CONFIG.lcb.draws} draws, k=${CONFIG.lcb.k}`, ess: c.fx.dist.ess, distribution_version: VERSIONES.modelo } : null,
     market_state: c.cons ? { consensus_novig_p: c.p_novig, novig_method: CONFIG.novig.referencia, devig_spread: c.devig_spread, sharp_novig_p: c.sharp_p, price_dispersion: c.dispersion, overround: c.overround, derivative_gap: c.cons.derivative_gap ?? null, stale_quote: c.ctx_resumen?.quote_age_min > CONFIG.frescura_min.detected, quote_age_min: c.ctx_resumen?.quote_age_min } : { unavailable_reason: c.detalle || 'sin set completo' },
     context: { lineup_state: fx.lineup, lineup_time: fx.lineup_time || null, formation: fx.formacion, goalkeeper_confirmed: fx.gk_confirmed, injuries_reported: fx.bajas, injury_feed: fx.injury_feed, referee: fx.referee, venue: fx.venue, round: fx.round, window: fx.ventana, weather: 'unavailable (S5)', tactics: 'unavailable (4.7/4.9 no disponibles)' },
     quality: c.dq ? { data_quality: c.dq.dq, dq_parts: c.dq, model_agreement: c.scores.acuerdo, components: c.scores.componentes, weights: c.scores.pesos, composite: c.scores.composite, five_scores: c.scores.cinco, unavailable_components: c.scores.unavailable, hard_gates_passed: c.estado !== ESTADOS.NONE } : null,
@@ -685,6 +712,7 @@ async function calificar() {
 // ══ 9 · INTERFAZ ══════════════════════════════════════════════════════════════
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const pct1 = v => v == null ? '—' : `${v >= 0 ? '+' : ''}${(v * 100).toFixed(1)}%`;
+const ppTxt = v => v == null ? '—' : `${v >= 0 ? '+' : ''}${v.toFixed(2)} pp`;
 const p0 = v => v == null ? '—' : Math.round(v * 100) + '%';
 const amTxt = a => a == null ? '—' : (a > 0 ? '+' + a : String(a));
 const horaLocal = iso => { try { return new Date(iso).toLocaleString('es-MX', { timeZone: CONFIG.zona, weekday: 'short', day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }) + ' ET'; } catch { return ''; } };
@@ -744,7 +772,8 @@ function tarjeta(c, provisional) {
   const fx = c.fx, e = provisional ? c.provisional : c.estado, cl = claseTier(e), r = c.scores || {};
   const evidencia = [
     c.p_A != null ? `Familia A (Dixon-Coles, goles) ${p0(c.p_A)} · Familia B (bivariado, ${fx.xg_suficiente ? 'xG' : 'goles'}) ${p0(c.p_B)} → ensamble ${p0(c.p_raw)}; con peso ${Math.round(c.w_modelo * 100)}% sobre el consenso ${p0(c.p_novig)}${c.sharp_p != null ? ` (Pinnacle ${p0(c.sharp_p)})` : ''} → calibrada ${p0(c.p_model)}` : null,
-    c.ev != null ? `EV ${pct1(c.ev)} a ${amTxt(c.am)} (${c.dec}) en ${esc(c.book)} · EV inferior ${pct1(c.ev_lcb)} (k=${CONFIG.lcb.k}, ${CONFIG.lcb.draws} draws)` : null,
+    c.edge_pp != null ? `Edge ${ppTxt(c.edge_pp)} (${p0(c.p_model)} del modelo vs ${p0(c.p_novig)} del mercado sin comisión) · cuota justa ${amTxt(decAAm(c.fair_dec))} contra ${amTxt(c.am)} disponible` : null,
+    c.ev != null ? `EV ${pct1(c.ev)} a ${amTxt(c.am)} (${c.dec}) en ${esc(c.book)} · EV inferior ${pct1(c.ev_lcb)} (k=${CONFIG.lcb.k}, ${CONFIG.lcb.draws} draws)${c.riesgo < 1 ? ` · ${Math.round((1 - c.riesgo) * 100)}% de la apuesta se devuelve (empuje)` : ''}` : null,
     `${c.filas} casas en la línea exacta · dispersión ${c.dispersion != null ? (c.dispersion * 100).toFixed(1) + ' pp' : '—'} · overround ${c.overround != null ? (c.overround * 100).toFixed(1) + '%' : '—'}`,
   ].filter(Boolean);
   const riesgos = [
@@ -761,7 +790,9 @@ function tarjeta(c, provisional) {
     <div class="sc-card-mu">${esc(fx.home)} <i>vs</i> ${esc(fx.away)} · ${horaLocal(fx.kickoff)} · ${fx.ventana}</div>
     <div class="sc-card-grid">
       <div><span>Cuota</span><b>${amTxt(c.am)}</b><small>${c.dec} · ${esc(c.book || '')}</small></div>
+      <div><span>Cuota justa</span><b>${c.fair_dec ? amTxt(decAAm(c.fair_dec)) : '—'}</b><small>${c.fair_dec ? c.fair_dec.toFixed(2) : '—'} del modelo</small></div>
       <div><span>Mínimo</span><b>${amTxt(c.min_am)}</b><small>para su tier</small></div>
+      <div><span>Edge</span><b class="${c.edge_pp > 0 ? 'pos' : ''}">${ppTxt(c.edge_pp)}</b><small>${p0(c.p_model)} vs ${p0(c.p_novig)}</small></div>
       <div><span>EV</span><b class="${c.ev > 0 ? 'pos' : ''}">${pct1(c.ev)}</b><small>LCB ${pct1(c.ev_lcb)}</small></div>
       <div><span>Proyección</span><b>${fx.dist ? fx.dist.LA.lh.toFixed(2) + ' – ' + fx.dist.LA.la.toFixed(2) : '—'}</b><small>goles esperados</small></div>
       <div><span>Score</span><b>${r.composite ?? '—'}</b><small>percentil ${c.percentil != null ? Math.round(c.percentil * 100) : '—'} · no es prob.</small></div>
@@ -782,7 +813,7 @@ function htmlTablero() {
   return htmlResumen() + secciones + `
   <section class="sc-sec detected"><header><h3>WATCHLIST · SIGNAL DETECTED <span>${prov.length + watch.length}</span></h3><p>Edge detectado pero no calificado: falta XI oficial, EV/percentil/DQ insuficientes, o correlación con una señal mejor. Sin asignación automática (SE §7).</p></header>
     ${prov.length ? `<h4>Calificarían con XI confirmado (tier provisional)</h4><div class="sc-cards">${prov.slice(0, 12).map(c => tarjeta(c, true)).join('')}</div>` : ''}
-    ${watch.length ? `<table class="sc-table"><thead><tr><th>Partido</th><th>Selección</th><th>Cuota</th><th>EV</th><th>LCB</th><th>DQ</th><th>Score</th><th>Pct</th><th>Motivo</th></tr></thead><tbody>${watch.map(c => `<tr data-ac="abrirPartido(${c.fx.id})"><td>${esc(c.fx.home)} v ${esc(c.fx.away)}<small>${esc(c.fx.comp.nombre)}</small></td><td><b>${esc(selTxt(c))}</b> <small>${esc(c.nombre)}</small></td><td>${amTxt(c.am)}</td><td class="${c.ev > 0 ? 'pos' : ''}">${pct1(c.ev)}</td><td>${pct1(c.ev_lcb)}</td><td>${c.dq?.dq ?? '—'}</td><td>${c.scores?.composite ?? '—'}</td><td>${c.percentil != null ? Math.round(c.percentil * 100) : '—'}</td><td><small>${esc((c.downgrade || []).slice(-1)[0] || c.codes.join(', '))}</small></td></tr>`).join('')}</tbody></table>` : ''}
+    ${watch.length ? `<table class="sc-table"><thead><tr><th>Partido</th><th>Selección</th><th>Cuota</th><th>Edge</th><th>EV</th><th>LCB</th><th>DQ</th><th>Score</th><th>Pct</th><th>Motivo</th></tr></thead><tbody>${watch.map(c => `<tr data-ac="abrirPartido(${c.fx.id})"><td>${esc(c.fx.home)} v ${esc(c.fx.away)}<small>${esc(c.fx.comp.nombre)}</small></td><td><b>${esc(selTxt(c))}</b> <small>${esc(c.nombre)}</small></td><td>${amTxt(c.am)}</td><td class="${c.edge_pp > 0 ? 'pos' : ''}">${ppTxt(c.edge_pp)}</td><td class="${c.ev > 0 ? 'pos' : ''}">${pct1(c.ev)}</td><td>${pct1(c.ev_lcb)}</td><td>${c.dq?.dq ?? '—'}</td><td>${c.scores?.composite ?? '—'}</td><td>${c.percentil != null ? Math.round(c.percentil * 100) : '—'}</td><td><small>${esc((c.downgrade || []).slice(-1)[0] || c.codes.join(', '))}</small></td></tr>`).join('')}</tbody></table>` : ''}
   </section>`;
 }
 function htmlPartidos() {
@@ -818,10 +849,10 @@ function htmlHistorial() {
   return `<div class="sc-hist-sum"><div><span>Señales</span><b>${rows.length}</b></div><div><span>Liquidadas</span><b>${tot.n}</b></div><div><span>Récord</span><b>${tot.w}-${tot.n - tot.w}</b></div><div><span>Unidades</span><b class="${tot.u >= 0 ? 'pos' : 'neg'}">${tot.u >= 0 ? '+' : ''}${tot.u.toFixed(2)}</b></div><div><span>CLV medio</span><b>${isNaN(tot.clv) ? '—' : (tot.clv >= 0 ? '+' : '') + tot.clv.toFixed(2) + ' pp'}</b></div></div>
   <p class="sc-note">Paper tracking prospectivo (SE §9.1). Cada fila es la señal tal como se publicó: no se reescribe. Récord y unidades no prueban rentabilidad futura.</p>
   ${Object.keys(porDia).sort().reverse().map(d => { const L = porDia[d], r = rec(L); return `<section class="sc-sec"><header><h3>${esc(d)} <span>${L.length}</span></h3><p>${r.n ? `récord ${r.w}-${r.n - r.w} · ${r.u >= 0 ? '+' : ''}${r.u.toFixed(2)} u` : 'sin liquidar'}</p></header>
-    <table class="sc-table"><thead><tr><th>Partido</th><th>Selección</th><th>Tier</th><th>Cuota</th><th>EV</th><th>Final</th><th>Resultado</th><th>CLV</th></tr></thead><tbody>${L.map(r => { const x = res(r); return `<tr><td>${esc(r.home)} v ${esc(r.away)}<small>${esc(r.competition)}</small></td><td><b>${esc(r.selection)}</b> <small>${esc(MERCADOS[r.canonical_market]?.nombre || r.canonical_market)}${r.line != null ? ' ' + r.line : ''}</small></td><td><span class="sc-tier ${claseTier(r.state)}">${etiquetaEstado(r.state)}</span></td><td>${amTxt(r.odds_american)}</td><td>${pct1(r.ev)}</td><td>${x && x.hg != null ? `${x.hg}-${x.ag}` : '—'}</td><td class="${x ? (x.settlement.includes('win') ? 'pos' : x.settlement.includes('loss') ? 'neg' : '') : ''}">${x ? esc(x.settlement) : 'pendiente'}</td><td>${x && x.clv_pp != null ? (x.clv_pp >= 0 ? '+' : '') + x.clv_pp + ' pp' : '—'}</td></tr>`; }).join('')}</tbody></table></section>`; }).join('')}`;
+    <table class="sc-table"><thead><tr><th>Partido</th><th>Selección</th><th>Tier</th><th>Cuota</th><th>Edge</th><th>EV</th><th>Final</th><th>Resultado</th><th>CLV</th></tr></thead><tbody>${L.map(r => { const x = res(r); return `<tr><td>${esc(r.home)} v ${esc(r.away)}<small>${esc(r.competition)}</small></td><td><b>${esc(r.selection)}</b> <small>${esc(MERCADOS[r.canonical_market]?.nombre || r.canonical_market)}${r.line != null ? ' ' + r.line : ''}</small></td><td><span class="sc-tier ${claseTier(r.state)}">${etiquetaEstado(r.state)}</span></td><td>${amTxt(r.odds_american)}</td><td>${ppTxt(r.edge_pp)}</td><td>${pct1(r.ev)}</td><td>${x && x.hg != null ? `${x.hg}-${x.ag}` : '—'}</td><td class="${x ? (x.settlement.includes('win') ? 'pos' : x.settlement.includes('loss') ? 'neg' : '') : ''}">${x ? esc(x.settlement) : 'pendiente'}</td><td>${x && x.clv_pp != null ? (x.clv_pp >= 0 ? '+' : '') + x.clv_pp + ' pp' : '—'}</td></tr>`; }).join('')}</tbody></table></section>`; }).join('')}`;
 }
 async function cargarHistorial() {
-  try { const { data, error } = await db.from('futbol_senales').select('signal_id,slate_date,competition,home,away,canonical_market,selection,line,odds_american,ev,state').in('state', [ESTADOS.ELITE, ESTADOS.STRONG, ESTADOS.LEAN]).order('created_at', { ascending: false }).limit(1000);
+  try { const { data, error } = await db.from('futbol_senales').select('signal_id,slate_date,competition,home,away,canonical_market,selection,line,odds_american,edge_pp,ev,state').in('state', [ESTADOS.ELITE, ESTADOS.STRONG, ESTADOS.LEAN]).order('created_at', { ascending: false }).limit(1000);
     if (error) throw error; const { data: res } = await db.from('futbol_resultados').select('signal_id,settlement,return_units,hg,ag,clv_pp');
     historial = { filas: data || [], res: new Map((res || []).map(r => [r.signal_id, r])) }; }
   catch (e) { historial = { error: /futbol_|relation|schema cache/i.test(e.message) ? 'Faltan las tablas de SOCCER en Supabase: corre futbol-setup.sql en el SQL Editor.' : e.message }; }
@@ -854,7 +885,7 @@ function htmlConfig() {
 function htmlModal(fx) {
   const cs = ESTADO.cands.filter(c => c.fixture_id === fx.id).sort((a, b) => RANGO_ESTADO[b.estado] - RANGO_ESTADO[a.estado] || (b.scores?.composite || 0) - (a.scores?.composite || 0) || (b.ev || -9) - (a.ev || -9));
   const d = fx.dist;
-  const fila = c => `<tr class="${claseTier(c.estado)}"><td><b>${esc(selTxt(c))}</b><small>${esc(c.nombre)}${c.derivado ? ' (derivado del 1X2)' : ''}</small></td><td>${amTxt(c.am)}<small>${c.dec ?? ''} ${esc(c.book || '')}</small></td><td>${p0(c.p_novig)}</td><td>${p0(c.p_model)}<small>A ${p0(c.p_A)} · B ${p0(c.p_B)}</small></td><td class="${c.ev > 0 ? 'pos' : ''}">${pct1(c.ev)}<small>LCB ${pct1(c.ev_lcb)}</small></td><td>${c.dq?.dq ?? '—'}</td><td>${c.scores?.composite ?? '—'}<small>${c.percentil != null ? 'p' + Math.round(c.percentil * 100) : ''}</small></td><td><span class="sc-tier ${claseTier(c.estado)}">${etiquetaEstado(c.estado)}</span>${c.provisional ? `<small>→ ${etiquetaEstado(c.provisional)}</small>` : ''}</td><td><small>${esc(c.codes.join(', '))}${(c.detalles || []).length ? '<br>' + esc(c.detalles.join(' · ')) : ''}${(c.downgrade || []).length ? '<br>' + esc(c.downgrade.join(' | ')) : ''}</small></td></tr>`;
+  const fila = c => `<tr class="${claseTier(c.estado)}"><td><b>${esc(selTxt(c))}</b><small>${esc(c.nombre)}${c.derivado ? ' (derivado del 1X2)' : ''}</small></td><td>${amTxt(c.am)}<small>${c.dec ?? ''} ${esc(c.book || '')}</small></td><td>${p0(c.p_novig)}</td><td>${p0(c.p_model)}<small>A ${p0(c.p_A)} · B ${p0(c.p_B)}</small></td><td class="${c.edge_pp > 0 ? 'pos' : ''}">${ppTxt(c.edge_pp)}</td><td class="${c.ev > 0 ? 'pos' : ''}">${pct1(c.ev)}<small>LCB ${pct1(c.ev_lcb)}</small></td><td>${c.dq?.dq ?? '—'}</td><td>${c.scores?.composite ?? '—'}<small>${c.percentil != null ? 'p' + Math.round(c.percentil * 100) : ''}</small></td><td><span class="sc-tier ${claseTier(c.estado)}">${etiquetaEstado(c.estado)}</span>${c.provisional ? `<small>→ ${etiquetaEstado(c.provisional)}</small>` : ''}</td><td><small>${esc(c.codes.join(', '))}${(c.detalles || []).length ? '<br>' + esc(c.detalles.join(' · ')) : ''}${(c.downgrade || []).length ? '<br>' + esc(c.downgrade.join(' | ')) : ''}</small></td></tr>`;
   return `<div class="sc-overlay" data-ac="cerrarPartido()"><div class="sc-mbox" data-ac="nada()">
     <div class="sc-mhd"><div><div class="sc-mtitle">${esc(fx.home)} <i>vs</i> ${esc(fx.away)}</div><div class="sc-msub">${esc(fx.comp.nombre)} · ${horaLocal(fx.kickoff)} · ${esc(fx.venue || '')}${fx.referee ? ' · árbitro ' + esc(fx.referee) : ''} · ${fx.casas} casas · ventana ${fx.ventana}</div></div><button class="sc-close" data-ac="cerrarPartido()">✕</button></div>
     <div class="sc-mgrid">
@@ -863,7 +894,7 @@ function htmlModal(fx) {
       <div><span>Alineaciones</span><b>${fx.lineup === 'CONFIRMED' ? '✓ XI oficial' : 'sin confirmar'}</b><small>${fx.formacion ? fx.formacion.join(' vs ') : (fx.lineup_error ? esc(fx.lineup_error) : 'se piden a ≤' + CONFIG.lineups_ventana_min + ' min del inicio')}${fx.gk_confirmed ? ' · porteros confirmados' : ''}</small></div>
       <div><span>Bajas reportadas</span><b>${fx.bajas.length}</b><small>${fx.bajas.slice(0, 6).map(b => esc(b.player) + (b.reason ? ' (' + esc(b.reason) + ')' : '')).join(', ') || (fx.injury_feed ? 'ninguna' : 'feed no disponible')}</small></div>
     </div>
-    <table class="sc-table wide"><thead><tr><th>Selección</th><th>Cuota</th><th>Consenso</th><th>Modelo</th><th>EV</th><th>DQ</th><th>Score</th><th>Estado</th><th>Códigos / motivos</th></tr></thead><tbody>${cs.map(fila).join('')}</tbody></table>
+    <table class="sc-table wide"><thead><tr><th>Selección</th><th>Cuota</th><th>Consenso</th><th>Modelo</th><th>Edge</th><th>EV</th><th>DQ</th><th>Score</th><th>Estado</th><th>Códigos / motivos</th></tr></thead><tbody>${cs.map(fila).join('')}</tbody></table>
     <p class="sc-note">Mercados de Fase 2 presentes en el snapshot pero no evaluados: ${[...new Set(fx.cuotas.filter(q => q.fase === 2).map(q => MERCADOS[q.mercado]?.nombre))].join(', ') || 'ninguno'}. Props de jugador registrados: ${fx.cuotas.filter(q => CONFIG.pod.mercados[q.bet_id]).length}.</p>
   </div></div>`;
 }
@@ -893,7 +924,7 @@ function autoArranca() {
         AUTO.guardado = !!ESTADO.guardado.ok; AUTO.ok = true; const n = ESTADO.snapshot.counts.por_estado;
         AUTO.msg = `${ESTADO.partidos.length} partidos · ${ESTADO.cands.length} candidatos · Elite ${n[ESTADOS.ELITE] || 0} · Strong ${n[ESTADOS.STRONG] || 0} · Lean ${n[ESTADOS.LEAN] || 0} · guardado: ${AUTO.guardado ? 'sí' : 'NO (' + ESTADO.guardado.msg + ')'}`;
         AUTO.resumen = { modo: 'analysis', deporte: 'futbol', fecha: hoy, snapshot: ESTADO.snapshot.snapshot_id, partidos: ESTADO.partidos.length, candidatos: ESTADO.cands.length, por_estado: n, guardado: AUTO.guardado, pod: ESTADO.pod.status,
-          senales: ESTADO.cands.filter(c => RANGO_ESTADO[c.estado] >= 2).map(c => ({ tier: c.estado, partido: `${c.fx.home} v ${c.fx.away}`, competicion: c.fx.comp.nombre, seleccion: selTxt(c), mercado: c.nombre, cuota: c.am, ev: c.ev, lcb: c.ev_lcb, dq: c.dq.dq, minimo: c.min_am })) }; } }
+          senales: ESTADO.cands.filter(c => RANGO_ESTADO[c.estado] >= 2).map(c => ({ tier: c.estado, partido: `${c.fx.home} v ${c.fx.away}`, competicion: c.fx.comp.nombre, seleccion: selTxt(c), mercado: c.nombre, cuota: c.am, justa: c.fair_dec ? decAAm(c.fair_dec) : null, edge_pp: c.edge_pp, ev: c.ev, lcb: c.ev_lcb, dq: c.dq.dq, minimo: c.min_am })) }; } }
     catch (e) { AUTO.ok = false; AUTO.msg = e?.message || String(e); } finally { AUTO.done = true; } };
   try { sb.auth.onAuthStateChange(() => setTimeout(intenta, 400)); } catch (e) { /* sin supabase */ }
   setTimeout(intenta, 1500);
@@ -908,5 +939,5 @@ Deportes.registrar({
 });
 
 // Solo para las pruebas automatizadas (Node/vm): en el navegador `module` no existe y nada sale de aquí.
-if (typeof module !== 'undefined' && module.exports) module.exports = { VERSIONES, CONFIG, COMPETICIONES, MERCADOS, RC, ESTADOS, decAAm, amADec, NOVIG, noVigCasa, consenso, rejillaDC, rejillaBiv, mezclaRejillas, sumaRejilla, unidad, unidadSel, masaEstados, evDeMasa, Fuerzas, ajustar, construirModelo, distribucionesPartido, normalizarCuotas, setsPorCasa, candidatosDe, asignarTiers, dqDe, scoresDe, evaluarPOD, tesisDe, registroDe, hashFNV, prng, correrAnalisis, _estado: () => ESTADO, _modelos: modelos };
+if (typeof module !== 'undefined' && module.exports) module.exports = { VERSIONES, CONFIG, COMPETICIONES, MERCADOS, RC, ESTADOS, decAAm, amADec, NOVIG, noVigCasa, consenso, rejillaDC, rejillaBiv, mezclaRejillas, sumaRejilla, unidad, unidadSel, masaEstados, evDeMasa, pJusta, enRiesgo, pCobertura, Fuerzas, ajustar, construirModelo, distribucionesPartido, normalizarCuotas, setsPorCasa, candidatosDe, asignarTiers, dqDe, scoresDe, evaluarPOD, tesisDe, registroDe, hashFNV, prng, correrAnalisis, _estado: () => ESTADO, _modelos: modelos };
 })();

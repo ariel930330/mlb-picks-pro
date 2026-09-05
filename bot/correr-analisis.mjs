@@ -39,8 +39,6 @@ const nav = await chromium.launch({ args: ['--no-sandbox'] });
 const ctx = await nav.newContext({ timezoneId: 'America/New_York', locale: 'es-MX' });
 const pg  = await ctx.newPage();
 
-// Los errores de la página se ven en el log del workflow: sin esto, un fallo de JS
-// dentro del navegador sería invisible desde fuera.
 // Los errores de la página se GUARDAN además de imprimirse: el log completo de un
 // workflow solo lo puede leer quien tenga permisos de admin del repositorio, así que
 // si algo revienta dentro del navegador y solo va al log, no hay forma de verlo desde
@@ -50,6 +48,7 @@ pg.on('console', m => { if (['error','warning'].includes(m.type())) console.log(
 pg.on('pageerror', e => { erroresPagina.push(e.message); console.log(`  [navegador] ERROR ${e.message}`); });
 
 let codigo = 0;
+let pista = null;   // pista sobre los secretos, sin enseñarlos
 try {
   const url = `${URL}?auto=${MODO}&deporte=${DEPORTE}&cb=${Date.now()}`;   // cb: evita la caché de Pages
   console.log(`Abriendo ${URL}?auto=${MODO}&deporte=${DEPORTE}${MODO === 'grade' ? ' (calificar)' : ''}`);
@@ -70,6 +69,15 @@ try {
   await pg.waitForFunction(() => window.__auto && window.__auto.listo, { timeout: 60000 })
     .catch(async () => {
       const err = await pg.textContent('#login-err').catch(() => '');
+      // Pista sobre los secretos SIN enseñarlos. El fallo mas comun no es que la
+      // contraseña sea otra, sino que el secreto lleva un espacio o un salto de
+      // linea pegado al copiarlo: la longitud lo delata al instante.
+      const limpio = EMAIL.trim();
+      pista = `BOT_EMAIL: ${limpio.slice(0,2)}…@${limpio.split('@')[1] || '?'}`
+            + ` · ${EMAIL.length} caracteres${EMAIL !== limpio ? ' ⚠ CON ESPACIOS SOBRANTES' : ''}`
+            + ` · BOT_PASSWORD: ${PASS.length} caracteres`
+            + `${PASS !== PASS.trim() ? ' ⚠ CON ESPACIOS SOBRANTES' : ''}`;
+      console.log(`  ${pista}`);
       throw new Error(`no se pudo iniciar sesión${err ? `: ${err.trim()}` : ' (revisa BOT_EMAIL / BOT_PASSWORD)'}`);
     });
   console.log('Sesión iniciada · análisis en marcha');
@@ -112,6 +120,7 @@ try {
       + (est ? `- **Estado de la página:** listo=${est.listo} · done=${est.done} · ok=${est.ok}`
              + ` · guardado=${est.guardado}${est.msg ? ` · ${est.msg}` : ''}\n`
              : `- **Estado de la página:** no se pudo leer \`window.__auto\`\n`)
+      + (pista ? `- **Secretos:** ${pista}\n` : '')
       + (erroresPagina.length
           ? `- **Errores dentro del navegador:**\n${erroresPagina.map(x => `  - \`${x}\``).join('\n')}\n`
           : '- **Errores dentro del navegador:** ninguno\n'));

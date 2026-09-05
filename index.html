@@ -2704,7 +2704,7 @@ function scPruebas(){
 // ENTRAR y MANTENER son distintos (histéresis): una señal publicada no cae por un
 // micro-movimiento de precio; cae si la cuota ya no alcanza el umbral de MANTENER, o
 // se reconsidera desde cero si hay noticia (baja nueva) o TODO el consenso se movió ≥3pp.
-const SC_CRITERIA = 'HAXIOM-SOCCER-v1.0';
+const SC_CRITERIA = 'HAXIOM-SOCCER-v1.1';   // v1.1: niveles Elite/Strong/Lean/No Signal (Master Prompt §6)
 const SC_CFG = {
   official:{ edge:2.5, ev:.035, dq:80, games:10, books:4, lo:1.40, hi:3.50, stayEdge:2.0, stayEv:.025 },
   lean:    { edge:1.5, ev:.020, dq:70, games:6,  books:3, lo:1.33, hi:4.00, stayEdge:1.2, stayEv:.012 },
@@ -2738,6 +2738,20 @@ function scRobustBest(prices){
   const raw=Math.max(...prices), best=ok.length?Math.max(...ok):raw;
   return { best, raw, outliers:prices.length-ok.length };
 }
+// ── Niveles de señal (Master Prompt §6) ─────────────────────────────────────
+// Cuatro niveles, no dos escaleras paralelas. ELITE y STRONG exigen modelo: sin él
+// no hay confianza que medir, así que lo más alto a lo que puede llegar una jugada
+// de puro valor de precio es LEAN. Antes "VALOR DE LÍNEA" empataba en rango con
+// "OFFICIAL PLAY" (ambos 3), o sea que un pick SIN modelo podía desbancar a uno CON
+// modelo. Eso contradice §6: el nivel más alto debe exigir lo más estricto.
+const SC_TIER = { ELITE:'ELITE SIGNAL', STRONG:'STRONG SIGNAL',
+                  LEAN:'LEAN SIGNAL',   NONE:'NO SIGNAL' };
+// Nombres viejos → nuevos, para que el historial ya guardado se siga leyendo bien
+// aunque no se haya corrido la migración de SQL.
+const SC_TIER_VIEJO = { 'OFFICIAL PLAY':SC_TIER.ELITE, 'STRONG LEAN':SC_TIER.STRONG,
+                        'VALOR DE LÍNEA':SC_TIER.LEAN, 'VALOR MENOR':SC_TIER.LEAN,
+                        'NO BET':SC_TIER.NONE };
+const scTierNorm = t => SC_TIER_VIEJO[t] || t || SC_TIER.NONE;
 // Clasifica con umbrales de ENTRAR (o de MANTENER si ya era señal). Devuelve {tier, fail}
 // con la PRIMERA condición que falló, para explicarlo en pantalla.
 function scClassify(c, stay=false){
@@ -2751,19 +2765,21 @@ function scClassify(c, stay=false){
       if(c.ev<vMin) return `EV ${(c.ev*100).toFixed(1)}% < ${(vMin*100).toFixed(1)}%`;
       if(c.dq<T.dq) return `DQ ${c.dq} < ${T.dq}`;
       return null; };
-    const fO=chk(SC_CFG.official); if(!fO) return {tier:'OFFICIAL PLAY', fail:null};
-    const fL=chk(SC_CFG.lean);     if(!fL) return {tier:'STRONG LEAN', fail:fO};
-    return {tier:'NO BET', fail:fL};
+    const fO=chk(SC_CFG.official); if(!fO) return {tier:SC_TIER.ELITE,  fail:null};
+    const fL=chk(SC_CFG.lean);     if(!fL) return {tier:SC_TIER.STRONG, fail:fO};
+    return {tier:SC_TIER.NONE, fail:fL};
   }
-  // Sin modelo: solo valor de línea. Piso de probabilidad para no perseguir longshots
-  // (el +EV en cuotas altas es ruido de de-vig / sesgo favorito-longshot).
+  // Sin modelo: solo valor de precio. Techo LEAN — sin modelo no hay confianza que
+  // medir, y §6 exige que los niveles altos cumplan lo más estricto.
+  // Piso de probabilidad para no perseguir longshots (el +EV en cuotas altas es
+  // ruido de de-vig / sesgo favorito-longshot).
   const L=SC_CFG.line;
-  if(c.adjP<L.minProb) return {tier:'NO BET', fail:`prob ${Math.round(c.adjP*100)}% < ${L.minProb*100}% (sin modelo)`};
-  if(c.ev>=L.ev && c.dq>=L.dq) return {tier:'VALOR DE LÍNEA', fail:null};
-  if(c.ev>=L.evMinor) return {tier:'VALOR MENOR', fail:`EV ${(c.ev*100).toFixed(1)}% < ${L.ev*100}%`};
-  return {tier:'NO BET', fail:`EV ${(c.ev*100).toFixed(1)}% < ${L.evMinor*100}% (sin modelo)`};
+  if(c.adjP<L.minProb) return {tier:SC_TIER.NONE, fail:`prob ${Math.round(c.adjP*100)}% < ${L.minProb*100}% (sin modelo)`};
+  if(c.ev>=L.ev && c.dq>=L.dq) return {tier:SC_TIER.LEAN, fail:null};
+  if(c.ev>=L.evMinor) return {tier:SC_TIER.LEAN, fail:`EV ${(c.ev*100).toFixed(1)}% < ${L.ev*100}% (valor menor)`};
+  return {tier:SC_TIER.NONE, fail:`EV ${(c.ev*100).toFixed(1)}% < ${L.evMinor*100}% (sin modelo)`};
 }
-const scQualifies = t => t!=='NO BET';
+const scQualifies = t => scTierNorm(t)!==SC_TIER.NONE;
 // Unidades sugeridas (§15) sin bankroll: rating por fuerza del edge.
 function scUnits(ev, dq){
   if(ev<SC_CFG.lean.ev) return 0;
@@ -2808,7 +2824,7 @@ function scCand(mkt, label, modelP, noVig, prices, nBooks, hasOU, hasModel, evFn
 }
 // Cuota hasta la que una señal sigue viva (umbral de MANTENER) y desde la que una
 // selección entraría (umbral de ENTRAR). Ambas en decimal; se muestran en americana.
-const scStayPx  = c => { const T=c.tier==='OFFICIAL PLAY'?SC_CFG.official:SC_CFG.lean; return c.pA>0?(c.pB+T.stayEv)/c.pA:null; };
+const scStayPx  = c => { const T=scTierNorm(c.tier)===SC_TIER.ELITE?SC_CFG.official:SC_CFG.lean; return c.pA>0?(c.pB+T.stayEv)/c.pA:null; };
 const scEnterPx = c => c.pA>0?(c.pB+(c.hasModel?SC_CFG.lean.ev:SC_CFG.line.ev))/c.pA:null;
 
 // ── Memoria de decisiones por jornada: el criterio es del sistema, no de las casas ──
@@ -2827,7 +2843,7 @@ function scMemSave(d, matches){
       pA:c.pA, pB:c.pB, w:c.w, tier:c.tier, ev:c.ev, best:c.best, inj }; }); });
   try{ localStorage.setItem(scMemKey(d), JSON.stringify(mem)); }catch{}
 }
-const SC_TIER_RANK={ 'OFFICIAL PLAY':3,'VALOR DE LÍNEA':3,'STRONG LEAN':2,'VALOR MENOR':2,'NO BET':0 };
+const SC_TIER_RANK={ [SC_TIER.ELITE]:3, [SC_TIER.STRONG]:2, [SC_TIER.LEAN]:1, [SC_TIER.NONE]:0 };
 function scApplyMemory(matches, d){
   const mem=scMemLoad(d); if(!mem||mem._crit!==SC_CRITERIA) return 0;
   let held=0;
@@ -2844,11 +2860,11 @@ function scApplyMemory(matches, d){
       c.adjP=p.adjP; c.pA=p.pA; c.pB=p.pB; c.w=p.w;
       c.edgePP=+((c.adjP-c.noVig)*100).toFixed(2); c.ev=+(c.pA*c.best-c.pB).toFixed(4);
       c.minOdds=c.pA>0?+((c.pB+SC_CFG.targetEV)/c.pA).toFixed(2):null; c.units=scUnits(c.ev,c.dq); c.rank=scRank(c);
-      const enter=scClassify(c,false), hold=scClassify(c,true), pr=SC_TIER_RANK[p.tier]||0;
-      if(SC_TIER_RANK[enter.tier]>=pr){ c.tier=enter.tier; c.fail=enter.fail; if(pr>0&&enter.tier===p.tier){ c.held=true; held++; } }
-      else if(SC_TIER_RANK[hold.tier]>=pr){ c.tier=p.tier; c.fail=null; c.held=true; held++;
+      const enter=scClassify(c,false), hold=scClassify(c,true), pr=SC_TIER_RANK[scTierNorm(p.tier)]||0;
+      if(SC_TIER_RANK[enter.tier]>=pr){ c.tier=enter.tier; c.fail=enter.fail; if(pr>0&&enter.tier===scTierNorm(p.tier)){ c.held=true; held++; } }
+      else if(SC_TIER_RANK[hold.tier]>=pr){ c.tier=scTierNorm(p.tier); c.fail=null; c.held=true; held++;
         c.note=`mantenida: la cuota bajó a ${dAm(c.best)} pero sigue sobre el mínimo de mantener (${dAm(scStayPx(c))})`; }
-      else { c.tier=hold.tier; c.fail=hold.fail; c.note=`bajó de ${p.tier}: ${hold.fail}`; }
+      else { c.tier=hold.tier; c.fail=hold.fail; c.note=`bajó de ${scTierNorm(p.tier)}: ${hold.fail}`; }
     });
     m.cand.sort((a,b)=>b.rank-a.rank||b.ev-a.ev); m.bestBet=m.cand[0];
   });
@@ -3606,9 +3622,10 @@ async function analyzeSoccer(){
 }
 const evColor = v => v>=.03?'var(--green)':v>=0?'var(--gold)':'var(--text3)';
 const kickoff = iso => { try{ return new Date(iso).toLocaleString('es-MX',{weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}); }catch{ return ''; } };
-const tierColor = t => t==='OFFICIAL PLAY'||t==='VALOR DE LÍNEA'?'var(--green)' : t==='STRONG LEAN'||t==='VALOR MENOR'?'var(--gold)' : 'var(--text3)';
+const tierColor = t => { const n=scTierNorm(t);
+  return n===SC_TIER.ELITE?'var(--green)' : n===SC_TIER.STRONG?'var(--gold)' : n===SC_TIER.LEAN?'var(--text2)' : 'var(--text3)'; };
 const dqColorS  = d => d>=80?'var(--gtx)' : d>=65?'var(--gold)' : 'var(--rtx)';
-// Arma el "slate" del spec §18: mejor jugada, hasta 3 alternativas, y NO BET si nada califica.
+// Arma el "slate" del spec §18: mejor jugada, hasta 3 alternativas, y NO SIGNAL si nada califica.
 function buildSlate(matches){
   const all=[]; matches.forEach((m,i)=>m.cand.forEach(c=>all.push({c,m,mi:i})));
   const qual=all.filter(x=>scQualifies(x.c.tier)&&x.c.ev>0).sort((a,b)=>b.c.rank-a.c.rank||b.c.ev-a.c.ev);
@@ -3616,7 +3633,7 @@ function buildSlate(matches){
   return { best:qual[0]||null, alts:qual.slice(1,4), near, hasModel:matches.some(m=>m.hasModel) };
 }
 // ── Historial de fútbol: guardar, calificar y mostrar ─────────────────────────
-// Se guarda la MEJOR jugada de cada partido que califique (tier distinto de NO BET).
+// Se guarda la MEJOR jugada de cada partido que califique (tier distinto de NO SIGNAL).
 // Igual que en props: si el mismo pick reaparece con mejor EV se actualiza en su
 // lugar, y nunca se toca uno ya calificado.
 let scSaveMsg = null, scSaveKind = 'err';   // 'err' = falla real (rojo) · 'info' = normal (neutro)
@@ -3647,7 +3664,7 @@ async function saveSoccerPicks(matches){
         ? `Los ${scMeta.finished} partido(s) de esta fecha <b>ya terminaron</b> — no se apuesta un juego jugado. Elige una fecha <b>futura</b> (ej. mañana) para ver jugadas.`
       : !matches.length
         ? 'No hay partidos <b>por jugar</b> con cuotas en esta fecha. Elige otra jornada.'
-        : `Se analizaron ${matches.length} partido(s) por jugar, pero ninguno cruzó el umbral de valor (OFFICIAL PLAY / STRONG LEAN con EV&gt;0). Día sin apuesta.`;
+        : `Se analizaron ${matches.length} partido(s) por jugar, pero ninguno cruzó el umbral de valor (ELITE / STRONG / LEAN con EV&gt;0). Día sin apuesta.`;
     return;
   }
   try{
@@ -3858,7 +3875,7 @@ function renderSoccer(matches, unresolved, dateStr){
   const O=SC_CFG.official, Ln=SC_CFG.lean;
   const legend=`<div class="bp-model" style="margin-top:4px">
     <b>${SC_CRITERIA}</b> · <span style="color:var(--gtx)">OFFICIAL</span>: edge ≥${O.edge}pp · EV ≥+${O.ev*100}% · DQ ≥${O.dq} · ≥${O.games} pj · ≥${O.books} casas · cuota ${dAm(O.lo)}…${dAm(O.hi)}
-    &nbsp;·&nbsp; <span style="color:var(--gold)">STRONG LEAN</span>: edge ≥${Ln.edge}pp · EV ≥+${Ln.ev*100}% · DQ ≥${Ln.dq} · ≥${Ln.games} pj · ≥${Ln.books} casas · cuota ${dAm(Ln.lo)}…${dAm(Ln.hi)}
+    &nbsp;·&nbsp; <span style="color:var(--gold)">STRONG SIGNAL</span>: edge ≥${Ln.edge}pp · EV ≥+${Ln.ev*100}% · DQ ≥${Ln.dq} · ≥${Ln.games} pj · ≥${Ln.books} casas · cuota ${dAm(Ln.lo)}…${dAm(Ln.hi)}
     &nbsp;·&nbsp; se mantiene mientras EV ≥+${Ln.stayEv*100}% (LEAN) / +${O.stayEv*100}% (OFFICIAL)${scHeld?` · <b style="color:var(--gtx)">${scHeld} mantenida(s)</b> de la corrida anterior`:''}
   </div>`;
   // Un renglón "por qué" y "riesgos" a partir de la métrica disponible
@@ -3911,7 +3928,7 @@ function renderSoccer(matches, unresolved, dateStr){
       return `<div class="bp-near"><div class="bp-near-mu">${m.league.flag} <b>${c.label}</b> · ${m.home} v ${m.away}</div>
         <div class="bp-near-m">${dAm(c.best)} · EV ${fmtEv(c.ev)} · edge ${c.hasModel?pp(c.edgePP)+'pp':'n/d'} · DQ ${c.dq}/100 · <span style="color:var(--rtx)">falló: ${esc(c.fail||'sin valor')}</span>${need?` · reconsiderar desde ${dAm(need)}`:''}</div></div>`;}).join('');
     hero=`<div class="bp-card" style="border-color:var(--text3)">
-      <div class="bp-hd"><span class="bp-tag" style="background:var(--text3)">NO OFFICIAL PLAY FOUND</span></div>
+      <div class="bp-hd"><span class="bp-tag" style="background:var(--text3)">SIN SEÑAL HOY</span></div>
       <div class="bp-mu">Ninguna selección cruzó los umbrales de fútbol (${SC_CRITERIA}). No se fuerza una jugada: un edge menor a ${Ln.edge}pp no se distingue del ruido entre casas.</div>
       ${near?`<div class="bp-near-hd">Las que estuvieron más cerca</div>${near}`:''}
     </div>`;
@@ -3957,7 +3974,7 @@ function scCardHTML(m,i){
     <div class="sc-pick" style="border-left-color:${tc}">
       <div class="sc-pick-row"><span class="sc-pick-lbl">${esc(c.label)}</span><span class="sc-tier" style="background:${tc}" title="${esc(c.fail||'')}">${c.tier}${c.held?' ✓':''}</span></div>
       <div class="sc-pick-meta">${mkt} <b>${dAm(c.best)}</b> · <span style="color:${evColor(c.ev)};font-weight:700">${ev} EV</span>${c.hasModel?` · edge ${c.edgePP>=0?'+':''}${c.edgePP}pp`:''}${inj?` · 🩹 ${inj}`:''}</div>
-      ${c.note?`<div class="sc-pick-meta" style="color:var(--gold)">${esc(c.note)}</div>`:c.fail&&c.tier==='NO BET'?`<div class="sc-pick-meta" style="color:var(--text3)">falló: ${esc(c.fail)}</div>`:''}
+      ${c.note?`<div class="sc-pick-meta" style="color:var(--gold)">${esc(c.note)}</div>`:c.fail&&scTierNorm(c.tier)===SC_TIER.NONE?`<div class="sc-pick-meta" style="color:var(--text3)">falló: ${esc(c.fail)}</div>`:''}
     </div>
     <div class="sc-card-hint">clic para ver todas las apuestas →</div>
   </div>`;

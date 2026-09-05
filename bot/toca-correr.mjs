@@ -34,17 +34,12 @@ import { appendFileSync } from 'node:fs';
 // se cubrio, no se gasta. Un retraso hace que el analisis salga mas cerca del juego,
 // que es peor que a los 60 minutos, pero infinitamente mejor que no salir.
 const MIN_ANTES   = 75;   // se analiza si el primer juego del grupo entra en este plazo
-// RACIMO_MIN 120 es TEMPORAL, por presupuesto — no es una decision de modelo.
-// El backtest de agosto se comio 10,000 creditos y quedan 6,465 para 23 dias, o sea
-// 281 al dia = 3 analisis. Con 45 min salian 3.6 oleadas diarias (338 creditos) y NO
-// alcanzaba. Con 120 salen 2.0 (188 al dia, 4,324 en total) y sobran ~2,100 de margen
-// para corridas manuales y dobles carteleras.
-//
-// EL COSTE: un juego que empieza 2 horas despues del primero de su grupo se analiza
-// con 3 horas de antelacion en vez de 1, asi que le tocan alineaciones mas verdes.
-//
-// EL 19 DE SEPTIEMBRE se reinicia la cuota a 20,000: ahi hay que volver a poner 45.
-const RACIMO_MIN  = 120;  // juegos que arrancan dentro de estos minutos = una sola oleada
+// Cuanto mas chico, mas cerca de cada juego se analiza — y mas se gasta. Estuvo en
+// 120 unas semanas por falta de creditos (el backtest de agosto se comio 10,000).
+// Con la cuota ya reiniciada vuelve a 45, que es el valor de criterio: con 45 la
+// jornada de hoy sale en 5 oleadas en vez de 3, asi que ningun juego se analiza con
+// mas de ~2h de antelacion y las alineaciones ya estan puestas.
+const RACIMO_MIN  = 45;   // juegos que arrancan dentro de estos minutos = una sola oleada
 // Una oleada se da por CUBIERTA si ya hubo un analisis despues de que ella entrara en
 // el plazo. Asi no se paga dos veces por la misma, aunque el cron dispare varias veces
 // dentro de su hora y cuarto.
@@ -133,7 +128,12 @@ console.log(`Ultimo analisis de la jornada: ${ultimo ? Math.round(minDesde) + ' 
 // da igual que el cron dispare tres veces dentro de la misma hora y cuarto: solo se
 // paga la primera. Y despues de analizar una oleada, ella queda cubierta y el bucle
 // del workflow pasa sola a la siguiente.
-const cubierta = o => ultimo != null && ultimo >= (o[0].t.getTime() - MIN_ANTES * 60000);
+// o[0].t ya es un número de milisegundos (sale de new Date(...).getTime() al leer el
+// calendario). Aquí llamaba a .getTime() otra vez y reventaba — y solo reventaba
+// DESPUÉS del primer análisis del día, porque antes `ultimo` es null y el && corta
+// antes de llegar. Resultado: la primera corrida del día pasaba y TODAS las demás
+// fallaban, así que las oleadas de la tarde y la noche no se analizaban nunca.
+const cubierta = o => ultimo != null && ultimo >= (o[0].t - MIN_ANTES * 60000);
 
 // Se recorren TODAS las oleadas de una vez y se decide con la primera que sirva. Es
 // importante NO salir en la primera cubierta: si la de las 6:40 ya se analizo, hay que

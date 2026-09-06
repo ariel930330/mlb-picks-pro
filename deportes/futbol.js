@@ -837,7 +837,25 @@ async function calificar() {
       const cp = cierreDe(s.fixture_id, `${s.canonical_market}|${s.selection}|${s.line ?? ''}`);
       filas.push({ signal_id: s.signal_id, candidate_key: s.candidate_key, snapshot_id: s.snapshot_id, fixture_id: s.fixture_id, hg: r.hg ?? null, ag: r.ag ?? null, settlement, return_units: +ret.toFixed(4), close_p_novig: cp, clv_pp: cp != null && s.p_novig != null ? +((cp - s.p_novig) * 100).toFixed(2) : null, state_at_pub: s.state }); }
     if (filas.length) { const { error: e2 } = await db.from('futbol_resultados').insert(filas); if (e2) throw e2; }
-    ESTADO.msg = `Calificadas ${filas.length} señal(es); ${pend.length - filas.length} sin marcador final todavía.`;
+    if (filas.length || pend.length) {
+      ESTADO.msg = `Calificadas ${filas.length} señal(es); ${pend.length - filas.length} sin marcador final todavía.`;
+    } else {
+      // "0 y 0" a secas parece que el botón está roto. No lo está: es que solo se
+      // califican las señales OFICIALES (Elite/Strong/Lean) de días ya cerrados.
+      // Las "Signal Detected" son lista de vigilancia y no se liquidan a propósito,
+      // así que conviene decir cuántas hay y por qué no cuentan.
+      const { count: det } = await db.from('futbol_senales')
+        .select('signal_id', { count: 'exact', head: true })
+        .lt('slate_date', hoy).eq('state', ESTADOS.DETECTED);
+      const { count: ofi } = await db.from('futbol_senales')
+        .select('signal_id', { count: 'exact', head: true })
+        .in('state', [ESTADOS.ELITE, ESTADOS.STRONG, ESTADOS.LEAN]);
+      ESTADO.msg = ofi
+        ? `Nada que calificar: las ${ofi} señal(es) oficiales ya están liquidadas.`
+        : `Nada que calificar: todavía no hay ninguna señal oficial (Elite / Strong / Lean).`
+          + (det ? ` Hay ${det} en vigilancia (Signal Detected) de días cerrados, y esas no se liquidan: son candidatas que no llegaron a publicarse.` : '')
+          + ` El motivo más común es que el motor corrió antes de que saliera el XI oficial: sin alineación confirmada, §8 obliga a degradar a Signal Detected.`;
+    }
   } catch (e) { ESTADO.msg = 'Calificación: ' + e.message; }
   pintar(); cargarHistorial();
 }

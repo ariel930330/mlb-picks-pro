@@ -130,3 +130,25 @@ quieres moverlo a Vercel, añade a `vercel.json`:
 ```json
 { "path": "/api/disparar?modo=calificar", "schedule": "10 6 * * *" }
 ```
+
+## Nota sobre `vercel.json`
+
+**No hay `vercel.json` en el repositorio, a propósito.** El endpoint
+`/api/disparar` funciona sin él: Vercel detecta la carpeta `/api` sola.
+
+Hubo uno con una clave `"_nota"` explicando por qué no había crons. **Vercel
+rechaza cualquier propiedad que no esté en su esquema**, así que ese comentario
+tumbó el despliegue en silencio: la web se quedó congelada catorce horas en una
+versión vieja mientras los push seguían saliendo verdes en GitHub.
+
+Si algún día añades crons, crea el archivo **solo con las claves del esquema**:
+
+```json
+{
+  "crons": [
+    { "path": "/api/disparar", "schedule": "0 17 * * *" }
+  ]
+}
+```
+
+Sin comentarios. JSON no los admite y Vercel tampoco perdona claves de más.
